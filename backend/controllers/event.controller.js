@@ -64,11 +64,6 @@ exports.streamEvents = (req, res) => {
     // 5. 发送一个初始连接成功的消息
     sendEvent('connected', { message: 'SSE connection established.', clientId });
 
-    // 6. 定期发送 keep-alive 消息 (例如，每15秒发送一个注释行)
-    const keepAliveInterval = setInterval(() => {
-        try { res.write(': keep-alive\n\n'); } catch {}
-    }, 15000);
-
     // 7. 当客户端断开连接时，清理资源
     req.on('close', () => {
         eventBus.removeListener('thumbnail-generated', onThumbnailGenerated);
@@ -76,4 +71,74 @@ exports.streamEvents = (req, res) => {
         clients.delete(clientId);
         logger.info(`[SSE] 客户端断开连接: ${clientId} (IP: ${clientIP}, 剩余 ${clients.size} 个连接)`);
     });
+
+    // 8. 添加错误处理和额外的断开检测
+    req.on('error', (err) => {
+        logger.warn(`[SSE] 客户端连接错误 ${clientId}:`, err);
+        cleanup();
+    });
+
+    req.socket.on('error', (err) => {
+        logger.warn(`[SSE] 客户端Socket错误 ${clientId}:`, err);
+        cleanup();
+    });
+
+    req.socket.on('close', () => {
+        logger.debug(`[SSE] 客户端Socket关闭 ${clientId}`);
+        cleanup();
+    });
+
+    // 9. 改进的keep-alive，检测客户端是否还在接收数据
+    const keepAliveInterval = setInterval(() => {
+        try {
+            // 检查连接是否还活跃
+            if (res.destroyed || req.destroyed) {
+                cleanup();
+                return;
+            }
+            
+            // 发送keep-alive并检查是否成功
+            const success = res.write(': keep-alive\n\n');
+            if (!success) {
+                logger.debug(`[SSE] Keep-alive写入失败，客户端可能已断开 ${clientId}`);
+                cleanup();
+            }
+        } catch (error) {
+            logger.debug(`[SSE] Keep-alive发送失败，清理连接 ${clientId}:`, error);
+            cleanup();
+        }
+    }, 15000);
+
+    // 10. 统一的清理函数
+    function cleanup() {
+        try {
+            eventBus.removeListener('thumbnail-generated', onThumbnailGenerated);
+            clearInterval(keepAliveInterval);
+            clients.delete(clientId);
+            
+            // 尝试关闭响应
+            if (!res.destroyed) {
+                res.end();
+            }
+            
+            logger.info(`[SSE] 客户端连接已清理: ${clientId} (IP: ${clientIP}, 剩余 ${clients.size} 个连接)`);
+        } catch (error) {
+            logger.error(`[SSE] 清理客户端连接时出错 ${clientId}:`, error);
+        }
+    }
+};
+
+/**
+ * 获取当前SSE连接状态
+ * 用于监控和调试SSE连接问题
+ */
+exports.getConnectionStatus = () => {
+    return {
+        activeConnections: clients.size,
+        timestamp: new Date().toISOString(),
+        connections: Array.from(clients).map(clientId => ({
+            clientId,
+            connectedAt: clientId.split('-')[0] // 从clientId提取时间戳
+        }))
+    };
 };

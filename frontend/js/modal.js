@@ -3,6 +3,7 @@
 import { state, elements, backdrops } from './state.js';
 import { preloadNextImages, showNotification } from './utils.js';
 import { generateImageCaption } from './api.js';
+import Hls from 'hls.js'; // 引入 HLS.js
 
 /**
  * 模态框管理模块
@@ -114,106 +115,88 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
     
     if (isVideo) {
         const myToken = ++activeVideoToken;
-        // 视频处理逻辑
         navigationHint.classList.remove('show-hint');
         navigationHint.style.display = 'none';
 
-        // 显示视频加载器
         const videoSpinner = createVideoSpinner();
         mediaPanel.appendChild(videoSpinner);
 
-        modalVideo.preload = 'auto';
-        modalVideo.src = mediaSrc;
-        let retryCount = 0;
-        const MAX_RETRY = 2;
-        let watchdogTimer = null;
+        // 修正：从 URL 路径中提取干净的相对路径
+        const cleanRelativePath = originalPathForAI.startsWith('/static/') ? originalPathForAI.substring(8) : originalPathForAI;
+        const hlsUrl = `/thumbs/hls/${cleanRelativePath}/master.m3u8`;
 
-        const resetWatchdog = (ms = 10000) => {
-            try { if (watchdogTimer) clearTimeout(watchdogTimer); } catch {}
-            watchdogTimer = setTimeout(() => {
-                if (myToken !== activeVideoToken) return; // 被新任务替换
-                // 网络长时间等待/停滞，尝试软重载
-                if (retryCount < MAX_RETRY) {
-                    retryCount += 1;
-                    const cacheBust = (mediaSrc.includes('?') ? '&' : '?') + 'ts=' + Date.now();
-                    const position = Number.isFinite(modalVideo.currentTime) ? modalVideo.currentTime : 0;
-                    try {
-                        if (myToken !== activeVideoToken) return;
-                        try { modalVideo.pause(); } catch {}
-                        modalVideo.src = mediaSrc + cacheBust;
-                        modalVideo.load();
-                        // 恢复到之前的位置，便于无感重连
-                        modalVideo.currentTime = position;
-                        if (videoSpinner && !videoSpinner.isConnected) mediaPanel.appendChild(videoSpinner);
-                        resetWatchdog();
-                        modalVideo.play().catch(e => { /* 中止或策略导致的拒绝可忽略 */ });
-                    } catch {
-                        // 忽略，等待下一轮事件
-                    }
-                } else {
-                    try { if(videoSpinner) videoSpinner.remove(); } catch {}
-                    // 静默处理：不显示提示，不创建覆盖层
-                }
-            }, ms);
+        const cleanup = () => {
+            if (state.hlsInstance) {
+                state.hlsInstance.destroy();
+                state.hlsInstance = null;
+            }
+            modalVideo.removeEventListener('playing', onPlaying);
+            modalVideo.removeEventListener('error', onError);
         };
-        
-        // 视频播放成功回调
+
         const onPlaying = () => {
-            if (myToken !== activeVideoToken) return;
-            if(videoSpinner) videoSpinner.remove();
-            modalVideo.removeEventListener('playing', onPlaying);
-            modalVideo.removeEventListener('error', onError);
-            modalVideo.removeEventListener('waiting', onWaiting);
-            modalVideo.removeEventListener('stalled', onWaiting);
-            modalVideo.removeEventListener('canplay', onCanPlayLike);
-            modalVideo.removeEventListener('canplaythrough', onCanPlayLike);
-            try { if (watchdogTimer) clearTimeout(watchdogTimer); } catch {}
+            if (myToken !== activeVideoToken) return cleanup();
+            if(videoSpinner && videoSpinner.isConnected) videoSpinner.remove();
         };
-        
-        // 视频播放错误回调
-        const onError = (e) => {
-            if (myToken !== activeVideoToken) return;
-            if(videoSpinner) videoSpinner.remove();
-            // 静默失败：不弹出任何提示，不创建覆盖层
-            modalVideo.removeEventListener('playing', onPlaying);
-            modalVideo.removeEventListener('error', onError);
-            modalVideo.removeEventListener('waiting', onWaiting);
-            modalVideo.removeEventListener('stalled', onWaiting);
-            modalVideo.removeEventListener('canplay', onCanPlayLike);
-            modalVideo.removeEventListener('canplaythrough', onCanPlayLike);
-            try { if (watchdogTimer) clearTimeout(watchdogTimer); } catch {}
+
+        const onError = () => {
+            if (myToken !== activeVideoToken) return cleanup();
+            if(videoSpinner && videoSpinner.isConnected) videoSpinner.remove();
+            console.error('HLS or video playback error.');
+        };
+
+        cleanup(); // Clean up previous instance if any
+
+        if (Hls.isSupported()) {
+            const hls = new Hls({
+                // HLS.js a/b/r configs
+                abrEwmaDefaultEstimate: 500000, // 500kbps initial estimate
+            });
+            state.hlsInstance = hls;
+            hls.loadSource(hlsUrl);
+            hls.attachMedia(modalVideo);
+            hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                if (myToken !== activeVideoToken) return cleanup();
+                modalVideo.play().catch(e => console.warn('Autoplay was prevented', e));
+            });
+            hls.on(Hls.Events.ERROR, (event, data) => {
+                if (data.fatal) {
+                    switch(data.type) {
+                        case Hls.ErrorTypes.NETWORK_ERROR:
+                            console.error('HLS network error', data);
+                            // Fallback to direct playback on fatal network error
+                            if (myToken === activeVideoToken) {
+                                console.warn('HLS failed, falling back to direct playback.');
+                                cleanup();
+                                modalVideo.src = mediaSrc;
+                                modalVideo.play().catch(e => console.warn('Fallback autoplay was prevented', e));
+                            }
+                            break;
+                        case Hls.ErrorTypes.MEDIA_ERROR:
+                            console.error('HLS media error', data);
+                            hls.recoverMediaError();
+                            break;
+                        default:
+                            console.error('HLS fatal error, destroying.', data);
+                            cleanup();
+                            break;
+                    }
+                }
+            });
+        } else if (modalVideo.canPlayType('application/vnd.apple.mpegurl')) {
+            // Native HLS support (Safari)
+            modalVideo.src = hlsUrl;
+        } else {
+            // Fallback to direct playback
+            console.warn('HLS not supported, falling back to direct playback.');
+            modalVideo.src = mediaSrc;
         }
 
-        const onWaiting = () => {
-            if (myToken !== activeVideoToken) return;
-            if (videoSpinner && !videoSpinner.isConnected) mediaPanel.appendChild(videoSpinner);
-            resetWatchdog(10000);
-        };
-
-        const onCanPlayLike = () => {
-            if (myToken !== activeVideoToken) return;
-            // 已可播放，重置 watchdog，等待真正 playing
-            resetWatchdog(15000);
-        };
-
-        modalVideo.addEventListener('playing', onPlaying);
-        modalVideo.addEventListener('error', onError);
-        modalVideo.addEventListener('waiting', onWaiting);
-        modalVideo.addEventListener('stalled', onWaiting);
-        modalVideo.addEventListener('canplay', onCanPlayLike);
-        modalVideo.addEventListener('canplaythrough', onCanPlayLike);
-
-        // 尝试自动播放视频
-        resetWatchdog(12000);
+        modalVideo.addEventListener('playing', onPlaying, { once: true });
+        modalVideo.addEventListener('error', onError, { once: true });
         modalVideo.play().catch(e => {
-            if (myToken !== activeVideoToken) return; // 已被新任务替换
-            if (e && e.name === 'AbortError') {
-                // play 被 pause/新加载中断，忽略
-                return;
-            }
-            if(videoSpinner) videoSpinner.remove();
-            console.error('视频播放失败:', e);
-            showNotification('视频无法自动播放，请手动点击播放', 'warning');
+            if (myToken !== activeVideoToken) return cleanup();
+            console.warn('Autoplay was likely prevented by the browser.', e);
         });
 
         if(elements.captionBubble) elements.captionBubble.classList.remove('show');

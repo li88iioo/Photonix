@@ -362,6 +362,10 @@ const { invalidateTags } = require('../services/cache.service.js');
                     if (/\.(db|db3|sqlite|sqlite3|wal|shm)$/i.test(relativePath)) {
                         continue;
                     }
+                    // 增加对 HLS 文件的忽略，防止索引器自我循环
+                    if (/\.(m3u8|ts)$/i.test(relativePath)) {
+                        continue;
+                    }
                     tagsToInvalidate.add(`item:${relativePath}`);
                     let parentDir = path.dirname(relativePath);
                     while (parentDir !== '.') {

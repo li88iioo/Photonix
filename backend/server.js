@@ -22,7 +22,7 @@ const { PORT, THUMBS_DIR, DB_FILE, SETTINGS_DB_FILE, HISTORY_DB_FILE, INDEX_DB_F
 const { initializeConnections, closeAllConnections } = require('./db/multi-db');
 const { initializeAllDBs, ensureCoreTables } = require('./db/migrations');
 const { migrateToMultiDB } = require('./db/migrate-to-multi-db');
-const { createThumbnailWorkerPool, ensureCoreWorkers } = require('./services/worker.manager');
+const { createThumbnailWorkerPool, ensureCoreWorkers, getVideoWorker } = require('./services/worker.manager');
 const { setupThumbnailWorkerListeners, startIdleThumbnailGeneration } = require('./services/thumbnail.service');
 const { setupWorkerListeners, buildSearchIndex, watchPhotosDir } = require('./services/indexer.service');
 const sqlite3 = require('sqlite3');

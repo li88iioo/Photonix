@@ -40,18 +40,34 @@ function setupWorkerListeners() {
         logger.debug(`收到来自 Indexing Worker 的消息: ${msg.type}`);
         switch (msg.type) {
             case 'rebuild_complete':
-                // 索引重建完成，启动缩略图生成任务
                 logger.info(`[Main-Thread] Indexing Worker 完成索引重建，共处理 ${msg.count} 个条目。`);
                 isIndexing = false;
                 logger.info('[Main-Thread] 准备启动智能缩略图后台生成任务...');
                 startIdleThumbnailGeneration();
+
+                // 索引完成后，触发一次性的HLS视频流回填任务
+                try {
+                    logger.info('[Main-Thread] 触发 HLS 回填任务，为所有已存在视频生成码率流...');
+                    const videoWorker = getVideoWorker();
+                    videoWorker.postMessage({ type: 'backfill' });
+                } catch (e) {
+                    logger.warn('[Main-Thread] 触发 HLS 回填任务失败（忽略）:', e && e.message);
+                }
+
                 // 全量重建完成后，触发一次视频 faststart 扫描（仅对未优化的视频排队）
                 try {
                     const rows = await dbAll('main', `SELECT path FROM items WHERE type='video'`);
                     if (rows && rows.length) {
                         const vw = getVideoWorker();
                         for (const r of rows) {
-                            try { vw.postMessage({ filePath: path.join(PHOTOS_DIR, r.path) }); } catch {}
+                            try { 
+                                // 统一消息格式：为旧的 faststart 任务也补全新逻辑需要的字段
+                                vw.postMessage({ 
+                                    filePath: path.join(PHOTOS_DIR, r.path),
+                                    relativePath: r.path,
+                                    thumbsDir: THUMBS_DIR
+                                }); 
+                            } catch {}
                         }
                         logger.info(`[Main-Thread] 已为 ${rows.length} 个视频触发一次 faststart 检查/优化。`);
                     }
@@ -209,7 +225,15 @@ function setupWorkerListeners() {
                     const vw = getVideoWorker();
                     for (const ch of changes) {
                         if (ch && ch.filePath && /\.(mp4|webm|mov)$/i.test(ch.filePath)) {
-                            try { vw.postMessage({ filePath: ch.filePath }); } catch {}
+                            try { 
+                                // 统一消息格式：为增量 faststart 任务也补全新逻辑需要的字段
+                                const relativePath = path.relative(PHOTOS_DIR, ch.filePath);
+                                vw.postMessage({ 
+                                    filePath: ch.filePath,
+                                    relativePath: relativePath,
+                                    thumbsDir: THUMBS_DIR
+                                }); 
+                            } catch {}
                         }
                     }
                 } catch (e) {
@@ -585,11 +609,23 @@ function watchPhotosDir() {
                     logger.debug(`检测到永久失败标记，跳过视频处理: ${filePath}`);
                 } else {
                     logger.info(`检测到新视频文件，发送到处理器进行优化: ${filePath}`);
-                    videoWorker.postMessage({ filePath });
+                    // 统一消息格式：为新视频文件处理也补全新逻辑需要的字段
+                    const relativePath = path.relative(PHOTOS_DIR, filePath);
+                    videoWorker.postMessage({ 
+                        filePath,
+                        relativePath: relativePath,
+                        thumbsDir: THUMBS_DIR
+                    });
                 }
             } catch (e) {
                 logger.warn(`检查视频永久失败标记出错，仍尝试处理: ${filePath} - ${e && e.message}`);
-                videoWorker.postMessage({ filePath });
+                // 统一消息格式：为错误处理分支也补全新逻辑需要的字段
+                const relativePath = path.relative(PHOTOS_DIR, filePath);
+                videoWorker.postMessage({ 
+                    filePath,
+                    relativePath: relativePath,
+                    thumbsDir: THUMBS_DIR
+                });
             }
             return;
         }
