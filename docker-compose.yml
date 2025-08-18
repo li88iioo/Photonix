@@ -1,0 +1,54 @@
+# 服务定义
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${APP_PORT:-12080}:13001"
+    volumes:
+      - /opt/photos:/app/photos
+      - ./data:/app/data
+    container_name: photonix-app
+    env_file:
+      - ./.env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:13001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 160s
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - photonix-network
+
+  redis:
+    # Redis 服务，缓存和消息队列
+    image: redis:7-alpine
+    container_name: photonix-redis
+    ports:
+      - "6379:6379"  # 映射 Redis 端口
+    command: redis-server --appendonly yes  # 开启持久化
+    volumes:
+      - redis_data:/data  # Redis 数据持久化卷
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]  # 健康检查
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - photonix-network
+
+
+# 卷定义
+volumes:
+  redis_data:  # Redis 数据卷
+
+# 网络定义
+networks:
+  photonix-network:
+    driver: bridge  # 桥接网络

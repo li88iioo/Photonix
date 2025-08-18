@@ -1,0 +1,48 @@
+# Node dependencies
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# Build artifacts
+frontend/output.css
+frontend/js/dist/
+backend/public/
+
+# Local data and databases
+data/**
+!data/.gitkeep
+*.db
+*.db-wal
+*.db-shm
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files
+审计结果 基于当前仓库后端 实际使用 SQLite.md
+优化大纲
+env
+.env.*
+!.env.example
+backend/.env
+frontend/.env
+
+# OS / IDE / tooling
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+coverage/
+.cache/
+frontend/.cache/
+frontend/.parcel-cache/
+
+# Docker / Compose (local overrides)
+docker-compose.override.yml
+redis_data/
+

@@ -1,0 +1,20 @@
+{
+  "name": "Photonix",
+  "short_name": "Photonix",
+  "start_url": ".",
+  "display": "standalone",
+  "display_override": [
+    "window-controls-overlay"
+  ],
+  "background_color": "#111827",
+  "theme_color": "#111827",
+  "description": "A private photo album for you.",
+  "icons": [
+    {
+      "src": "/assets/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

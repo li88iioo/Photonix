@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Photonix</title>
+    <meta name="theme-color" content="#111827">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="modulepreload" href="/js/dist/main.js">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/output.css">
+</head>
+
+<body class="bg-gray-900 text-white selection:bg-purple-500 selection:text-white">
+
+    <div id="app-container" class="transition-opacity duration-500 opacity-0 with-fixed-topbar" style="--topbar-offset: 112px;">
+        <div id="page-inner" class="mx-auto max-w-[min(96vw,1760px)] px-2 sm:px-4 md:px-8 py-2 sm:py-4 md:py-8">
+            <header id="topbar" class="topbar">
+                <div class="topbar-inner">
+                    <div class="topbar-left">
+                        <h1 id="main-title"
+                            class="text-2xl sm:text-4xl md:text-5xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-purple-400 via-pink-500 to-red-500 transition-all duration-300">
+                            Photonix
+                        </h1>
+                        <p id="main-subtitle" class="text-gray-400 text-sm sm:text-base">一个属于你的私人写真集</p>
+                    </div>
+                    <div class="topbar-right">
+                        <div class="search-container relative">
+                            <button id="mobile-search-back-btn" class="search-back-btn sm:hidden" aria-label="返回" title="返回" style="display:none">←</button>
+                            <div class="search-field">
+                                <input type="text" id="search-input" class="search-input" placeholder="搜索相册或图片..." inputmode="search" enterkeyhint="search" autocomplete="off" autocapitalize="none" autocorrect="off">
+                                <button id="search-submit-btn" class="search-submit-btn" aria-label="执行搜索" type="button">
+                                    <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                        <circle cx="11" cy="11" r="7"/>
+                                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                                    </svg>
+                                </button>
+                            </div>
+                            <div id="search-history" class="absolute top-full left-0 right-0 mt-1 z-50 hidden max-h-60 overflow-y-auto"></div>
+                        </div>
+                        <button id="mobile-search-btn" class="sg-icon-btn--light sm:hidden" aria-label="搜索">
+                            <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                            </svg>
+                        </button>
+                        <button id="settings-btn" class="sg-icon-btn--light" title="设置" aria-label="设置">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="3"></circle>
+                                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="topbar-context" id="topbar-context">
+                    <nav id="breadcrumb-nav"
+                        class="mb-0 text-base sm:text-xl text-gray-400 flex items-center justify-between">
+                        <div id="breadcrumb-links" class="flex-1 min-w-0"></div>
+                        <div id="sort-container" class="flex-shrink-0 ml-4"></div>
+                    </nav>
+                </div>
+            </header>
+            <div id="gallery-view">
+
+                <div id="loading" class="hidden">
+                    <!-- 加载状态将由JavaScript动态生成 -->
+                </div>
+
+                <div id="content-grid"></div>
+                <div id="infinite-scroll-loader" class="hidden text-center py-8 col-span-full">
+                    <div class="flex items-center justify-center">
+                        <div class="spinner"></div>
+                        <p class="ml-4 text-gray-400">正在加载更多...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="auth-overlay"
+        class="fixed inset-0 z-[100] bg-gray-900 flex items-center justify-center transition-opacity duration-300 opacity-0 pointer-events-none">
+        <div id="auth-background"
+            class="absolute inset-0 bg-cover bg-center transition-opacity duration-1000 opacity-0"></div>
+        <div id="auth-container" class="relative z-10"></div>
+    </div>
+
+    <!-- 设置模态框容器，内容将由JS从模板填充 -->
+    <div id="settings-modal">
+        <div id="settings-card"></div>
+    </div>
+
+    <div id="modal" class="fixed inset-0 z-50 opacity-0 pointer-events-none">
+        <div id="modal-backdrop-one" class="modal-backdrop"></div>
+        <div id="modal-backdrop-two" class="modal-backdrop"></div>
+        <div id="modal-content" class="relative w-full h-full flex flex-col items-center justify-center">
+            <div id="media-panel" class="w-full h-full flex items-center justify-center p-4">
+                <img id="modal-img" src="" alt="" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+                    draggable="false" style="user-select: none; -webkit-user-select: none;">
+                <video id="modal-video" class="hidden max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+                    controls></video>
+            </div>
+            <div id="navigation-hint" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div class="hint-content">
+                    <div class="hint-icon mouse-icon">
+                        <div class="scroll-wheel"></div>
+                    </div>
+                    <div class="hint-icon keyboard-icon">
+                        <div class="key-left"></div>
+                        <div class="key-right"></div>
+                    </div>
+                    <p class="hint-text">使用滚轮或键盘左右键翻页</p>
+                </div>
+            </div>
+            <div id="modal-toolbar"
+                class="absolute bottom-0 left-0 right-0 p-2 sm:p-4 flex justify-center items-center">
+                <div class="toolbar-inner flex items-center space-x-2 sm:space-x-4 p-2 rounded-full">
+                    <div id="ai-controls-container" class="hidden">
+                        <div id="caption-container-mobile" class="mobile-caption-container md:hidden"></div>
+                        <div id="caption-bubble-wrapper" class="relative hidden md:block"><button
+                                id="toggle-caption-btn" class="modal-action-btn"><svg xmlns="http://www.w3.org/2000/svg"
+                                    width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                                </svg><span>画中密语</span></button>
+                            <div id="caption-bubble" class="caption-bubble">
+                                <div id="caption-container" class="caption-content"></div>
+                                <div id="caption-actions-container" class="mt-3 pt-3 border-t border-t-white/10"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <button id="modal-close" class="modal-close-button" aria-label="关闭"><svg xmlns="http://www.w3.org/2000/svg"
+                width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg></button>
+    </div>
+
+    <!-- 设置表单 -->
+    <template id="settings-form-template">
+        <div class="settings-layout">
+            <header class="settings-header">
+                <h2>设置</h2>
+                <button class="close-btn" title="关闭"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg></button>
+            </header>
+            <main class="settings-main">
+                <nav class="settings-nav">
+                    <button data-tab="security" class="active"><svg xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                        </svg><span>安全</span></button>
+                    <button data-tab="ai"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 8V4H8"></path>
+                            <rect x="4" y="12" width="8" height="8" rx="2"></rect>
+                            <path d="M12 12v8h4"></path>
+                            <path d="M16 12v-2a2 2 0 0 0-2-2"></path>
+                            <path d="M20 12V6a2 2 0 0 0-2-2"></path>
+                            <path d="M20 16v-1a1 1 0 0 0-1-1"></path>
+                            <path d="M12 20v-4"></path>
+                        </svg><span>AI设置</span></button>
+                </nav>
+                <div class="settings-content-panel">
+                    <div id="security-settings-content" class="settings-tab-content active">
+                        <div class="setting-group">
+                            <h3 class="setting-group-title">访问密码</h3>
+                            <p class="setting-group-description">启用后，访问画廊需要输入密码。</p>
+                            <div class="setting-group-content">
+                                <div id="password-enabled-wrapper" class="form-row">
+                                    <label for="password-enabled" class="form-label">启用访问密码</label>
+                                    <input type="checkbox" id="password-enabled" name="password_enabled"
+                                        class="toggle-switch">
+                                </div>
+                            </div>
+                        </div>
+                        <div id="password-settings-group" class="setting-group" style="display: none;">
+                            <h3 class="setting-group-title">修改密码</h3>
+                            <p class="setting-group-description">如果需要更新密码，请在此处设置新密码。</p>
+                            <div id="new-password-wrapper" class="setting-group-content">
+                                <form id="new-password-form" onsubmit="return false;">
+                                    <input type="text" name="username" autocomplete="username" style="display: none;" tabindex="-1" aria-hidden="true">
+                                    <div class="password-wrapper">
+                                        <input type="password" id="new-password" name="new_password" placeholder="设置新密码"
+                                            class="form-input" autocomplete="new-password">
+                                        <span class="password-toggle-icon">
+                                            <svg class="eye-open" xmlns="http://www.w3.org/2000/svg" width="20" height="20"
+                                                fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                                                <path stroke-linecap="round" stroke-linejoin="round"
+                                                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                <path stroke-linecap="round" stroke-linejoin="round"
+                                                    d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                            </svg>
+                                            <svg class="eye-closed" xmlns="http://www.w3.org/2000/svg" width="20"
+                                                height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                                                stroke-width="1.5" style="display: none;">
+                                                <path stroke-linecap="round" stroke-linejoin="round"
+                                                    d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                                            </svg>
+                                        </span>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="ai-settings-content" class="settings-tab-content">
+                        <div class="setting-group">
+                            <h3 class="setting-group-title">AI 密语</h3>
+                            <p class="setting-group-description">连接到您的AI服务，为照片生成有趣的描述。</p>
+                            <div class="setting-group-content">
+                                <div class="form-row"><label for="ai-enabled" class="form-label">启用 AI
+                                        密语功能</label><input type="checkbox" id="ai-enabled" name="ai_enabled"
+                                        class="toggle-switch"></div>
+                            </div>
+                        </div>
+                        <div id="api-settings-group" class="setting-group" style="display: none;">
+                            <h3 class="setting-group-title">API 配置</h3>
+                            <p class="setting-group-description">请填写您的AI服务提供商的详细信息。</p>
+                            <div class="setting-group-content">
+                                <form id="ai-settings-form" onsubmit="return false;">
+                                    <input type="text" id="ai-url" name="ai_url"
+                                        placeholder="AI 服务地址 (以: /v1/chat/completions结尾)" class="form-input">
+                                    <input type="password" id="ai-key" name="ai_key" placeholder="API Key (若需更新，请在此输入)"
+                                        class="form-input" autocomplete="off">
+                                    <input type="text" id="ai-model" name="ai_model" placeholder="模型名称 (视觉模型)"
+                                        class="form-input">
+                                    <textarea id="ai-prompt" name="ai_prompt" rows="3" placeholder="AI 默认提示词"
+                                        class="form-textarea"></textarea>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+            <footer class="settings-footer">
+                <button class="footer-btn btn-secondary cancel-btn">取消</button>
+                <button class="footer-btn btn-primary save-btn" disabled><span class="btn-text">保存更改</span>
+                    <div class="spinner"></div>
+                </button>
+            </footer>
+        </div>
+    </template>
+
+
+    <!-- 密码验证弹窗模板 -->
+    <template id="password-prompt-template">
+        <div class="password-prompt-overlay">
+            <div class="password-prompt-card">
+                <h3 class="password-prompt-title">需要身份验证</h3>
+                <p class="password-prompt-description">请输入当前密码以继续操作。</p>
+                <form id="password-prompt-form" onsubmit="return false;">
+                    <input type="text" name="username" autocomplete="username" style="display: none;" tabindex="-1" aria-hidden="true">
+                    <div class="input-group"><input type="password" id="prompt-password-input" class="password-input"
+                            placeholder="请输入密码" autocomplete="current-password"><button type="button" class="password-toggle-btn" title="显示/隐藏密码"><svg
+                                class="eye-open" xmlns="http://www.w3.org/2000/svg" width="20" height="20"
+                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                            </svg><svg class="eye-closed" style="display: none;" xmlns="http://www.w3.org/2000/svg"
+                                width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"></path>
+                                <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68">
+                                </path>
+                                <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"></path>
+                                <line x1="2" x2="22" y1="2" y2="22"></line>
+                            </svg></button>
+                        <div class="success-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M20 6 9 17l-5-5"></path>
+                            </svg></div>
+                    </div>
+                </form>
+                <p class="error-message" id="prompt-error-message"></p>
+                <div class="button-group"><button type="button" class="prompt-btn cancel-btn">取消</button><button
+                        type="button" class="prompt-btn confirm-btn"><span class="btn-text">确认</span>
+                        <div class="spinner"></div>
+                    </button></div>
+            </div>
+        </div>
+    </template>
+
+    <!-- 通知容器 -->
+    <div id="notification-container"></div>
+
+    <script type="module" src="/js/dist/main.js"></script>
+    <button id="back-to-top-btn" aria-label="回到顶部" title="回到顶部"><svg xmlns="http://www.w3.org/2000/svg" fill="none"
+            viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" />
+        </svg></button>

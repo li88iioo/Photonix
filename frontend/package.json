@@ -1,0 +1,22 @@
+{
+  "name": "frontend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "js/main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "tailwindcss -i ./style.css -o ./output.css --minify && npm run build-js && npx workbox-cli injectManifest workbox-config.js",
+    "build-js": "npx esbuild js/main.js --bundle --minify --format=esm --splitting --outdir=js/dist"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@tailwindcss/aspect-ratio": "^0.4.2",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.4",
+    "esbuild": "^0.20.0",
+    "workbox-cli": "^7.0.0"
+  }
+}

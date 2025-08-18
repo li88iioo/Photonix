@@ -1,0 +1,446 @@
+// frontend/sw-src.js (source for Workbox injectManifest)
+
+// Load Workbox runtime (CDN) and enable precache injection point
+try {
+  importScripts('https://storage.googleapis.com/workbox-cdn/releases/7.0.0/workbox-sw.js');
+  if (self.workbox && self.workbox.precaching) {
+    // precache manifest injected at build time
+    // eslint-disable-next-line no-undef
+    self.workbox.precaching.precacheAndRoute(self.__WB_MANIFEST || []);
+  }
+} catch (e) {
+  // If CDN is not reachable, SW still works with runtime caching below
+}
+
+// --- Below is your existing custom Service Worker logic ---
+
+// Derive cache versions automatically from the injected precache manifest
+function hashString(str) {
+  // FNV-1a 32-bit hash
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
+  }
+  return (h >>> 0).toString(16);
+}
+
+const __WB_ENTRIES = (self && Array.isArray(self["__WB_MANIFEST"])) ? self["__WB_MANIFEST"] : [];
+let __BUILD_REV = 'dev';
+try {
+  __BUILD_REV = hashString(JSON.stringify(__WB_ENTRIES));
+} catch {}
+
+// Cache versioning（自动随构建更新）
+const STATIC_CACHE_VERSION = `static-${__BUILD_REV}`;
+const API_CACHE_VERSION = `api-${__BUILD_REV}`;
+const MEDIA_CACHE_VERSION = `media-${__BUILD_REV}`;
+
+// 仅缓存稳定核心；JS 使用 dist 入口，其他 chunk 运行时按策略缓存
+const CORE_ASSETS = [
+  '/',
+  '/index.html',
+  '/output.css', // 更新为最终生成的 CSS 文件
+  '/manifest.json',
+
+  // --- JS 模块 ---
+  '/js/dist/main.js',
+
+  // --- 静态资源 (assets) ---
+  
+
+  // --- 外部资源 ---
+  'https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700&display=swap'
+];
+
+// 检查响应是否适合缓存
+function isCacheableResponse(response, request) {
+  // 只缓存成功的响应
+  if (!response.ok) return false;
+  
+  // 不缓存206 Partial Content响应（内网穿透常见问题）
+  if (response.status === 206) return false;
+  
+  // 不缓存非GET请求
+  if (request && request.method !== 'GET') return false;
+  
+  // 不缓存非基本或CORS响应
+  if (response.type !== 'basic' && response.type !== 'cors') return false;
+  
+  return true;
+}
+
+// 1. 安装 Service Worker，缓存核心资源
+self.addEventListener('install', event => {
+  event.waitUntil((async () => {
+    try {
+      const cache = await caches.open(STATIC_CACHE_VERSION);
+      console.log('Service Worker: Caching core assets');
+      // 柔性安装：单个失败不阻断 SW 安装
+      await Promise.allSettled(CORE_ASSETS.map(u => cache.add(u)));
+    } catch (e) {
+      // 忽略，继续安装
+      console.warn('SW install: some core assets failed to cache:', e && e.message);
+    }
+    await self.skipWaiting();
+  })());
+});
+
+// 2. 激活 Service Worker，清理旧缓存
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    (async () => {
+      const cacheNames = await caches.keys();
+      await Promise.all(
+        cacheNames.map(cacheName => {
+          // 保留 Workbox 预缓存与当前版本缓存
+          if (cacheName.startsWith('workbox-')) return Promise.resolve();
+          if (
+            cacheName === STATIC_CACHE_VERSION ||
+            cacheName === API_CACHE_VERSION ||
+            cacheName === MEDIA_CACHE_VERSION
+          ) {
+            return Promise.resolve();
+          }
+
+          // 仅清理我们自己命名空间下的历史缓存，避免误删其他缓存
+          const isOurCache =
+            cacheName.startsWith('static-') ||
+            cacheName.startsWith('api-') ||
+            cacheName.startsWith('media-');
+
+          // 显式清理旧的 API 专用缓存（如 api-search-v1）与非当前版本的 api-* 缓存
+          const isLegacyApiSearch = cacheName === 'api-search-v1';
+          const isStaleApiCache = cacheName.startsWith('api-') && cacheName !== API_CACHE_VERSION;
+          const isStaleStaticCache = cacheName.startsWith('static-') && cacheName !== STATIC_CACHE_VERSION;
+          const isStaleMediaCache = cacheName.startsWith('media-') && cacheName !== MEDIA_CACHE_VERSION;
+
+          if (isLegacyApiSearch || isStaleApiCache || isStaleStaticCache || isStaleMediaCache || isOurCache) {
+            console.log('Service Worker: Deleting old cache:', cacheName);
+            return caches.delete(cacheName);
+          }
+
+          return Promise.resolve();
+        })
+      );
+
+      await self.clients.claim(); // 立即接管所有页面
+    })()
+  );
+});
+
+// 3. 拦截 fetch 请求，按类型采用不同缓存策略
+self.addEventListener('fetch', event => {
+  const { request } = event;
+  const url = new URL(request.url);
+  const hasAuth = request.headers && (request.headers.get('Authorization') || request.headers.get('authorization'));
+
+  // 优先处理页面导航：使用网络优先，失败回退缓存，避免部署后白屏
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request)
+        .then(response => {
+          // 后台更新 index.html 缓存
+          const copy = response.clone();
+          caches.open(STATIC_CACHE_VERSION).then(cache => cache.put('/index.html', copy)).catch(() => {});
+          return response;
+        })
+        .catch(() => caches.match('/index.html'))
+    );
+    return;
+  }
+
+  // A. 认证与设置接口：一律网络直连并禁用缓存
+  if (url.pathname.startsWith('/api/auth/')) {
+    event.respondWith(fetch(new Request(request, { cache: 'no-store' })));
+    return;
+  }
+  if (url.pathname === '/api/settings') {
+    event.respondWith(fetch(new Request(request, { cache: 'no-store' })));
+    return;
+  }
+
+  // 0. 前端构建产物（/js/dist/* 与 /output.css）：网络优先 + 回退缓存，减少升级不一致导致的白屏
+  if (
+    url.pathname.startsWith('/js/dist/') ||
+    url.pathname === '/output.css'
+  ) {
+    event.respondWith(
+      fetch(request)
+        .then(resp => {
+          if (isCacheableResponse(resp, request)) {
+            const copy = resp.clone();
+            caches.open(STATIC_CACHE_VERSION).then(cache => cache.put(request, copy)).catch(() => {});
+          }
+          return resp;
+        })
+        .catch(() => caches.match(request).then(r => r || new Response('', { status: 503, statusText: 'Service Unavailable' })))
+    );
+    return;
+  }
+
+  // 1. /api/search 采用网络优先
+  if (url.pathname.startsWith('/api/search')) {
+    // 携带 Authorization 时不参与 SW 缓存，避免将私人响应写入共享缓存
+    if (hasAuth) {
+      event.respondWith(fetch(request));
+      return;
+    }
+    event.respondWith(
+      fetch(request)
+        .then(response => {
+          if (isCacheableResponse(response, request)) {
+            const responseForCache = response.clone();
+            return caches.open('api-search-v1')
+              .then(cache => cache.put(request, responseForCache))
+              .then(() => response);
+          }
+          return response;
+        })
+        .catch(() => caches.match(request).then(r => r || new Response('', { status: 503, statusText: 'Service Unavailable' })))
+    );
+    return;
+  }
+
+  // 2. /api/browse/ 采用网络优先 + 短 SWR（仅缓存 200）
+  if (url.pathname.startsWith('/api/browse/')) {
+    // 对于非GET请求（如POST /api/browse/viewed），直接转发不缓存
+    if (request.method !== 'GET') {
+      event.respondWith(
+        fetch(request)
+          .then(response => response)
+          .catch(() => new Response('', { status: 503, statusText: 'Service Unavailable' }))
+      );
+      return;
+    }
+    if (hasAuth) {
+      event.respondWith(fetch(request));
+      return;
+    }
+    
+    // 对于GET请求，采用网络优先策略，并为 200 响应写入短期缓存
+    event.respondWith(
+      fetch(request)
+        .then(networkResponse => {
+          if (networkResponse.status === 200 && isCacheableResponse(networkResponse, request)) {
+            const responseForCache = networkResponse.clone();
+            return caches.open(API_CACHE_VERSION)
+              .then(cache => cache.put(request, responseForCache))
+              .then(() => networkResponse);
+          }
+          return networkResponse;
+        })
+        .catch(error => {
+          console.warn('Network request failed for browse API:', error);
+          // SWR：返回缓存（若有），无缓存则 503
+          return caches.match(request).then(r => r || new Response('', { status: 503, statusText: 'Service Unavailable' }));
+        })
+    );
+    return;
+  }
+
+  // 3. /api/thumbnail 采用网络优先，仅缓存 200（避免将 202 占位缓存）
+  if (url.pathname.startsWith('/api/thumbnail')) {
+    event.respondWith(
+      fetch(new Request(request, { cache: 'no-store' }))
+        .then(response => {
+          if (response.status === 200 && isCacheableResponse(response, request)) {
+            const responseForCache = response.clone();
+            return caches.open(API_CACHE_VERSION)
+              .then(cache => cache.put(request, responseForCache))
+              .then(() => response);
+          }
+          return response; // 202/4xx/5xx 直接透传且不缓存
+        })
+        .catch(() => caches.match(request).then(r => r || new Response('', { status: 503, statusText: 'Service Unavailable' })))
+    );
+    return;
+  }
+
+  // 4. 其他 /api/ 采用缓存优先+后台更新（SWR，不包括 /api/search/thumbnail）
+  if (url.pathname.startsWith('/api/')) {
+    if (request.method !== 'GET') {
+      event.respondWith(
+        fetch(request)
+          .then(response => response)
+          .catch(() => new Response('', { status: 503, statusText: 'Service Unavailable' }))
+      );
+      return;
+    }
+    if (hasAuth) {
+      // 携带 Authorization 的请求完全绕过缓存
+      event.respondWith(fetch(request));
+      return;
+    }
+    event.respondWith(
+      caches.open(API_CACHE_VERSION).then(cache => {
+        return cache.match(request).then(response => {
+          const fetchPromise = fetch(request).then(networkResponse => {
+            if (networkResponse.ok && isCacheableResponse(networkResponse, request)) {
+              const responseForCache = networkResponse.clone();
+              cache.put(request, responseForCache).catch(err => {
+                console.warn('Failed to cache API response:', err);
+              });
+            }
+            return networkResponse;
+          }).catch(() => new Response('', { status: 503, statusText: 'Service Unavailable' }));
+          return response || fetchPromise;
+        });
+      })
+    );
+    return;
+  }
+
+  // 5. 静态媒体资源
+  if (url.pathname.startsWith('/static/') || url.pathname.startsWith('/thumbs/')) {
+    // 对 Range 请求与视频资源禁用缓存，直接走网络，避免大文件卡顿与 206 兼容问题
+    const hasRange = request.headers && request.headers.has('range');
+    const fetchDirect = () => fetch(new Request(request, { cache: 'no-store' }))
+      .then(resp => resp)
+      .catch(() => new Response('', { status: 503, statusText: 'Service Unavailable' }));
+
+    if (hasRange) {
+      event.respondWith(fetchDirect());
+      return;
+    }
+
+    event.respondWith(
+      fetch(new Request(request, { cache: 'no-store' }))
+        .then(networkResponse => {
+          // 仅对非视频的小文件做缓存
+          const ct = (networkResponse.headers.get('Content-Type') || '').toLowerCase();
+          const cl = parseInt(networkResponse.headers.get('Content-Length') || '0', 10) || 0;
+          const isVideo = ct.startsWith('video/');
+          const isSmall = cl > 0 && cl <= 5 * 1024 * 1024; // <=5MB 认为小文件
+          if (!isVideo && isSmall && isCacheableResponse(networkResponse, request)) {
+            const copy = networkResponse.clone();
+            caches.open(MEDIA_CACHE_VERSION).then(cache => cache.put(request, copy)).catch(() => {});
+          }
+          return networkResponse;
+        })
+        .catch(() => caches.open(MEDIA_CACHE_VERSION).then(cache => cache.match(request)).then(r => r || new Response('', { status: 503, statusText: 'Service Unavailable' })))
+    );
+    return;
+  }
+
+  // 6. 核心静态资源（不含页面导航，导航已在最前处理）
+  if (CORE_ASSETS.some(asset => url.pathname.endsWith(asset.replace(/^\//, '')) || url.pathname === '/')) {
+    event.respondWith(
+      caches.match(request).then(cachedResponse => {
+        return cachedResponse || fetch(request).then(response => {
+          if (response.ok && isCacheableResponse(response, request)) {
+            const responseForCache = response.clone();
+            return caches.open(STATIC_CACHE_VERSION)
+              .then(cache => cache.put(request, responseForCache))
+              .then(() => response);
+          }
+          return response;
+        }).catch(() => new Response('', { status: 503, statusText: 'Service Unavailable' }));
+      })
+    );
+    return;
+  }
+
+  // 7. 离线兜底页（当页面导航失败时）
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request).catch(() => caches.match('/index.html'))
+    );
+    return;
+  }
+
+  // 8. 其他请求，Stale-While-Revalidate
+  event.respondWith(
+    caches.open(STATIC_CACHE_VERSION).then(cache => {
+      return cache.match(request).then(response => {
+        let fetchPromise = fetch(request).then(networkResponse => {
+          if (networkResponse.ok && isCacheableResponse(networkResponse, request)) {
+            const responseForCache = networkResponse.clone();
+            cache.put(request, responseForCache).catch(err => {
+              console.warn('Failed to cache response:', err);
+            });
+          }
+          return networkResponse;
+        }).catch(() => new Response('', { status: 503, statusText: 'Service Unavailable' }));
+        return response || fetchPromise;
+      });
+    })
+  );
+});
+
+
+// 4. 后台同步，处理离线请求
+self.addEventListener('sync', event => {
+    if (event.tag === 'sync-gallery-requests') {
+        console.log('Service Worker: Background sync triggered');
+        event.waitUntil(syncFailedRequests());
+    }
+});
+
+function syncFailedRequests() {
+    return openDb().then(db => {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        const requests = store.getAll();
+        return new Promise(resolve => {
+            requests.onsuccess = () => {
+                const failedRequests = requests.result;
+                const promises = failedRequests.map(req => {
+                    if (req.type === 'search') {
+                        return fetch(`/api/search?q=${encodeURIComponent(req.query)}`);
+                    } else if (req.type === 'ai-caption') {
+                        return fetch('/api/ai/generate', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(req.payload)
+                        });
+                    }
+                });
+                Promise.all(promises).then(() => {
+                    const writeTx = db.transaction(STORE_NAME, 'readwrite');
+                    writeTx.objectStore(STORE_NAME).clear();
+                    resolve();
+                });
+            };
+        });
+    });
+}
+
+const DB_NAME = 'offline-requests-db';
+const STORE_NAME = 'requests';
+
+// 打开 IndexedDB 数据库
+function openDb() {
+    return new Promise((resolve, reject) => {
+        const request = self.indexedDB.open(DB_NAME, 1);
+        request.onupgradeneeded = event => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME, { autoIncrement: true });
+            }
+        };
+        request.onsuccess = event => resolve(event.target.result);
+        request.onerror = event => reject(event.target.error);
+    });
+}
+
+// 5. 监听手动刷新消息，清除 API 缓存
+self.addEventListener('message', event => {
+    if (event.data && event.data.type === 'MANUAL_REFRESH') {
+        console.log('Service Worker: Manual refresh for API data triggered');
+        event.waitUntil(
+            (async () => {
+                // 清理与 API 相关的所有缓存（含搜索专用缓存）
+                const keys = await caches.keys();
+                await Promise.all(keys.map(k => {
+                    if (k === API_CACHE_VERSION || k.startsWith('api-')) {
+                        return caches.delete(k);
+                    }
+                }));
+                console.log('Service Worker: API caches cleared');
+            })()
+        );
+    }
+});
+
+
