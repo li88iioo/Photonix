@@ -400,9 +400,9 @@ const { invalidateTags } = require('../services/cache.service.js');
                     const thumbUpsertStmt = getDB('main').prepare("INSERT INTO thumb_status(path, mtime, status, last_checked) VALUES(?, ?, 'pending', 0) ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, status='pending'");
                     const processedAdds = await processDimensionsInParallel(addOperations, photosDir);
                     await tasks.processBatchInTransactionOptimized(processedAdds, itemsStmt, ftsStmt, thumbUpsertStmt);
-                    await new Promise((resolve, reject) => itemsStmt.finalize(err => err ? reject(err) : resolve()));
-                    await new Promise((resolve, reject) => ftsStmt.finalize(err => err ? reject(err) : resolve()));
-                    await new Promise((resolve, reject) => thumbUpsertStmt.finalize(err => err ? reject(err) : resolve()));
+                    try { await new Promise((resolve, reject) => itemsStmt.finalize(err => err ? reject(err) : resolve())); } catch (e) { logger.warn('Finalizing itemsStmt failed (ignored):', e.message); }
+                    try { await new Promise((resolve, reject) => ftsStmt.finalize(err => err ? reject(err) : resolve())); } catch (e) { logger.warn('Finalizing ftsStmt failed (ignored):', e.message); }
+                    try { await new Promise((resolve, reject) => thumbUpsertStmt.finalize(err => err ? reject(err) : resolve())); } catch (e) { logger.warn('Finalizing thumbUpsertStmt failed (ignored):', e.message); }
                 }
 
                 // 基于变更的相册集，增量维护 album_covers（UPSERT）

@@ -83,8 +83,9 @@ module.exports = async function(req, res, next) {
             return res.status(500).json({ code: 'SERVER_CONFIG_MISSING', message: '服务器缺少 JWT 配置', requestId: req.requestId });
         }
         const decoded = jwt.verify(token, JWT_SECRET);
-        // 仅信任已验证 Token 中的主体；忽略客户端头部自报的用户标识
-        const userId = decoded?.id || decoded?.sub || decoded?.user || 'anonymous';
+        // 修正：Token 中只包含 `sub` 声明，移除对 `id` 或 `user` 的无效检查
+        // 如果 `sub` 不存在，则视为匿名用户，与系统单用户设计保持一致
+        const userId = decoded?.sub || 'anonymous';
         req.user = { id: String(userId) };
         next(); // Token 有效，继续处理请求
 

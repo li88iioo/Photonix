@@ -19,8 +19,9 @@ function computeLoginLockSeconds(failures) {
 }
 
 function getLoginKeyBase(req) {
-    const headerUserId = req.headers['x-user-id'] || req.headers['x-userid'] || req.headers['x-user'];
-    const userKey = headerUserId ? `uid:${String(headerUserId)}` : `ip:${req.ip || req.connection?.remoteAddress || 'unknown'}`;
+    // 安全修复：登录防爆破的 Key 必须基于不可伪造的 IP 地址
+    // 移除基于 `x-user-id` 等可伪造头部的逻辑，防止攻击者绕过锁定
+    const userKey = `ip:${req.ip || req.connection?.remoteAddress || 'unknown'}`;
     return `login_guard:${userKey}`;
 }
 
@@ -170,8 +171,8 @@ exports.refresh = async (req, res) => {
             return res.status(401).json({ code, message: 'Token 无效或已过期', requestId: req.requestId });
         }
 
-        // 保持主体标识，最小改动：沿用 sub/id/user
-        const subject = decoded?.sub || decoded?.id || decoded?.user || 'gallery_user';
+        // 修正：仅沿用 `sub` 声明，因为这是登录时唯一设置的声明
+        const subject = decoded?.sub || 'gallery_user';
         const newToken = jwt.sign({ sub: subject }, JWT_SECRET, { expiresIn: '7d' });
         return res.json({ success: true, token: newToken });
 };

@@ -263,86 +263,7 @@ async function getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, 
     return { total, rows };
 }
 
-/**
- * 查找单个目录的封面图片
- * 递归查找所有子目录中最新修改的媒体文件作为封面
- * @param {string} directoryPath - 目录路径
- * @returns {Promise<Object|null>} 封面信息对象或null
- */
-async function findCoverPhoto(directoryPath) {
-    const cacheKey = `cover_info:${directoryPath.replace(PHOTOS_DIR, '').replace(/\\/g, '/')}`;
-    try {
-        // 尝试获取 Redis 缓存
-        const cachedCoverInfo = await redis.get(cacheKey);
-        if (cachedCoverInfo) {
-            try {
-                const parsed = JSON.parse(cachedCoverInfo);
-                if (parsed && parsed.path) {
-                    return parsed;
-                }
-            } catch (e) {
-                logger.warn(`解析封面缓存失败 for ${directoryPath}, 将重新计算。`, e);
-            }
-        }
 
-        if (!directoryPath || typeof directoryPath !== 'string' || directoryPath.trim() === '') return null;
-        const relativePath = path.relative(PHOTOS_DIR, directoryPath);
-        if (!isPathSafe(relativePath)) return null;
-
-        let bestCandidate = null;
-
-        async function findLatestInDir(dir) {
-            const entries = await fs.readdir(dir, { withFileTypes: true });
-            const filteredEntries = entries.filter(entry => entry.name !== '@eaDir' && !entry.name.includes('@eaDir'));
-
-            for (const entry of filteredEntries) {
-                const fullPath = path.join(dir, entry.name);
-                if (entry.isFile() && /\.(jpe?g|png|webp|gif|mp4|webm|mov)$/i.test(entry.name)) {
-                    try {
-                        const stats = await fs.stat(fullPath);
-                        if (!bestCandidate || stats.mtimeMs > bestCandidate.mtime) {
-                            bestCandidate = { path: fullPath, mtime: stats.mtimeMs };
-                        }
-                    } catch (statError) {
-                        logger.warn(`无法获取文件状态: ${fullPath}`, statError);
-                    }
-                } else if (entry.isDirectory()) {
-                    await findLatestInDir(fullPath);
-                }
-            }
-        }
-
-        await findLatestInDir(directoryPath);
-
-        if (bestCandidate) {
-            let dimensions = { width: 1, height: 1 };
-            try {
-                const isVideo = /\.(mp4|webm|mov)$/i.test(bestCandidate.path);
-                if (isVideo) {
-                    dimensions = await getVideoDimensions(bestCandidate.path);
-                } else {
-                    const metadata = await sharp(bestCandidate.path).metadata();
-                    dimensions = { width: metadata.width, height: metadata.height };
-                }
-            } catch (e) {
-                logger.error(`查找封面尺寸失败: ${bestCandidate.path}`, e);
-            }
-
-            const coverInfo = { path: bestCandidate.path, width: dimensions.width || 1, height: dimensions.height || 1 };
-            try {
-                await redis.set(cacheKey, JSON.stringify(coverInfo), 'EX', CACHE_DURATION);
-            } catch (e) {
-                logger.warn(`设置封面Redis缓存失败: ${cacheKey}`, e.message);
-            }
-            return coverInfo;
-        }
-
-        return null;
-    } catch (e) {
-        logger.debug(`查找封面时发生错误: ${directoryPath}`, e);
-        return null;
-    }
-}
 
 
 // 已下沉到 SQL：旧的 getSortedDirectoryEntries 已移除
@@ -358,6 +279,11 @@ async function findCoverPhoto(directoryPath) {
  * @returns {Promise<Object>} 包含items、totalPages、totalResults的对象
  */
 async function getDirectoryContents(relativePathPrefix, page, limit, userId, sort = 'smart') {
+    // 安全前置：首先验证路径，防止路径遍历漏洞
+    if (!isPathSafe(relativePathPrefix)) {
+        throw new Error(`不安全的路径访问: ${relativePathPrefix}`);
+    }
+
     const directory = path.join(PHOTOS_DIR, relativePathPrefix);
     // 检查路径是否存在且为目录
     const stats = await fs.stat(directory).catch(() => null);
@@ -370,8 +296,6 @@ async function getDirectoryContents(relativePathPrefix, page, limit, userId, sor
         throw new Error(`路径未找到或不是目录: ${relativePathPrefix}`);
     }
     try {
-        if (!isPathSafe(relativePathPrefix)) throw new Error('不安全的路径访问');
-
         const offset = (page - 1) * limit;
         const { total: totalResults, rows } = await getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, offset);
         const totalPages = Math.ceil(totalResults / limit) || 1;
@@ -574,7 +498,6 @@ function getAllParentPaths(filePath) {
 
 // 导出文件服务函数
 module.exports = {
-    findCoverPhoto,
     findCoverPhotosBatch,
     findCoverPhotosBatchDb,
     getDirectoryContents,
