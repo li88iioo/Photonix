@@ -24,7 +24,7 @@ pnpm-debug.log*
 
 # Environment files
 审计结果 基于当前仓库后端 实际使用 SQLite.md
-优化大纲
+优化审计.md
 env
 .env.*
 !.env.example

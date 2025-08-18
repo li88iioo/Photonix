@@ -15,7 +15,17 @@ const initializeMainDB = async () => {
         const mainMigrations = [
             {
                 key: 'create_items_table',
-                sql: `CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE, type TEXT NOT NULL, cover_path TEXT, last_viewed_at DATETIME)`
+                sql: `CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE, type TEXT NOT NULL, cover_path TEXT, last_viewed_at DATETIME, mtime INTEGER, width INTEGER, height INTEGER, status TEXT DEFAULT 'active' NOT NULL, processing_state TEXT DEFAULT 'completed' NOT NULL)`
+            },
+            {
+                key: 'add_status_column_to_items',
+                sql: `ALTER TABLE items ADD COLUMN status TEXT DEFAULT 'active' NOT NULL`,
+                check: async () => !(await hasColumn('main', 'items', 'status'))
+            },
+            {
+                key: 'add_processing_state_column_to_items',
+                sql: `ALTER TABLE items ADD COLUMN processing_state TEXT DEFAULT 'completed' NOT NULL`,
+                check: async () => !(await hasColumn('main', 'items', 'processing_state'))
             },
             {
                 key: 'create_thumb_status_table',
@@ -255,7 +265,7 @@ module.exports = {
     ensureCoreTables: async () => {
         try {
             // 主表兜底创建（幂等）
-            await runAsync('main', `CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE, type TEXT NOT NULL, cover_path TEXT, last_viewed_at DATETIME)`);
+            await runAsync('main', `CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE, type TEXT NOT NULL, cover_path TEXT, last_viewed_at DATETIME, mtime INTEGER, width INTEGER, height INTEGER, status TEXT DEFAULT 'active' NOT NULL, processing_state TEXT DEFAULT 'completed' NOT NULL)`);
             await runAsync('main', `CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(name, content='items', content_rowid='id', tokenize = "unicode61")`);
             await runAsync('main', `CREATE TABLE IF NOT EXISTS album_covers (
                 album_path TEXT PRIMARY KEY,

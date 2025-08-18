@@ -47,6 +47,7 @@ async function ensureBrowseIndexes() {
     if (browseIndexesEnsured) return;
     try {
         await runAsync('main', `CREATE INDEX IF NOT EXISTS idx_items_path ON items(path)`)
+        await runAsync('main', `CREATE INDEX IF NOT EXISTS idx_items_type ON items(type)`)
         await runAsync('main', `CREATE INDEX IF NOT EXISTS idx_items_type_path ON items(type, path)`)
         await runAsync('main', `CREATE INDEX IF NOT EXISTS idx_items_path_mtime ON items(path, mtime DESC)`)
         await runAsync('main', `CREATE INDEX IF NOT EXISTS idx_items_type_path_mtime ON items(type, path, mtime DESC)`)

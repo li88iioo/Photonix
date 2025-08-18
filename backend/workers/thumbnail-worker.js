@@ -94,35 +94,42 @@ async function generateVideoThumbnail(videoPath, thumbPath) {
 
 
 parentPort.on('message', async (task) => {
-    const { filePath, relativePath, type, thumbsDir } = task;
-    const isVideo = type === 'video';
-    const extension = isVideo ? '.jpg' : '.webp';
-    const thumbRelPath = relativePath.replace(/\.[^.]+$/, extension);
-    const thumbPath = path.join(thumbsDir, thumbRelPath);
-
-    // 如果缩略图已存在，直接跳过（状态写回由主线程统一负责，避免重复写库）
     try {
-        await fs.access(thumbPath);
-        parentPort.postMessage({ success: true, skipped: true, task, workerId: workerData.workerId });
-        return;
-    } catch (e) {
-        // 文件不存在才继续生成
-    }
+        const { filePath, relativePath, type, thumbsDir } = task;
+        const isVideo = type === 'video';
+        const extension = isVideo ? '.jpg' : '.webp';
+        const thumbRelPath = relativePath.replace(/\.[^.]+$/, extension);
+        const thumbPath = path.join(thumbsDir, thumbRelPath);
 
-    // 创建目录
-    try {
+        // 如果缩略图已存在，直接跳过（状态写回由主线程统一负责，避免重复写库）
+        try {
+            await fs.access(thumbPath);
+            parentPort.postMessage({ success: true, skipped: true, task, workerId: workerData.workerId });
+            return;
+        } catch (e) {
+            // 文件不存在才继续生成
+        }
+
+        // 创建目录
         await fs.mkdir(path.dirname(thumbPath), { recursive: true });
-    } catch (error) {
-        parentPort.postMessage({ success: false, error: `Failed to create directory: ${error.message}`, task, workerId: workerData.workerId });
-        return;
-    }
-    
-    let result;
-    if (isVideo) {
-        result = await generateVideoThumbnail(filePath, thumbPath);
-    } else {
-        result = await generateImageThumbnail(filePath, thumbPath);
-    }
+        
+        let result;
+        if (isVideo) {
+            result = await generateVideoThumbnail(filePath, thumbPath);
+        } else {
+            result = await generateImageThumbnail(filePath, thumbPath);
+        }
 
-    parentPort.postMessage({ ...result, task, workerId: workerData.workerId });
+        parentPort.postMessage({ ...result, task, workerId: workerData.workerId });
+    } catch (error) {
+        // 捕获到任何未处理的异常
+        console.error(`[THUMBNAIL-WORKER] Fatal error processing ${task.relativePath}: ${error.message}`);
+        // 向主线程报告失败，以便更新数据库状态并继续处理下一个任务
+        parentPort.postMessage({
+            success: false,
+            error: `Processing failed: ${error.message}`,
+            task,
+            workerId: workerData.workerId
+        });
+    }
 });
