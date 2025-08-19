@@ -25,11 +25,14 @@ async function* walk(dir) {
     return;
   }
   for (const entry of entries) {
-    if (entry.name === '@eaDir') continue;
+    // 跳过系统目录、隐藏目录和临时目录
+    if (entry.name === '@eaDir' || entry.name === '.tmp' || entry.name.startsWith('.')) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       yield* walk(full);
     } else if (entry.isFile() && /\.(jpe?g|png|webp|gif)$/i.test(entry.name)) {
+      // 跳过临时文件
+      if (entry.name.startsWith('temp_opt_') || entry.name.includes('.tmp')) continue;
       yield full;
     }
   }

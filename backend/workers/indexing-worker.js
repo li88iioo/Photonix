@@ -174,14 +174,20 @@ const { invalidateTags } = require('../services/cache.service.js');
         try {
             const entries = await fs.readdir(dir, { withFileTypes: true });
             for (const entry of entries) {
-                if (entry.name === '@eaDir') continue;
+                // 跳过系统目录、隐藏目录和临时目录
+                if (entry.name === '@eaDir' || entry.name === '.tmp' || entry.name.startsWith('.')) continue;
+                
                 const fullPath = path.join(dir, entry.name);
                 const entryRelativePath = path.join(relativePath, entry.name);
                 const stats = await fs.stat(fullPath).catch(() => ({ mtimeMs: 0 }));
+                
                 if (entry.isDirectory()) {
                     yield { type: 'album', path: entryRelativePath, name: entry.name, mtime: stats.mtimeMs };
                     yield* walkDirStream(fullPath, entryRelativePath);
                 } else if (entry.isFile() && /\.(jpe?g|png|webp|gif|mp4|webm|mov)$/i.test(entry.name)) {
+                    // 跳过临时文件
+                    if (entry.name.startsWith('temp_opt_') || entry.name.includes('.tmp')) continue;
+                    
                     const type = /\.(jpe?g|png|webp|gif)$/i.test(entry.name) ? 'photo' : 'video';
                     yield { type, path: entryRelativePath, name: entry.name, mtime: stats.mtimeMs };
                 }

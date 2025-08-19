@@ -85,9 +85,11 @@ function setupWorkerListeners() {
                 thumbBgLoopActive = true;
                 let items = msg.payload || [];
 
-                // 额外防御：过滤掉非媒体扩展的历史脏数据，并尝试清理数据库索引中的无效条目
+                // 额外防御：过滤掉非媒体扩展的历史脏数据、临时文件和临时目录，并尝试清理数据库索引中的无效条目
                 const isMediaPath = (p) => /\.(jpe?g|png|webp|gif|mp4|webm|mov)$/i.test(p || '');
-                const invalidItems = items.filter(it => !isMediaPath(it.path));
+                const isNotTempFile = (p) => !p.includes('/.tmp/') && !p.includes('\\.tmp\\') && !p.startsWith('temp_opt_') && !p.endsWith('.tmp');
+                const validItems = items.filter(it => isMediaPath(it.path) && isNotTempFile(it.path));
+                const invalidItems = items.filter(it => !isMediaPath(it.path) || !isNotTempFile(it.path));
                 if (invalidItems.length > 0) {
                     try {
                         const badPaths = invalidItems.map(it => it.path);
@@ -95,11 +97,11 @@ function setupWorkerListeners() {
                         await dbRun('main', `DELETE FROM items WHERE path IN (${placeholders})`, badPaths);
                         // 清理孤立的 FTS 记录
                         await dbRun('main', `DELETE FROM items_fts WHERE rowid NOT IN (SELECT rowid FROM items)`);
-                        logger.info(`[Main-Thread] 清理无效媒体索引 ${invalidItems.length} 条。`);
+                        logger.info(`[Main-Thread] 清理无效媒体索引和临时文件 ${invalidItems.length} 条。`);
                     } catch (e) {
                         logger.warn(`[Main-Thread] 清理无效媒体索引失败: ${e.message}`);
                     }
-                    items = items.filter(it => isMediaPath(it.path));
+                    items = validItems;
                 }
                 logger.info(`[Main-Thread] 收到 ${items.length} 个媒体项目，开始按数据库“缺失集合”入队后台缩略图任务...`);
                 // 自适应调度参数（不依赖 .env，自动调节）
@@ -570,7 +572,12 @@ function watchPhotosDir() {
         ignoreInitial: true,    // 忽略初始扫描
         persistent: true,       // 持续监控
         depth: 99,              // 监控深度99层
-        ignored: /(^|[\/\\])\..|@eaDir/,  // 忽略隐藏文件和Synology系统目录
+        ignored: [
+            /(^|[\/\\])\..|@eaDir/,  // 忽略隐藏文件和Synology系统目录
+            /(^|[\/\\])\.tmp/,        // 忽略临时目录
+            /temp_opt_.*/,            // 忽略临时文件
+            /.*\.tmp$/                // 忽略.tmp后缀文件
+        ],
         awaitWriteFinish: { stabilityThreshold: 2000, pollInterval: 100 }, // 等待文件写入完成
         // 在 SMB/NFS/网络挂载/某些 Windows 环境下，FS 事件可能丢失；允许通过环境变量切换为轮询模式
         usePolling: (process.env.WATCH_USE_POLLING || 'false').toLowerCase() === 'true',

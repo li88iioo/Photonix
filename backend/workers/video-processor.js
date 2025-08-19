@@ -29,19 +29,30 @@ const { THUMBS_DIR, PHOTOS_DIR } = require('../config');
     // 核心处理函数：优化 moov 并生成 HLS
     async function processVideo(filePath, relativePath, thumbsDir) {
         const targetDir = path.dirname(filePath);
-        const tempPath = path.join(targetDir, `temp_opt_${path.basename(filePath)}`);
+        // 在源文件目录内创建 .tmp 子目录，避免跨设备链接问题
+        const tempDir = path.join(targetDir, '.tmp');
+        const tempPath = path.join(tempDir, `temp_opt_${path.basename(filePath)}`);
         const hlsOutputDir = path.join(thumbsDir, 'hls', relativePath);
 
         try {
-            // 0. 预检测：目录是否可写
+            // 0. 预检测：目录是否可写，并创建临时目录
             await fs.access(targetDir, FS_CONST.W_OK);
+            await fs.mkdir(tempDir, { recursive: true });
+            
+            // 在 .tmp 目录中创建 .nomedia 文件，防止被索引工具读取
+            const nomediaFile = path.join(tempDir, '.nomedia');
+            await fs.writeFile(nomediaFile, '# 临时目录，请勿索引\n').catch(() => {});
+            
             await fs.mkdir(hlsOutputDir, { recursive: true });
 
             // 1. 优化 moov atom (faststart)
             logger.info(`[1/3] 优化 MOOV atom: ${filePath}`);
             const faststartCommand = `ffmpeg -v error -y -i "${filePath}" -c copy -movflags +faststart "${tempPath}"`;
             await execPromise(faststartCommand);
-            await fs.rename(tempPath, filePath);
+            
+            // 使用复制替代重命名，避免跨设备问题
+            await fs.copyFile(tempPath, filePath);
+            await fs.unlink(tempPath); // 删除临时文件
             logger.info(`[1/3] MOOV atom 优化成功: ${filePath}`);
 
             // 2. 生成 HLS 多码率流
@@ -68,10 +79,34 @@ const { THUMBS_DIR, PHOTOS_DIR } = require('../config');
             await fs.writeFile(path.join(hlsOutputDir, 'master.m3u8'), masterPlaylist);
             logger.info(`[3/3] HLS 主播放列表创建成功`);
 
+            // 清理临时目录（如果为空）
+            try {
+                const tempFiles = await fs.readdir(tempDir);
+                if (tempFiles.length === 0) {
+                    await fs.rmdir(tempDir);
+                }
+            } catch (e) {
+                // 忽略清理错误
+            }
+
             return { success: true, path: filePath };
 
         } catch (error) {
-            await fs.unlink(tempPath).catch(() => {});
+            // 清理临时文件和目录
+            try {
+                if (await fs.access(tempPath).then(() => true).catch(() => false)) {
+                    await fs.unlink(tempPath);
+                }
+                if (await fs.access(tempDir).then(() => true).catch(() => false)) {
+                    const tempFiles = await fs.readdir(tempDir);
+                    if (tempFiles.length === 0) {
+                        await fs.rmdir(tempDir);
+                    }
+                }
+            } catch (cleanupError) {
+                // 忽略清理错误
+            }
+            
             await fs.rm(hlsOutputDir, { recursive: true, force: true }).catch(() => {});
             return { success: false, path: filePath, error: error.message || '未知 ffmpeg 错误' };
         }
@@ -124,10 +159,67 @@ const { THUMBS_DIR, PHOTOS_DIR } = require('../config');
         }
     }
 
+    // 全局临时文件清理函数
+    async function cleanupTempFiles() {
+        try {
+            logger.info('[VIDEO-PROCESSOR] 开始清理残留的临时文件...');
+            let cleanedCount = 0;
+            
+            // 递归查找并清理 .tmp 目录
+            async function cleanupDir(dirPath) {
+                try {
+                    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+                    
+                    for (const entry of entries) {
+                        const fullPath = path.join(dirPath, entry.name);
+                        
+                        if (entry.isDirectory()) {
+                            if (entry.name === '.tmp') {
+                                // 清理 .tmp 目录
+                                try {
+                                    const tempFiles = await fs.readdir(fullPath);
+                                    if (tempFiles.length === 0) {
+                                        await fs.rmdir(fullPath);
+                                        cleanedCount++;
+                                        logger.debug(`清理空临时目录: ${fullPath}`);
+                                    } else {
+                                        // 删除 .tmp 目录中的所有文件
+                                        for (const tempFile of tempFiles) {
+                                            await fs.unlink(path.join(fullPath, tempFile));
+                                        }
+                                        await fs.rmdir(fullPath);
+                                        cleanedCount++;
+                                        logger.debug(`清理临时目录: ${fullPath}`);
+                                    }
+                                } catch (e) {
+                                    logger.warn(`清理临时目录失败: ${fullPath}`, e.message);
+                                }
+                            } else {
+                                // 递归处理子目录
+                                await cleanupDir(fullPath);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    // 忽略无法访问的目录
+                }
+            }
+            
+            await cleanupDir(PHOTOS_DIR);
+            logger.info(`[VIDEO-PROCESSOR] 临时文件清理完成，共清理 ${cleanedCount} 个目录`);
+            
+        } catch (error) {
+            logger.error('[VIDEO-PROCESSOR] 清理临时文件时出错:', error);
+        }
+    }
+
     parentPort.on('message', async (task) => {
         if (task.type === 'backfill') {
             logger.info('[VIDEO-PROCESSOR] 收到 HLS 回填任务，开始扫描数据库...');
             try {
+                // 先清理残留的临时文件
+                await cleanupTempFiles();
+                
                 const videos = await dbAll('main', `SELECT path FROM items WHERE type = 'video'`);
                 logger.info(`发现 ${videos.length} 个视频需要检查 HLS 状态。`);
                 for (const video of videos) {
@@ -142,6 +234,10 @@ const { THUMBS_DIR, PHOTOS_DIR } = require('../config');
             } catch (e) {
                 logger.error('[VIDEO-PROCESSOR] HLS 回填任务失败:', e);
             }
+        } else if (task.type === 'cleanup') {
+            // 手动触发清理任务
+            await cleanupTempFiles();
+            parentPort.postMessage({ success: true, message: '临时文件清理完成' });
         } else {
             // 处理普通单个任务
             await handleTask(task);
