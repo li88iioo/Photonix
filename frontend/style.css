@@ -1009,7 +1009,11 @@ body.modal-open .topbar {
 }
 .search-submit-btn { transition: background .2s ease, color .2s ease; }
 .search-submit-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
-.search-submit-btn:active { transform: translateY(1px); }
+.search-submit-btn:active { 
+  transform: translateY(-50%);
+  background: rgba(255,255,255,0.08);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.08);
+}
 /* 移动端覆盖态：左侧返回按钮 */
 .search-back-btn {
   position: absolute;

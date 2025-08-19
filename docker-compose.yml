@@ -9,7 +9,7 @@ services:
     volumes:
       - /opt/photos:/app/photos
       - ./data:/app/data
-    container_name: photonix-app
+    container_name: Photonix
     env_file:
       - ./.env
     restart: unless-stopped
@@ -28,7 +28,7 @@ services:
   redis:
     # Redis 服务，缓存和消息队列
     image: redis:7-alpine
-    container_name: photonix-redis
+    container_name: Photonix-redis
     ports:
       - "6379:6379"  # 映射 Redis 端口
     command: redis-server --appendonly yes  # 开启持久化
@@ -41,7 +41,7 @@ services:
       retries: 5
     restart: unless-stopped
     networks:
-      - photonix-network
+      - Photonix-network
 
 
 # 卷定义
@@ -50,5 +50,5 @@ volumes:
 
 # 网络定义
 networks:
-  photonix-network:
+  Photonix-network:
     driver: bridge  # 桥接网络

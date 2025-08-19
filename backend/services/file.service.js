@@ -332,6 +332,25 @@ async function getDirectoryContents(relativePathPrefix, page, limit, userId, sor
             }
         }
 
+        // 获取HLS就绪状态
+        const videoRows = rowsEffective.filter(r => !r.is_dir && /\.(mp4|webm|mov)$/i.test(r.name));
+        let hlsReadySet = new Set();
+        if (videoRows.length > 0) {
+            try {
+                const videoPaths = videoRows.map(r => r.path);
+                const placeholders = videoPaths.map(() => '?').join(',');
+                const processedRows = await dbAll(
+                    'main',
+                    `SELECT path FROM processed_videos WHERE path IN (${placeholders})`,
+                    videoPaths
+                );
+                hlsReadySet = new Set(processedRows.map(r => r.path));
+            } catch (e) {
+                logger.warn(`无法检查HLS就绪状态，可能processed_videos表不存在或结构不兼容: ${e.message}`);
+                // On error, continue gracefully with an empty set, assuming no videos are ready.
+            }
+        }
+
         // 相册封面预取（基于 DB，避免递归 FS）
         const albumRows = rowsEffective.filter(r => r.is_dir === 1);
         const albumPathsRel = albumRows.map(r => r.path);
@@ -446,7 +465,8 @@ async function getDirectoryContents(relativePathPrefix, page, limit, userId, sor
                         thumbnailUrl,
                         width: dimensions.width,
                         height: dimensions.height,
-                        mtime
+                        mtime,
+                        hlsReady: isVideo ? hlsReadySet.has(entryRelativePath) : false
                     }
                 };
             }

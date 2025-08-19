@@ -37,6 +37,14 @@ const initializeMainDB = async () => {
                 )`
             },
             {
+                key: 'create_processed_videos_table',
+                sql: `CREATE TABLE IF NOT EXISTS processed_videos (
+                    path TEXT PRIMARY KEY NOT NULL,
+                    processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )`,
+                check: async () => !(await hasTable('main', 'processed_videos'))
+            },
+            {
                 // 旧版本可能缺少 last_checked 列，这里补齐
                 key: 'add_last_checked_column_thumb_status',
                 sql: `ALTER TABLE thumb_status ADD COLUMN last_checked INTEGER DEFAULT 0`,
@@ -279,4 +287,4 @@ module.exports = {
             logger.warn('[MIGRATIONS] ensureCoreTables 兜底创建失败（可忽略，迁移已处理）：', e && e.message);
         }
     }
-}; 
+};
