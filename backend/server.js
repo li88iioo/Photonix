@@ -199,12 +199,6 @@ async function startServer() {
 				buildSearchIndex();
 			} else {
 				logger.info(`索引已存在，跳过全量构建。当前索引包含 ${itemCount[0].count} 个条目。`);
-				try {
-					logger.info('启动时触发一次后台缩略图检查/生成...');
-					startIdleThumbnailGeneration();
-				} catch (e) {
-					logger.debug('启动后台缩略图补齐触发失败（忽略）：', e && e.message);
-				}
 			}
 
 			watchPhotosDir();
