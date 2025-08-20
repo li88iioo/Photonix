@@ -62,12 +62,50 @@ const { THUMBS_DIR, PHOTOS_DIR } = require('../config');
                 { name: '720p', width: 1280, height: 720, bandwidth: '2800000' }
             ];
 
+            // 2.1 探测视频旋转元数据，决定是否自动矫正方向
+            async function detectRotationDegrees(input) {
+                try {
+                    const { stdout } = await execPromise(`ffprobe -v error -select_streams v:0 -show_entries stream_tags=rotate:stream_side_data=displaymatrix -of json "${input}"`);
+                    const data = JSON.parse(stdout || '{}');
+                    let angle = 0;
+                    // 1) tags.rotate（常见于手机视频）
+                    const streams = Array.isArray(data.streams) ? data.streams : [];
+                    if (streams.length > 0) {
+                        const tags = streams[0].tags || {};
+                        if (tags.rotate) {
+                            const v = parseInt(String(tags.rotate).trim(), 10);
+                            if (!Number.isNaN(v)) angle = v;
+                        }
+                        // 2) side_data_list.rotation（新容器使用的 Display Matrix）
+                        const sdl = streams[0].side_data_list || [];
+                        for (const sd of sdl) {
+                            if (sd && typeof sd.rotation !== 'undefined') {
+                                const r = parseFloat(sd.rotation);
+                                if (!Number.isNaN(r) && Math.abs(r) > Math.abs(angle)) angle = r;
+                            }
+                        }
+                    }
+                    // 归一化到 [0,360)
+                    let norm = ((Math.round(angle) % 360) + 360) % 360;
+                    return norm; // 0/90/180/270
+                } catch {
+                    return 0;
+                }
+            }
+
+            const rotation = await detectRotationDegrees(filePath);
+            let rotateFilter = '';
+            if (rotation === 90) rotateFilter = 'transpose=1';
+            else if (rotation === 270) rotateFilter = 'transpose=2';
+            else if (rotation === 180) rotateFilter = 'hflip,vflip';
+
             for (const res of resolutions) {
                 const resDir = path.join(hlsOutputDir, res.name);
                 await fs.mkdir(resDir, { recursive: true });
-                // 等比缩放并填充至目标分辨率，避免拉伸变形；同时规范像素宽高比
-                const vf = `scale=${res.width}:${res.height}:force_original_aspect_ratio=decrease:eval=frame,pad=${res.width}:${res.height}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
-                const hlsCommand = `ffmpeg -v error -y -i "${filePath}" -vf "${vf}" -c:v libx264 -profile:v baseline -level 3.0 -preset veryfast -crf 23 -c:a aac -ar 48000 -ac 2 -b:a 128k -start_number 0 -hls_time 10 -hls_flags independent_segments -hls_list_size 0 -f hls "${path.join(resDir, 'stream.m3u8')}"`;
+                // 等比放大 + 居中裁剪，保证无黑边且不变形；先做方向矫正；同时规范像素宽高比
+                const baseScaleCrop = `scale=${res.width}:${res.height}:force_original_aspect_ratio=increase:eval=frame,crop=${res.width}:${res.height}`;
+                const vfChain = [rotateFilter, baseScaleCrop, 'setsar=1'].filter(Boolean).join(',');
+                const hlsCommand = `ffmpeg -v error -y -i "${filePath}" -vf "${vfChain}" -c:v libx264 -pix_fmt yuv420p -profile:v baseline -level 3.0 -preset veryfast -crf 23 -c:a aac -ar 48000 -ac 2 -b:a 128k -metadata:s:v:0 rotate=0 -start_number 0 -hls_time 10 -hls_flags independent_segments -hls_list_size 0 -f hls "${path.join(resDir, 'stream.m3u8')}"`;
                 await execPromise(hlsCommand);
                 logger.info(`  - ${res.name} HLS 流生成成功`);
             }

@@ -618,7 +618,8 @@ function watchPhotosDir() {
                     logger.info(`检测到新视频文件，发送到处理器进行优化: ${filePath}`);
                     // 统一消息格式：为新视频文件处理也补全新逻辑需要的字段
                     const relativePath = path.relative(PHOTOS_DIR, filePath);
-                    videoWorker.postMessage({ 
+                    const vw = getVideoWorker();
+                    vw.postMessage({ 
                         filePath,
                         relativePath: relativePath,
                         thumbsDir: THUMBS_DIR
@@ -628,7 +629,8 @@ function watchPhotosDir() {
                 logger.warn(`检查视频永久失败标记出错，仍尝试处理: ${filePath} - ${e && e.message}`);
                 // 统一消息格式：为错误处理分支也补全新逻辑需要的字段
                 const relativePath = path.relative(PHOTOS_DIR, filePath);
-                videoWorker.postMessage({ 
+                const vw = getVideoWorker();
+                vw.postMessage({ 
                     filePath,
                     relativePath: relativePath,
                     thumbsDir: THUMBS_DIR

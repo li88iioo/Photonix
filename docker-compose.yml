@@ -24,6 +24,11 @@ services:
         condition: service_healthy
     networks:
       - photonix-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
 
   redis:
     # Redis 服务，缓存和消息队列
