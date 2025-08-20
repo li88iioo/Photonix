@@ -132,17 +132,44 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
             }
             modalVideo.removeEventListener('playing', onPlaying);
             modalVideo.removeEventListener('error', onError);
+            modalVideo.removeEventListener('canplay', onCanPlay);
+            modalVideo.removeEventListener('loadeddata', onLoadedData);
+            modalVideo.removeEventListener('timeupdate', onTimeUpdate);
+        };
+
+        const removeSpinnerAndUnbind = () => {
+            if (videoSpinner && videoSpinner.isConnected) videoSpinner.remove();
+            modalVideo.removeEventListener('playing', onPlaying);
+            modalVideo.removeEventListener('error', onError);
+            modalVideo.removeEventListener('canplay', onCanPlay);
+            modalVideo.removeEventListener('loadeddata', onLoadedData);
+            modalVideo.removeEventListener('timeupdate', onTimeUpdate);
         };
 
         const onPlaying = () => {
             if (myToken !== activeVideoToken) return cleanup();
-            if(videoSpinner && videoSpinner.isConnected) videoSpinner.remove();
+            removeSpinnerAndUnbind();
         };
 
         const onError = () => {
             if (myToken !== activeVideoToken) return cleanup();
-            if(videoSpinner && videoSpinner.isConnected) videoSpinner.remove();
+            removeSpinnerAndUnbind();
             console.error('HLS or video playback error.');
+        };
+
+        const onCanPlay = () => {
+            if (myToken !== activeVideoToken) return cleanup();
+            removeSpinnerAndUnbind();
+        };
+
+        const onLoadedData = () => {
+            if (myToken !== activeVideoToken) return cleanup();
+            removeSpinnerAndUnbind();
+        };
+
+        const onTimeUpdate = () => {
+            if (myToken !== activeVideoToken) return cleanup();
+            removeSpinnerAndUnbind();
         };
 
         cleanup(); // Clean up previous instance if any
@@ -167,8 +194,23 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
                             // Fallback to direct playback on fatal network error
                             if (myToken === activeVideoToken) {
                                 console.warn('HLS failed, falling back to direct playback.');
-                                cleanup();
+                                // 仅销毁 HLS 实例，保留 playing/error 监听，用于移除加载圈
+                                if (state.hlsInstance) {
+                                    try { state.hlsInstance.destroy(); } catch {}
+                                    state.hlsInstance = null;
+                                }
                                 modalVideo.src = mediaSrc;
+                                // 确保仍有监听在（先移除一次以防重复，再以 once=true 重新绑定）
+                                try { modalVideo.removeEventListener('playing', onPlaying); } catch {}
+                                try { modalVideo.removeEventListener('error', onError); } catch {}
+                                try { modalVideo.removeEventListener('canplay', onCanPlay); } catch {}
+                                try { modalVideo.removeEventListener('loadeddata', onLoadedData); } catch {}
+                                try { modalVideo.removeEventListener('timeupdate', onTimeUpdate); } catch {}
+                                modalVideo.addEventListener('playing', onPlaying, { once: true });
+                                modalVideo.addEventListener('error', onError, { once: true });
+                                modalVideo.addEventListener('canplay', onCanPlay, { once: true });
+                                modalVideo.addEventListener('loadeddata', onLoadedData, { once: true });
+                                modalVideo.addEventListener('timeupdate', onTimeUpdate, { once: true });
                                 modalVideo.play().catch(e => console.warn('Fallback autoplay was prevented', e));
                             }
                             break;
@@ -178,7 +220,12 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
                             break;
                         default:
                             console.error('HLS fatal error, destroying.', data);
-                            cleanup();
+                            // 致命且无法恢复：销毁实例并移除加载圈，避免转圈悬挂
+                            if (state.hlsInstance) {
+                                try { state.hlsInstance.destroy(); } catch {}
+                                state.hlsInstance = null;
+                            }
+                            removeSpinnerAndUnbind();
                             break;
                     }
                 }
@@ -194,6 +241,9 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
 
         modalVideo.addEventListener('playing', onPlaying, { once: true });
         modalVideo.addEventListener('error', onError, { once: true });
+        modalVideo.addEventListener('canplay', onCanPlay, { once: true });
+        modalVideo.addEventListener('loadeddata', onLoadedData, { once: true });
+        modalVideo.addEventListener('timeupdate', onTimeUpdate, { once: true });
         modalVideo.play().catch(e => {
             if (myToken !== activeVideoToken) return cleanup();
             console.warn('Autoplay was likely prevented by the browser.', e);

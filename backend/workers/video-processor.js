@@ -58,14 +58,16 @@ const { THUMBS_DIR, PHOTOS_DIR } = require('../config');
             // 2. 生成 HLS 多码率流
             logger.info(`[2/3] 开始生成 HLS 流: ${filePath}`);
             const resolutions = [
-                { name: '480p', size: '854x480', bandwidth: '1500000' },
-                { name: '720p', size: '1280x720', bandwidth: '2800000' }
+                { name: '480p', width: 854, height: 480, bandwidth: '1500000' },
+                { name: '720p', width: 1280, height: 720, bandwidth: '2800000' }
             ];
 
             for (const res of resolutions) {
                 const resDir = path.join(hlsOutputDir, res.name);
                 await fs.mkdir(resDir, { recursive: true });
-                const hlsCommand = `ffmpeg -v error -y -i "${filePath}" -profile:v baseline -level 3.0 -s ${res.size} -start_number 0 -hls_time 10 -hls_list_size 0 -f hls "${path.join(resDir, 'stream.m3u8')}"`;
+                // 等比缩放并填充至目标分辨率，避免拉伸变形；同时规范像素宽高比
+                const vf = `scale=${res.width}:${res.height}:force_original_aspect_ratio=decrease:eval=frame,pad=${res.width}:${res.height}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
+                const hlsCommand = `ffmpeg -v error -y -i "${filePath}" -vf "${vf}" -c:v libx264 -profile:v baseline -level 3.0 -preset veryfast -crf 23 -c:a aac -ar 48000 -ac 2 -b:a 128k -start_number 0 -hls_time 10 -hls_flags independent_segments -hls_list_size 0 -f hls "${path.join(resDir, 'stream.m3u8')}"`;
                 await execPromise(hlsCommand);
                 logger.info(`  - ${res.name} HLS 流生成成功`);
             }
@@ -73,7 +75,7 @@ const { THUMBS_DIR, PHOTOS_DIR } = require('../config');
             // 3. 创建主播放列表 master.m3u8
             logger.info(`[3/3] 创建 HLS 主播放列表: ${filePath}`);
             const masterPlaylistContent = resolutions.map(res => 
-                `#EXT-X-STREAM-INF:BANDWIDTH=${res.bandwidth},RESOLUTION=${res.size}\n${res.name}/stream.m3u8`
+                `#EXT-X-STREAM-INF:BANDWIDTH=${res.bandwidth},RESOLUTION=${res.width}x${res.height}\n${res.name}/stream.m3u8`
             ).join('\n');
             const masterPlaylist = `#EXTM3U\n${masterPlaylistContent}`;
             await fs.writeFile(path.join(hlsOutputDir, 'master.m3u8'), masterPlaylist);
