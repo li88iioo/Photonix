@@ -119,7 +119,8 @@ const { THUMBS_DIR, PHOTOS_DIR } = require('../config');
                 // 等比放大 + 居中裁剪，保证无黑边且不变形；先做方向矫正；同时规范像素宽高比
                 const baseScaleCrop = `scale=${res.width}:${res.height}:force_original_aspect_ratio=increase:eval=frame,crop=${res.width}:${res.height}`;
                 const vfChain = [rotateFilter, baseScaleCrop, 'setsar=1'].filter(Boolean).join(',');
-                const hlsCommand = `ffmpeg -v error -y -threads ${ffCfg.threads} -i "${filePath}" -vf "${vfChain}" -c:v libx264 -pix_fmt yuv420p -profile:v baseline -level 3.0 -preset ${ffCfg.preset} -crf 23 -c:a aac -ar 48000 -ac 2 -b:a 128k -metadata:s:v:0 rotate=0 -start_number 0 -hls_time 10 -hls_flags independent_segments -hls_list_size 0 -f hls "${path.join(resDir, 'stream.m3u8')}"`;
+                const segmentPattern = path.join(resDir, 'segment_%05d.ts');
+                const hlsCommand = `ffmpeg -v error -y -threads ${ffCfg.threads} -i "${filePath}" -vf "${vfChain}" -c:v libx264 -pix_fmt yuv420p -profile:v baseline -level 3.0 -preset ${ffCfg.preset} -crf 23 -c:a aac -ar 48000 -ac 2 -b:a 128k -metadata:s:v:0 rotate=0 -start_number 0 -hls_time 10 -hls_flags independent_segments -hls_segment_filename "${segmentPattern}" -hls_list_size 0 -f hls "${path.join(resDir, 'stream.m3u8')}"`;
                 await execPromise(hlsCommand);
                 logger.info(`  - ${res.name} HLS 流生成成功`);
             }
