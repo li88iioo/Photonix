@@ -41,7 +41,7 @@ services:
       retries: 5
     restart: unless-stopped
     networks:
-      - Photonix-network
+      - photonix-network
 
 
 # 卷定义
@@ -50,5 +50,5 @@ volumes:
 
 # 网络定义
 networks:
-  Photonix-network:
+  photonix-network:
     driver: bridge  # 桥接网络
