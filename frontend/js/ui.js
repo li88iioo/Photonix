@@ -169,7 +169,15 @@ export function displaySearchMedia(result, index) {
 	const kids = [createElement('div', { classes: ['image-placeholder','absolute','inset-0'] }), createElement('div', { classes: ['loading-overlay'], children: [createElement('div', { classes: ['progress-circle'] })] })];
 	if (isVideo) {
 		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','opacity-0','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': result.thumbnailUrl, alt: `视频预览：${result.name}` } }));
-		kids.push(createElement('div', { classes: ['video-thumbnail-overlay'], children: [createElement('div', { classes: ['video-play-button'] })] }));
+		const overlay = createElement('div', { classes: ['video-thumbnail-overlay'] });
+		const playBtn = createElement('div', { classes: ['video-play-button'] });
+		playBtn.innerHTML = `
+			<svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true">
+				<path d="M24 18v28l24-14-24-14z"></path>
+			</svg>
+		`;
+		overlay.append(playBtn);
+		kids.push(overlay);
 	} else {
 		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','opacity-0','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': result.thumbnailUrl, alt: result.name } }));
 	}
