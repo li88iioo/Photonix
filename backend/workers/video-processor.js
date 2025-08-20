@@ -286,6 +286,14 @@ const { THUMBS_DIR, PHOTOS_DIR } = require('../config');
                 } catch {}
                 logger.info(`发现 ${videos.length} 个视频需要检查 HLS 状态。`);
                 for (const video of videos) {
+                    // 动态中断：运行中若切到 low 档，立即停止后续回填，保护系统
+                    try {
+                        const stopNow = await redis.get('adaptive:disable_hls_backfill');
+                        if (stopNow === '1') {
+                            logger.warn('[VIDEO-PROCESSOR] 自适应模式切换为低负载，已中断剩余回填任务。');
+                            break;
+                        }
+                    } catch {}
                     // 依次处理，避免并发过高
                     await handleTask({
                         filePath: path.join(PHOTOS_DIR, video.path),

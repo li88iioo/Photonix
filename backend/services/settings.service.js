@@ -95,7 +95,27 @@ async function getAllSettings(options = {}) {
         return settingsCache;
     } catch (error) {
         logger.error('从数据库获取设置失败:', error);
-        throw error;
+        // 回退策略：优先使用进程内过期缓存；再尝试 Redis；最后给出保守默认
+        try {
+            if (settingsCache) {
+                logger.warn('使用过期的内存设置缓存作为回退');
+                return settingsCache;
+            }
+            if (SETTINGS_REDIS_CACHE) {
+                try {
+                    const cached = await redis.get(REDIS_CACHE_KEY);
+                    if (cached) {
+                        const parsed = JSON.parse(cached);
+                        logger.warn('使用 Redis 设置缓存作为回退');
+                        return parsed;
+                    }
+                } catch (e) {
+                    logger.debug('读取 Redis 设置缓存回退失败（忽略）:', e.message);
+                }
+            }
+        } catch {}
+        // 最终兜底：最关键的公共开关默认放开，避免首页完全不可用
+        return { ALLOW_PUBLIC_ACCESS: 'true', PASSWORD_ENABLED: 'false' };
     }
 }
 

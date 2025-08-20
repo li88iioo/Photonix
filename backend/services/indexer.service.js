@@ -122,6 +122,15 @@ function setupWorkerListeners() {
 
                 const processLoop = async () => {
                     try {
+                        // 低档位（auto 切到 low）暂缓后台扫描，减少与前端/回填的 DB/I/O 争用
+                        try {
+                            const { getCurrentMode } = require('./adaptive.service');
+                            if (getCurrentMode && getCurrentMode() === 'low') {
+                                logger.debug('[Main-Thread] 自适应 low 档：暂停一轮缩略图缺失扫描');
+                                setTimeout(processLoop, 1000);
+                                return;
+                            }
+                        } catch {}
                         const t0 = Date.now();
                         const rows = await require('../db/multi-db').dbAll('main',
                             `SELECT i.path, i.type, i.mtime
