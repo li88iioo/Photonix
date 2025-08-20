@@ -11,6 +11,7 @@ const { invalidateTags } = require('./cache.service');
 const { PHOTOS_DIR, THUMBS_DIR, INDEX_STABILIZE_DELAY_MS, TAG_INVALIDATION_MAX_TAGS, ROUTE_CACHE_BROWSE_PATTERN, THUMB_CHECK_BATCH_SIZE, THUMB_CHECK_BATCH_DELAY_MS } = require('../config');
 const { dbRun, runPreparedBatch, dbAll } = require('../db/multi-db');
 const { getIndexingWorker, getVideoWorker, ensureCoreWorkers } = require('./worker.manager');
+const { shouldDisableHlsBackfill } = require('./adaptive.service');
 const { startIdleThumbnailGeneration, lowPriorityThumbnailQueue, dispatchThumbnailTask, isTaskQueuedOrActive } = require('./thumbnail.service');
 const settingsService = require('./settings.service');
 const { invalidateCoverCache } = require('./file.service');
@@ -47,9 +48,13 @@ function setupWorkerListeners() {
 
                 // 索引完成后，触发一次性的HLS视频流回填任务
                 try {
-                    logger.info('[Main-Thread] 触发 HLS 回填任务，为所有已存在视频生成码率流...');
-                    const videoWorker = getVideoWorker();
-                    videoWorker.postMessage({ type: 'backfill' });
+                    if (shouldDisableHlsBackfill()) {
+                        logger.warn('[Main-Thread] 自适应模式：当前禁用 HLS 回填，跳过触发。');
+                    } else {
+                        logger.info('[Main-Thread] 触发 HLS 回填任务，为所有已存在视频生成码率流...');
+                        const videoWorker = getVideoWorker();
+                        videoWorker.postMessage({ type: 'backfill' });
+                    }
                 } catch (e) {
                     logger.warn('[Main-Thread] 触发 HLS 回填任务失败（忽略）:', e && e.message);
                 }

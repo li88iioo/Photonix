@@ -9,6 +9,7 @@ const logger = require('../config/logger');
 const { redis } = require('../config/redis');
 const { THUMBS_DIR, MAX_THUMBNAIL_RETRIES, INITIAL_RETRY_DELAY } = require('../config');
 const { idleThumbnailWorkers } = require('./worker.manager');
+const { getThumbMaxConcurrency } = require('./adaptive.service');
 const { indexingWorker } = require('./worker.manager');
 const eventBus = require('./event.service');
 
@@ -212,6 +213,13 @@ function setupThumbnailWorkerListeners() {
 
             // 将工作线程放回空闲队列，继续处理下一个任务
             idleThumbnailWorkers.push(worker);
+            // 维护活动计数
+            try {
+                if (result && result.task && result.task.relativePath && activeTasks.has(result.task.relativePath)) {
+                    // 已在上面 activeTasks.delete 过，这里仅做兜底
+                }
+            } catch {}
+            global.__thumbActiveCount = Math.max(0, (global.__thumbActiveCount || 0) - 1);
             dispatchThumbnailTask();
         });
 
@@ -228,6 +236,8 @@ function setupThumbnailWorkerListeners() {
  * 从队列中取出任务分配给空闲的工作线程
  */
 function dispatchThumbnailTask() {
+    // 自适应限制同时占用的空闲工人数量，避免低负载模式下打满
+    const maxConcurrent = Math.max(1, Number(getThumbMaxConcurrency() || 1));
     while (idleThumbnailWorkers.length > 0) {
         let task = null;
         
@@ -250,6 +260,14 @@ function dispatchThumbnailTask() {
             continue;
         }
 
+        // 限制最大同时派发量
+        if ((global.__thumbActiveCount || 0) >= maxConcurrent) {
+            // 达到并发上限，放回队首便于下轮继续尝试
+            if (task) {
+                if (task.type === 'video') highPriorityThumbnailQueue.unshift(task); else lowPriorityThumbnailQueue.unshift(task);
+            }
+            break;
+        }
         const worker = idleThumbnailWorkers.shift();
         
         // 检查任务是否已在处理中，避免重复处理
@@ -260,6 +278,7 @@ function dispatchThumbnailTask() {
 
         // 标记任务为活动状态，发送给工作线程处理
         activeTasks.add(task.relativePath);
+        global.__thumbActiveCount = (global.__thumbActiveCount || 0) + 1;
         worker.postMessage({ ...task, thumbsDir: THUMBS_DIR });
     }
 }

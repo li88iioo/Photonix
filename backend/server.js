@@ -23,6 +23,7 @@ const { initializeConnections, closeAllConnections } = require('./db/multi-db');
 const { initializeAllDBs, ensureCoreTables } = require('./db/migrations');
 const { migrateToMultiDB } = require('./db/migrate-to-multi-db');
 const { createThumbnailWorkerPool, ensureCoreWorkers, getVideoWorker } = require('./services/worker.manager');
+const { startAdaptiveScheduler } = require('./services/adaptive.service');
 const { setupThumbnailWorkerListeners, startIdleThumbnailGeneration } = require('./services/thumbnail.service');
 const { setupWorkerListeners, buildSearchIndex, watchPhotosDir } = require('./services/indexer.service');
 const sqlite3 = require('sqlite3');
@@ -171,6 +172,8 @@ async function startServer() {
 		// 4. Workers
 		ensureCoreWorkers();
 		createThumbnailWorkerPool();
+        // 4.1 自适应调度器
+        try { startAdaptiveScheduler(); } catch {}
 
 		// 5. 监听器
 		setupWorkerListeners();

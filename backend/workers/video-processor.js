@@ -99,13 +99,27 @@ const { THUMBS_DIR, PHOTOS_DIR } = require('../config');
             else if (rotation === 270) rotateFilter = 'transpose=2';
             else if (rotation === 180) rotateFilter = 'hflip,vflip';
 
+            // 允许从 Redis 自适应配置覆盖 ffmpeg 线程/预设
+            async function getFfmpegTuning() {
+                try {
+                    const [threadsStr, preset] = await redis.mget('adaptive:ffmpeg_threads', 'adaptive:ffmpeg_preset');
+                    const threads = Math.max(1, parseInt(threadsStr || '1', 10));
+                    const presetFinal = (preset || process.env.FFMPEG_PRESET || 'veryfast');
+                    return { threads, preset: presetFinal };
+                } catch {
+                    return { threads: Math.max(1, parseInt(process.env.FFMPEG_THREADS || '1', 10)), preset: (process.env.FFMPEG_PRESET || 'veryfast') };
+                }
+            }
+
+            const ffCfg = await getFfmpegTuning();
+
             for (const res of resolutions) {
                 const resDir = path.join(hlsOutputDir, res.name);
                 await fs.mkdir(resDir, { recursive: true });
                 // 等比放大 + 居中裁剪，保证无黑边且不变形；先做方向矫正；同时规范像素宽高比
                 const baseScaleCrop = `scale=${res.width}:${res.height}:force_original_aspect_ratio=increase:eval=frame,crop=${res.width}:${res.height}`;
                 const vfChain = [rotateFilter, baseScaleCrop, 'setsar=1'].filter(Boolean).join(',');
-                const hlsCommand = `ffmpeg -v error -y -i "${filePath}" -vf "${vfChain}" -c:v libx264 -pix_fmt yuv420p -profile:v baseline -level 3.0 -preset veryfast -crf 23 -c:a aac -ar 48000 -ac 2 -b:a 128k -metadata:s:v:0 rotate=0 -start_number 0 -hls_time 10 -hls_flags independent_segments -hls_list_size 0 -f hls "${path.join(resDir, 'stream.m3u8')}"`;
+                const hlsCommand = `ffmpeg -v error -y -threads ${ffCfg.threads} -i "${filePath}" -vf "${vfChain}" -c:v libx264 -pix_fmt yuv420p -profile:v baseline -level 3.0 -preset ${ffCfg.preset} -crf 23 -c:a aac -ar 48000 -ac 2 -b:a 128k -metadata:s:v:0 rotate=0 -start_number 0 -hls_time 10 -hls_flags independent_segments -hls_list_size 0 -f hls "${path.join(resDir, 'stream.m3u8')}"`;
                 await execPromise(hlsCommand);
                 logger.info(`  - ${res.name} HLS 流生成成功`);
             }
@@ -261,6 +275,14 @@ const { THUMBS_DIR, PHOTOS_DIR } = require('../config');
                 await cleanupTempFiles();
                 
                 const videos = await dbAll('main', `SELECT path FROM items WHERE type = 'video'`);
+                // 允许通过 Redis 自适应开关关闭回填
+                try {
+                    const disableBackfill = await redis.get('adaptive:disable_hls_backfill');
+                    if (disableBackfill === '1') {
+                        logger.warn('[VIDEO-PROCESSOR] 自适应模式：已禁用 HLS 回填。本轮跳过。');
+                        return;
+                    }
+                } catch {}
                 logger.info(`发现 ${videos.length} 个视频需要检查 HLS 状态。`);
                 for (const video of videos) {
                     // 依次处理，避免并发过高
