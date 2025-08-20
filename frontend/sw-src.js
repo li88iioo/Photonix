@@ -307,7 +307,13 @@ self.addEventListener('fetch', event => {
     event.respondWith(
       fetch(new Request(request, { cache: 'no-store' }))
         .then(networkResponse => {
-          // 仅对非视频的小文件做缓存
+          // HLS 清单与分片一律不缓存，强制走网络直连
+          const pathname = url.pathname.toLowerCase();
+          if (pathname.endsWith('.m3u8') || pathname.endsWith('.ts') || pathname.includes('/thumbs/hls/')) {
+            return networkResponse;
+          }
+
+          // 仅对非视频的小文件做缓存（排除 HLS）
           const ct = (networkResponse.headers.get('Content-Type') || '').toLowerCase();
           const cl = parseInt(networkResponse.headers.get('Content-Length') || '0', 10) || 0;
           const isVideo = ct.startsWith('video/');

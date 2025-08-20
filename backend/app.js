@@ -139,7 +139,19 @@ app.use('/static', express.static(PHOTOS_DIR, {
  */
 app.use('/thumbs', express.static(THUMBS_DIR, {
     maxAge: '30d',           // 缓存时间：30天
-    immutable: true          // 不可变缓存
+    immutable: true,         // 不可变缓存
+    fallthrough: false,      // 若文件不存在直接 404，避免被 SPA catch-all 回退为 index.html
+    setHeaders: (res, filePath) => {
+        // 明确 HLS 与分片的 Content-Type，避免被当作 HTML 解析
+        if (/\.m3u8$/i.test(filePath)) {
+            res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        }
+        if (/\.(ts)$/i.test(filePath)) {
+            res.setHeader('Content-Type', 'video/mp2t');
+        }
+        // 明确可分段	send 默认已支持，此处显式声明便于部分代理识别
+        res.setHeader('Accept-Ranges', 'bytes');
+    }
 }));
 
 // --- 前端静态文件（合并部署） ---
