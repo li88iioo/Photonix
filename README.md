@@ -1,4 +1,4 @@
-# 光影画廊 | Shadow Gallery
+# Photonix | 光影画廊
 
 一个极简、AI驱动的智能图片画廊，支持 PWA、流式加载、多数据库架构与高性能缓存。
 
@@ -54,7 +54,7 @@
 ### 2. 克隆项目
 ```bash
 
-cd Shadow-Gallery
+cd Photonix
 ```
 
 ### 3. 配置环境变量（可选）
@@ -85,11 +85,12 @@ docker compose logs -f
 - **应用与 API（同域）**：[http://localhost:12080](http://localhost:12080)
   - API 前缀：`/api`（例如：`http://localhost:12080/api/browse`）
 - **Redis**：`localhost:6379`（可选）
+- **健康检查**：`http://localhost:12080/health`
 
 ## 📁 项目架构
 
 ```
-Shadow-Gallery/
+Photonix/
 ├── Dockerfile                          # 单容器构建（前端打包→拷贝到 backend/public，pm2 启动 server+ai-worker）
 ├── docker-compose.yml                   # 编排（app + redis），端口与卷映射
 ├── README.md                            # 项目说明
@@ -167,7 +168,8 @@ Shadow-Gallery/
     ├── package.json                      # 前端依赖与构建脚本
     ├── package-lock.json                 # 锁定文件
     ├── style.css                         # 全站样式（含骨架/占位/动效）
-    ├── sw.js                             # Service Worker
+    ├── sw-src.js                         # Service Worker 源文件（构建生成 sw.js）
+    ├── workbox-config.js                 # Workbox 配置（injectManifest）
     ├── tailwind.config.js                # Tailwind 配置
     ├── assets/
     │   └── icon.svg                      # 应用图标
@@ -200,7 +202,7 @@ Shadow-Gallery/
 
 | 变量名                    | 默认值                                              | 说明                                                         |
 |--------------------------|----------------------------------------------------|--------------------------------------------------------------|
-| `REDIS_URL`              | `redis://redis:6379`                               | Redis 连接 URL。                                             |
+| `REDIS_URL`              | `redis://localhost:6379`                           | Redis 连接 URL（Compose 环境建议使用 `redis://redis:6379`）。 |
 | `PORT`                   | `13001`                                            | 服务监听端口。                                           |
 | `NODE_ENV`               | `production`                                       | Node.js 运行环境模式。                                       |
 | `LOG_LEVEL`              | `info`                                             | 日志输出级别。                                               |
@@ -213,14 +215,19 @@ Shadow-Gallery/
 > - `ADMIN_SECRET` 必须在 `.env` 文件中手动设置，否则涉及超级管理员权限的敏感操作（如设置/修改/禁用访问密码）将无法进行。
 > - 请务必将 `ADMIN_SECRET` 设置为高强度、难以猜测的字符串，并妥善保管。
 >
-> 更完整的环境变量说明与不同规模服务器的推荐配置，请参见 `ENV_GUIDE.md`。
+> 更完整的环境变量说明与不同规模服务器的推荐配置，请参见 [ENV_GUIDE.md](./ENV_GUIDE.md)。
+>
+> Docker Compose 部署建议：在 `.env` 中设置 `REDIS_URL=redis://redis:6379`（使用服务名 `redis` 作为主机）。
 
 ### Docker 服务配置
 
 | 服务 | 容器端口 | 主机端口 | 说明 |
 |------|----------|----------|------|
-| `app` | `13001` | `13001` | 单容器：前端静态资源 + 后端 API（同域） |
+| `app` | `13001` | `12080` | 单容器：前端静态资源 + 后端 API（同域） |
 | `redis` | `6379` | `6379` | Redis 缓存服务端口 |
+
+说明：
+- 可通过环境变量 `APP_PORT` 覆盖宿主机暴露端口（Compose 默认 `APP_PORT=12080`，映射为 `APP_PORT:13001`）。
 
 ### 数据库架构
 
@@ -230,6 +237,8 @@ Shadow-Gallery/
 - **设置数据库** (`settings.db`)：存储应用配置设置
 - **历史记录数据库** (`history.db`)：存储用户浏览历史
 - **索引数据库** (`index.db`)：存储索引处理状态和队列
+
+更多细节请参考多库说明文档：[backend/db/README.md](./backend/db/README.md)。
 
 ## 🛠️ 本地开发
 
@@ -272,7 +281,7 @@ proxy_connect_timeout 60s;
 - `/api/auth/login`、`/api/auth/refresh`：见 `backend/routes/auth.routes.js`
 - `/api/metrics/*`：见 `backend/routes/metrics.routes.js`
 
-依赖：`REDIS_URL`（默认 `redis://redis:6379`）。如需调整窗口和配额，可通过以下环境变量：
+依赖：`REDIS_URL`（默认 `redis://localhost:6379`；Compose 环境请使用 `redis://redis:6379`）。如需调整窗口和配额，可通过以下环境变量：
 
 - `RATE_LIMIT_WINDOW_MINUTES`（默认 15）
 - `RATE_LIMIT_MAX_REQUESTS`（默认 100）
