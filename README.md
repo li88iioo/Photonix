@@ -1,6 +1,9 @@
 # Photonix | 光影画廊
 
-一个极简、AI驱动的智能图片画廊，支持 PWA、流式加载、多数据库架构与高性能缓存。
+[![Node.js](https://img.shields.io/badge/Node.js-20+-green.svg)](https://nodejs.org/) [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)
+
+一个极简、AI 驱动的智能相册，专为现代 Web 设计。它集成了 PWA、流式加载、多数据库架构和高性能缓存，旨在提供极致的浏览体验和智能的交互方式。
+
 
 ## ✨ 主要特性
 
@@ -14,7 +17,7 @@
 - **流式图片加载**：大相册极速响应，懒加载优化
 - **智能缩略图**：自动生成多尺寸缩略图，支持失败重试机制
 - **视频处理**：自动视频优化，支持多种格式转码
-- **瀑布流布局**：响应式瀑布流，自适应屏幕尺寸
+- **双图片布局**：响应式瀑布流/网格模式，自适应屏幕尺寸
 
 ### 🔒 安全防护
 - **一键全局模糊**：键盘单击 ***B*** && 三指触摸屏幕
@@ -31,7 +34,7 @@
 ### 📱 用户体验
 - **PWA 支持**：可安装、离线访问，移动端手势切换
 - **响应式设计**：完美适配桌面端和移动端
-- **触摸手势**：移动端滑动切换图片
+- **触摸手势**：移动端滑动切换图片/双指缩放/三指模糊
 - **键盘导航**：桌面端键盘快捷键操作
 - **搜索历史**：智能搜索历史记录，快速重复搜索
 
@@ -43,23 +46,21 @@
 
 ## 🚀 快速开始
 
+本项目推荐使用 Docker 进行部署，这是最简单、最快捷的方式。
+
 ### 1. 环境准备
-```bash
-# 必需环境
-- Docker & Docker Compose（推荐）
-- Node.js 20+（本地开发可选）
+- [Docker](https://www.docker.com/get-started) 和 [Docker Compose](https://docs.docker.com/compose/install/)
 - 至少 2GB 可用内存
-```
 
-### 2. 克隆项目
+### 2. 下载项目
 ```bash
-
+git clone https://github.com/li88iioo/Photonix.git
 cd Photonix
 ```
 
-### 3. 配置环境变量（可选）
+### 3. 配置环境变量
 
-默认可直接启动，无需 `.env`。仅当你需要自定义端口或安全密钥时，在项目根目录（与 `docker-compose.yml` 同级）创建 `.env`：
+默认可直接启动，使用默认`.env`即可
 
 
 ### 4. 准备照片目录
@@ -67,6 +68,7 @@ cd Photonix
 # 创建照片目录（推荐挂载到宿主机）
 mkdir -p /opt/photos
 # 将你的照片放入此目录
+# 支持格式：jpg, jpeg, png, gif, webp, mp4, mov, avi, mkv
 ```
 
 ### 5. 启动服务
@@ -79,6 +81,9 @@ docker compose ps
 
 # 查看日志
 docker compose logs -f
+
+# 查看实时日志
+docker compose logs -f app
 ```
 
 ### 6. 访问应用
@@ -95,6 +100,7 @@ Photonix/
 ├── docker-compose.yml                   # 编排（app + redis），端口与卷映射
 ├── README.md                            # 项目说明
 ├── AIPROMPT.md                          # AI 提示词示例
+├── ENV_GUIDE.md                         # 环境变量详细指南
 ├── .gitignore                           # 忽略配置
 ├── backend/
 │   ├── app.js                           # Express 应用：中间件、/api、静态资源与 SPA 路由
@@ -162,6 +168,9 @@ Photonix/
 │       ├── settings-worker.js           # 设置持久化任务
 │       ├── thumbnail-worker.js          # Sharp/FFmpeg 生成缩略图
 │       └── video-processor.js           # 视频处理
+│   └── queue/                           # 队列配置
+│       ├── thumb-queue-worker.js        # 缩略图队列工作进程
+│       └── video-queue-worker.js        # 视频处理队列工作进程
 └── frontend/
     ├── index.html                        # 页面入口
     ├── manifest.json                     # PWA 清单
@@ -183,15 +192,14 @@ Photonix/
         ├── loading-states.js             # 骨架/空态/错误态渲染
         ├── main.js                       # 启动流程与状态初始化
         ├── masonry.js                    # 瀑布流布局与列数计算
-        ├── modal.js                      # 媒体预览模态框
+        ├── modal.js                      # 媒体预览模态框（支持双指缩放/拖拽）
         ├── router.js                     # Hash 路由与流式加载
         ├── search-history.js             # 搜索历史 UI 逻辑
         ├── settings.js                   # 设置面板与本地 AI 配置
         ├── sse.js                        # SSE 连接与事件处理
-        ├── state.js                      # 全局状态容器
-        ├── touch.js                      # 触摸手势
-        ├── ui.js                         # DOM 渲染与卡片组件
-        ├── ui copy.js                    # UI 备份/临时文件
+        ├── state.js                      # 全局状态容器（布局模式管理）
+        ├── touch.js                      # 触摸手势（双指缩放、拖拽、滑动切换）
+        ├── ui.js                         # DOM 渲染与卡片组件（布局切换、瀑布流/网格）
         ├── utils.js                      # 杂项工具
         └── virtual-scroll.js             # 虚拟滚动
 ```
@@ -249,29 +257,47 @@ npm install
 npm start
 ```
 
-### 反向代理与 SSE 长连接建议
+### Nginx 反向代理配置
+如果在生产环境中使用 Nginx 作为反向代理，请使用以下配置以确保 **Server-Sent Events (SSE)** 正常工作。
 
-若在 Nginx/Traefik/Caddy 等反向代理之后运行，为保证 Server-Sent Events (SSE) 与静态资源稳定：
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
 
-- Nginx 示例（片段）：
-  - 保持长连接与刷新首包
-  - 调整超时，避免连接被过早回收
-```
-location /api/events {
-    proxy_http_version 1.1;
-    proxy_set_header Connection "";
-    proxy_buffering off;
-    proxy_read_timeout 1h;
-    chunked_transfer_encoding off;
-    proxy_pass http://backend:13001/api/events;
+    # 建议升级到 HTTPS
+    # listen 443 ssl http2;
+    # ssl_certificate /path/to/your/cert.pem;
+    # ssl_certificate_key /path/to/your/key.pem;
+
+    client_max_body_size 0; # 允许上传大文件
+
+    location / {
+        proxy_pass http://127.0.0.1:12080; # 指向 Photonix 服务地址
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # 针对 SSE 事件流的特殊配置
+    location /api/events {
+        proxy_pass http://127.0.0.1:12080/api/events;
+        proxy_set_header Connection '';
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # 关键：关闭缓冲并设置长超时
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h; # 保持长连接
+    }
 }
-
-# 静态与 API 可考虑：
-proxy_send_timeout 300s;
-proxy_connect_timeout 60s;
 ```
 
-- Traefik/Caddy：确保对 `/api/events` 关闭缓冲并提升 read timeout。
 
 ### 多实例一致限流（Redis Store）
 
@@ -339,6 +365,28 @@ node backend/db/migrate-to-multi-db.js
 - 私有模式 SSE
   - 如反代支持 Cookie 注入，可以通过 Cookie 传递认证；或改用自定义头的 SSE polyfill（需自行启用）。
 
+## 📊 监控与维护
+
+### 健康检查
+- **端点**：`/health`
+- **检查项**：数据库连接、Redis 连接、文件系统权限
+- **响应**：200 表示健康，其他状态码表示异常
+
+### 性能指标
+- **缓存命中率**：`/api/metrics/cache`
+- **队列状态**：`/api/metrics/queue`
+- **系统资源**：通过容器日志监控 CPU、内存使用
+
+### 日志管理
+- **日志级别**：通过 `LOG_LEVEL` 环境变量控制
+- **日志格式**：结构化 JSON 格式，便于分析
+- **日志轮转**：Docker 日志轮转配置
+
+### 数据备份
+- **数据库备份**：定期备份 SQLite 数据库文件
+- **照片备份**：定期备份照片目录
+- **配置备份**：备份 `.env` 和 Docker 配置文件
+
 ## 🎯 功能详解
 
 ### AI 画中密语
@@ -359,11 +407,10 @@ node backend/db/migrate-to-multi-db.js
 - 多尺寸缩略图支持
 - 智能缓存，避免重复生成
 
-### 视频处理
-- 自动视频优化和转码
-- 支持多种视频格式
-- 失败重试机制
-- 处理状态监控
+### HLS 视频流
+为了提供流畅的视频播放体验，所有视频都会被处理成 HLS 格式。
+- **工作流程**: 文件系统扫描到新视频 -> 任务被添加到 `video-queue` -> `video-processor.js` 使用 `ffmpeg` 将视频切片成 `.ts` 文件和 `.m3u8` 播放列表。
+- **前端播放**: 前端使用 `hls.js` 库来播放 HLS 流，支持在普通 `<video>` 标签上实现无缝播放和码率切换。
 
 ### 键盘快捷键
 项目支持丰富的键盘快捷键，提升操作效率：
@@ -379,6 +426,17 @@ node backend/db/migrate-to-multi-db.js
 | `←/→` | 模态框内导航 | 切换图片/视频 |
 | `1-9` | 快速打开第N张图片 | 数字键快速导航 |
 
+### 🖐️ 触摸手势
+项目为移动端优化了丰富的触摸手势：
+
+| 手势 | 功能 | 说明 |
+|---|---|---|
+| **单指左右滑动** | 切换图片 | 在预览模式下，快速切换上一张或下一张图片。 |
+| **双指捏合** | 缩放图片 | 在预览模式下，自由放大或缩小图片，查看细节。 |
+| **三指轻触** | 切换模糊 | 在任意界面，快速切换全局模糊模式以保护隐私。 |
+
+---
+
 **使用提示：**
 - 在输入框中时，快捷键会被禁用
 - 移动端建议使用触摸手势操作
@@ -390,6 +448,47 @@ node backend/db/migrate-to-multi-db.js
 - 支持删除单个历史项
 - 一键清空所有历史
 - 点击历史项快速重复搜索
+
+## 🔄 更新与升级
+
+### 版本升级
+```bash
+# 1. 备份数据
+cp -r data/ data_backup_$(date +%Y%m%d_%H%M%S)/
+
+# 2. 拉取最新代码
+git pull origin main
+
+# 3. 重新构建并启动
+docker compose down
+docker compose up -d --build
+
+# 4. 检查服务状态
+docker compose ps
+docker compose logs -f
+```
+
+### 数据迁移
+- **自动迁移**：应用启动时自动执行数据库迁移
+- **手动迁移**：可手动执行 `node backend/db/migrate-to-multi-db.js`
+- **回滚支持**：迁移失败时自动回滚，保证数据安全
+
+## 🚀 性能优化建议
+
+### 系统级优化
+- **内存配置**：建议 4GB+ 内存，大相册需要更多
+- **存储优化**：使用 SSD 存储，提升 I/O 性能
+- **网络优化**：千兆网络环境，避免网络瓶颈
+
+### 应用级优化
+- **工作线程**：根据 CPU 核心数调整 `NUM_WORKERS`
+- **缓存策略**：合理配置 Redis 内存，避免内存不足
+- **索引优化**：大相册首次索引耗时较长，建议在业务低峰进行
+
+### 部署优化
+- **反向代理**：使用 Nginx 等反向代理，提升并发能力
+- **负载均衡**：多实例部署，提升可用性
+- **CDN 加速**：静态资源使用 CDN 加速
 
 ## 🐛 常见问题
 
@@ -411,4 +510,10 @@ node backend/db/migrate-to-multi-db.js
 - **AI功能异常**：检查API密钥和模型配置
 - **PWA安装失败**：确保HTTPS或localhost环境
 - **移动端手势不工作**：检查触摸事件支持
+- **视频播放异常**：检查 FFmpeg 依赖和视频格式
+
+### 网络问题
+- **SSE 连接断开**：检查反向代理配置，确保长连接支持
+- **上传失败**：检查 `client_max_body_size` 配置
+- **缓存不生效**：检查 Nginx 缓存配置和路径
 
