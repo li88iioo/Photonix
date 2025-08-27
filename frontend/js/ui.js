@@ -202,7 +202,11 @@ export function displayStreamedMedia(type, mediaData, index, showTimestamp) {
 export function displaySearchMedia(result, index) {
 	const isVideo = result.type === 'video';
 	const timeText = formatTime(result.mtime);
-	const kids = [createElement('div', { classes: ['image-placeholder','absolute','inset-0'] }), createElement('div', { classes: ['loading-overlay'], children: [createElement('div', { classes: ['progress-circle'] })] })];
+	const aspectRatio = result.height ? result.width / result.height : 1;
+	const kids = [
+		createElement('div', { classes: ['image-placeholder','absolute','inset-0'] }),
+		createElement('div', { classes: ['loading-overlay'], children: [createElement('div', { classes: ['progress-circle'] })] })
+	];
 	if (isVideo) {
 		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','opacity-0','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': result.thumbnailUrl, alt: `视频预览：${result.name}` } }));
 		const overlay = createElement('div', { classes: ['video-thumbnail-overlay'] });
@@ -214,14 +218,27 @@ export function displaySearchMedia(result, index) {
 		`;
 		overlay.append(playBtn);
 		kids.push(overlay);
+		// 信息覆盖层：与相册一致，置于封面内部
+		const title = createElement('div', { classes: ['album-title'], textContent: result.name });
+		const metaKids = [createElement('span', { classes: ['album-type'], textContent: '视频' })];
+		if (timeText) metaKids.push(createElement('span', { classes: ['album-time'], textContent: timeText }));
+		const infoOverlay = createElement('div', { classes: ['card-info-overlay'], children: [title, createElement('div', { classes: ['album-meta'], children: metaKids })] });
+		kids.push(infoOverlay);
 	} else {
 		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','opacity-0','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': result.thumbnailUrl, alt: result.name } }));
 	}
-	if (timeText) kids.push(createElement('div', { classes: ['absolute','bottom-2','right-2','bg-black/50','text-white','text-sm','px-2','py-1','rounded','shadow-lg'], textContent: timeText }));
-	const relativeDiv = createElement('div', { classes: ['aspect-w-1','aspect-h-1','relative'], children: kids });
-	const photoItem = createElement('div', { classes: ['photo-item','group','block','bg-gray-800','rounded-lg','overflow-hidden','cursor-pointer'], children: [relativeDiv] });
-	const nameDiv = createElement('div', { classes: ['mt-2'], children: [createElement('p', { classes: ['text-xs','text-gray-400','truncate'], textContent: result.name })] });
-	return createElement('div', { classes: ['grid-item','photo-link'], attributes: { 'data-url': result.originalUrl, 'data-index': index }, children: [photoItem, nameDiv] });
+	// 非视频保留角标时间；视频信息已在覆盖层中
+	if (!isVideo && timeText) kids.push(createElement('div', { classes: ['absolute','bottom-2','right-2','bg-black/50','text-white','text-sm','px-2','py-1','rounded','shadow-lg'], textContent: timeText }));
+	const relativeDiv = isVideo
+		? createElement('div', { classes: ['relative'], attributes: { style: `aspect-ratio: ${aspectRatio}` }, children: kids })
+		: createElement('div', { classes: ['aspect-w-1','aspect-h-1','relative'], children: kids });
+	const containerClasses = isVideo
+		? ['album-card','group','block','bg-gray-800','rounded-lg','overflow-hidden','shadow-lg','hover:shadow-purple-500/30','transition-shadow']
+		: ['photo-item','group','block','bg-gray-800','rounded-lg','overflow-hidden','cursor-pointer'];
+	const card = createElement('div', { classes: containerClasses, children: [relativeDiv] });
+	const nameDiv = isVideo ? null : createElement('div', { classes: ['mt-2'], children: [createElement('p', { classes: ['text-xs','text-gray-400','truncate'], textContent: result.name })] });
+	const attrs = { 'data-url': result.originalUrl, 'data-index': index, 'data-width': result.width || 1, 'data-height': result.height || 1 };
+	return createElement('div', { classes: ['grid-item','photo-link'], attributes: attrs, children: nameDiv ? [card, nameDiv] : [card] });
 }
 
 /**
