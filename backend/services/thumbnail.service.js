@@ -9,6 +9,9 @@ const logger = require('../config/logger');
 const { redis } = require('../config/redis');
 const { THUMBS_DIR, MAX_THUMBNAIL_RETRIES, INITIAL_RETRY_DELAY } = require('../config');
 const { idleThumbnailWorkers } = require('./worker.manager');
+const { Queue } = require('bullmq');
+const { bullConnection } = require('../config/redis');
+const { QUEUE_MODE, THUMBNAIL_QUEUE_NAME } = require('../config');
 const { getThumbMaxConcurrency } = require('./adaptive.service');
 const { indexingWorker } = require('./worker.manager');
 const eventBus = require('./event.service');
@@ -19,10 +22,33 @@ const lowPriorityThumbnailQueue = [];   // 低优先级队列（后台批量生�
 const activeTasks = new Set();          // 正在处理的任务集合
 const failureCounts = new Map();        // 任务失败次数统计
 
-// --- 缩略图状态批量写入队列（彻底消除并发写锁抖动） ---
-const thumbStatusPending = new Map(); // key: relPath, value: { mtime, status }
-let thumbStatusFlushScheduled = false;
+// 缩略图状态批处理相关变量
+const thumbStatusPending = new Map();
 let thumbStatusFlushing = false;
+let thumbStatusFlushScheduled = false;
+
+// 添加锁机制防止竞态条件
+const thumbStatusLock = {
+    isLocked: false,
+    queue: [],
+    async acquire() {
+        if (this.isLocked) {
+            return new Promise(resolve => {
+                this.queue.push(resolve);
+            });
+        }
+        this.isLocked = true;
+        return Promise.resolve();
+    },
+    release() {
+        this.isLocked = false;
+        const next = this.queue.shift();
+        if (next) {
+            this.isLocked = true;
+            next();
+        }
+    }
+};
 
 function queueThumbStatusUpdate(relPath, mtime, status) {
     try {
@@ -38,15 +64,18 @@ function queueThumbStatusUpdate(relPath, mtime, status) {
 }
 
 async function flushThumbStatusBatch() {
-    if (thumbStatusFlushing) return;
-    thumbStatusFlushScheduled = false;
-    thumbStatusFlushing = true;
+    // 使用锁机制防止竞态条件
+    await thumbStatusLock.acquire();
+    
     try {
         if (thumbStatusPending.size === 0) return;
+        
         const snapshot = Array.from(thumbStatusPending.entries());
         thumbStatusPending.clear();
         const rows = snapshot.map(([relPath, v]) => [relPath, v.mtime || Date.now(), v.status || 'pending']);
+        
         if (rows.length === 0) return;
+        
         try {
             const { runPreparedBatch } = require('../db/multi-db');
             const upsertSql = `INSERT INTO thumb_status(path, mtime, status, last_checked)
@@ -57,16 +86,25 @@ async function flushThumbStatusBatch() {
                                    last_checked=excluded.last_checked`;
             await runPreparedBatch('main', upsertSql, rows, { chunkSize: 800 });
         } catch (e) {
+            logger.warn('批量写入缩略图状态失败，回退为逐条重试:', e.message);
             // 失败时回退为逐条重试（避免数据丢失）
             try {
                 const { dbRun } = require('../db/multi-db');
                 for (const [pathRel, mtime, status] of rows) {
-                    try { await writeThumbStatusWithRetry(dbRun, { path: pathRel, mtime, status }); } catch {}
+                    try { 
+                        await writeThumbStatusWithRetry(dbRun, { path: pathRel, mtime, status }); 
+                    } catch (retryError) {
+                        logger.error(`重试写入缩略图状态失败: ${pathRel}`, retryError.message);
+                    }
                 }
-            } catch {}
+            } catch (fallbackError) {
+                logger.error('回退重试机制也失败:', fallbackError.message);
+            }
         }
     } finally {
-        thumbStatusFlushing = false;
+        thumbStatusLock.release();
+        
+        // 如果还有待处理的数据，继续处理
         if (thumbStatusPending.size > 0 && !thumbStatusFlushScheduled) {
             thumbStatusFlushScheduled = true;
             setTimeout(flushThumbStatusBatch, 300);
@@ -328,17 +366,35 @@ async function ensureThumbnailExists(sourceAbsPath, sourceRelPath) {
             return { status: 'failed' };
         }
 
-        // 如果任务未在队列或处理中，创建新的生成任务
-        if (!isTaskQueuedOrActive(sourceRelPath)) {
-            logger.info(`[高优先级] 浏览器请求缩略图 ${sourceRelPath}，任务插入VIP队列。`);
-            highPriorityThumbnailQueue.unshift({
-                filePath: sourceAbsPath,
-                relativePath: sourceRelPath,
-                type: isVideo ? 'video' : 'photo'
-            });
-            dispatchThumbnailTask();
+        // 入队：队列模式 or 本地模式
+        if (QUEUE_MODE) {
+            try {
+                const queue = new Queue(THUMBNAIL_QUEUE_NAME, { connection: bullConnection });
+                await queue.add('thumb', { filePath: sourceAbsPath, relativePath: sourceRelPath, type: isVideo ? 'video' : 'photo' }, {
+                    priority: 1,
+                    attempts: 3,
+                    removeOnComplete: 1000,
+                    removeOnFail: 200,
+                });
+                logger.info(`[队列] 已入队缩略图任务: ${sourceRelPath}`);
+            } catch (e) {
+                logger.warn(`[队列] 入队缩略图任务失败，回退本地队列: ${e && e.message}`);
+                highPriorityThumbnailQueue.unshift({ filePath: sourceAbsPath, relativePath: sourceRelPath, type: isVideo ? 'video' : 'photo' });
+                dispatchThumbnailTask();
+            }
         } else {
-            logger.debug(`缩略图 ${sourceRelPath} 已在队列或正在处理中，等待完成。`);
+            // 本地队列
+            if (!isTaskQueuedOrActive(sourceRelPath)) {
+                logger.info(`[高优先级] 浏览器请求缩略图 ${sourceRelPath}，任务插入VIP队列。`);
+                highPriorityThumbnailQueue.unshift({
+                    filePath: sourceAbsPath,
+                    relativePath: sourceRelPath,
+                    type: isVideo ? 'video' : 'photo'
+                });
+                dispatchThumbnailTask();
+            } else {
+                logger.debug(`缩略图 ${sourceRelPath} 已在队列或正在处理中，等待完成。`);
+            }
         }
 
         return { status: 'processing' };
@@ -350,6 +406,10 @@ async function ensureThumbnailExists(sourceAbsPath, sourceRelPath) {
  * 向索引工作线程请求所有媒体文件，用于后台批量生成缩略图
  */
 async function startIdleThumbnailGeneration() {
+    if (QUEUE_MODE) {
+        logger.info('[队列] 略过本地批量后台生成，由维护任务批量入队。');
+        return;
+    }
     logger.info('[Main-Thread] 准备启动智能缩略图后台生成任务...');
     indexingWorker.postMessage({ type: 'get_all_media_items' });
 }

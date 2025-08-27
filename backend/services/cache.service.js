@@ -8,7 +8,7 @@ const logger = require('../config/logger');
 const TAG_PREFIX = 'tag:';
 
 /**
- * 根据一个或多个标签，使关联的缓存失效
+ * 根据一个或多个标签，使关联的缓存失效（高效、非阻塞版）
  * @param {string|string[]} tags - 要使其失效的单个标签或标签数组
  */
 async function invalidateTags(tags) {
@@ -25,38 +25,34 @@ async function invalidateTags(tags) {
     const tagKeys = tagsToInvalidate.map(t => `${TAG_PREFIX}${t}`);
 
     try {
-        // 使用 pipeline 提高效率
-        const pipeline = redis.pipeline();
+        // 1. 使用 SUNION 一次性高效获取所有相关缓存键的并集
+        const allCacheKeys = await redis.sunion(tagKeys);
 
-        // 1. 获取所有标签下的缓存键
-        tagKeys.forEach(tagKey => {
-            pipeline.smembers(tagKey);
-        });
-        const results = await pipeline.exec();
-
-        const cacheKeysToDelete = new Set();
-        results.forEach(([err, keys]) => {
-            if (!err && keys && keys.length > 0) {
-                keys.forEach(key => cacheKeysToDelete.add(key));
-            }
-        });
-
-        const finalKeys = Array.from(cacheKeysToDelete);
-        if (finalKeys.length === 0 && tagKeys.length === 0) {
+        const keysToDelete = Array.from(allCacheKeys);
+        if (keysToDelete.length === 0 && tagKeys.length === 0) {
             return;
         }
 
-        // 2. 删除所有收集到的缓存键和标签键本身
-        const deletePipeline = redis.pipeline();
-        if (finalKeys.length > 0) {
-            deletePipeline.del(finalKeys);
+        // 2. 使用单个 pipeline 和非阻塞的 UNLINK 命令来删除所有键
+        const pipeline = redis.pipeline();
+        
+        // 分批次删除缓存键，避免单次命令的参数列表过长
+        if (keysToDelete.length > 0) {
+            const chunkSize = 500;
+            for (let i = 0; i < keysToDelete.length; i += chunkSize) {
+                const chunk = keysToDelete.slice(i, i + chunkSize);
+                pipeline.unlink(chunk);
+            }
         }
+        
+        // 删除标签键本身
         if (tagKeys.length > 0) {
-            deletePipeline.del(tagKeys);
+            pipeline.unlink(tagKeys);
         }
-        await deletePipeline.exec();
 
-        logger.info(`[Cache] 已根据标签失效 ${finalKeys.length} 个缓存键: ${tagsToInvalidate.join(', ')}`);
+        await pipeline.exec();
+
+        logger.info(`[Cache] 已根据 ${tagKeys.length} 个标签，失效 ${keysToDelete.length} 个缓存键。`);
 
     } catch (error) {
         logger.error('根据标签失效缓存时出错:', error);

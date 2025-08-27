@@ -1,5 +1,14 @@
 const { parentPort, workerData } = require('worker_threads');
 const sharp = require('sharp');
+// 限制 sharp/libvips 缓存以控制内存占用
+try {
+    const memMb = Number(process.env.SHARP_CACHE_MEMORY_MB || 32);
+    const items = Number(process.env.SHARP_CACHE_ITEMS || 100);
+    const files = Number(process.env.SHARP_CACHE_FILES || 0);
+    sharp.cache({ memory: memMb, items, files });
+    const conc = Number(process.env.SHARP_CONCURRENCY || 1);
+    if (conc > 0) sharp.concurrency(conc);
+} catch {}
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs').promises;

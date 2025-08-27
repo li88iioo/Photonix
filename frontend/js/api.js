@@ -92,8 +92,7 @@ function getAuthHeaders() {
     // 重新构建认证头
     const token = getAuthToken();
     const headers = {
-        'Content-Type': 'application/json',
-        'X-User-ID': state.userId
+        'Content-Type': 'application/json'
     };
     if (token) {
         headers['Authorization'] = `Bearer ${token}`;

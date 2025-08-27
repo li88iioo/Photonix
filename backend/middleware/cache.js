@@ -62,7 +62,7 @@ function buildEnvelope(res, body) {
 }
 
 function replayEnvelope(res, envelope) {
-    res.setHeader('Vary', 'Authorization, X-User-ID');
+    res.setHeader('Vary', 'Authorization');
     if (envelope.headers && envelope.headers['Content-Type']) {
         res.setHeader('Content-Type', envelope.headers['Content-Type']);
     }
@@ -143,14 +143,14 @@ function cache(duration) {
                 } catch {}
                 res.setHeader('Content-Type', 'application/json; charset=utf-8');
                 res.setHeader('Cache-Control', `public, max-age=${cacheDuration}`);
-                res.setHeader('Vary', 'Authorization, X-User-ID');
+                res.setHeader('Vary', 'Authorization');
                 return res.send(cachedData);
             }
 
             cacheStats.misses++;
             logger.debug(`未命中路由缓存: ${key}`);
             res.setHeader('X-Cache', 'MISS');
-            res.setHeader('Vary', 'Authorization, X-User-ID');
+            res.setHeader('Vary', 'Authorization');
 
             await singleflight(`build:${key}`, async () => {
                 attachWritersWithCache(res, key, cacheDuration);

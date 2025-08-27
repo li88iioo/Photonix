@@ -41,15 +41,17 @@ module.exports = async function(req, res, next) {
         const isThumbnailRequest = req.method === 'GET' && req.path === '/thumbnail'; // 新增对缩略图路由的检查
         const isEventsRequest = req.method === 'GET' && req.path === '/events'; // SSE 事件流
         const isSettingsGetRequest = req.method === 'GET' && req.path === '/settings'; // 公开：仅 GET /api/settings（非敏感字段）
+            const isSettingsStatusRequest = req.method === 'GET' && req.path === '/settings/status'; // 公开：设置更新状态轮询（只读、非敏感）
         const isLoginBgRequest = req.method === 'GET' && req.path === '/login-bg';
         const isLoginRequest = req.method === 'POST' && req.path === '/auth/login';
         
         // 从请求头获取JWT令牌（不再允许通过 URL 查询参数传递 Token）
         let token = req.header('Authorization')?.replace('Bearer ', '');
 
-        // 无论是否允许公开访问，GET /api/settings 均放行（只返回非敏感字段）
-        if (isSettingsGetRequest || isLoginBgRequest) {
-            logger.debug(`[Auth] 放行 GET /api/settings（公共只读）`);
+        // 无论是否允许公开访问，GET /api/settings 与 /api/auth/status 均放行（只返回非敏感字段/布尔）
+        const isAuthStatus = req.method === 'GET' && req.path === '/auth/status';
+        if (isSettingsGetRequest || isSettingsStatusRequest || isLoginBgRequest || isAuthStatus) {
+            logger.debug(`[Auth] 放行公共只读接口: ${req.method} ${req.path}`);
             return next();
         }
 

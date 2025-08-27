@@ -13,7 +13,11 @@ const {
     HISTORY_DB_FILE, 
     INDEX_DB_FILE 
 } = require('../config');
+const { cleanupHlsRecords } = require('../utils/hls.utils');
 const logger = require('../config/logger');
+const { Queue } = require('bullmq');
+const { bullConnection } = require('../config/redis');
+const { QUEUE_MODE, THUMBS_DIR, PHOTOS_DIR, THUMBNAIL_QUEUE_NAME, VIDEO_QUEUE_NAME } = require('../config');
 
 /**
  * 执行数据库维护
@@ -183,6 +187,67 @@ async function reconcileThumbnails() {
 }
 
 /**
+ * 将缺失/待处理的缩略图入队（QUEUE_MODE 下）
+ */
+async function enqueuePendingThumbnails(limit = 5000) {
+    if (!QUEUE_MODE) { logger.info('[enqueue-thumbs] 非队列模式，跳过'); return; }
+    try {
+        const { dbAll } = require('../db/multi-db');
+        const rows = await dbAll('main',
+            `SELECT i.path, i.type
+             FROM items i
+             LEFT JOIN thumb_status t ON t.path = i.path
+             WHERE i.type IN ('photo','video')
+               AND (t.status IS NULL OR t.status IN ('pending','failed') OR t.mtime < i.mtime)
+             LIMIT ?`, [Number(limit) || 5000]
+        );
+        if (!rows || rows.length === 0) { logger.info('[enqueue-thumbs] 未发现待入队的缩略图任务'); return; }
+        const queue = new Queue(THUMBNAIL_QUEUE_NAME, { connection: bullConnection });
+        let ok = 0; let fail = 0;
+        for (const r of rows) {
+            const isVideo = /\.(mp4|webm|mov)$/i.test(r.path || '');
+            try {
+                await queue.add('thumb', { filePath: path.join(PHOTOS_DIR, r.path), relativePath: r.path, type: isVideo ? 'video' : 'photo' }, {
+                    attempts: 3, removeOnComplete: 2000, removeOnFail: 500, priority: 5
+                });
+                ok++;
+            } catch (e) {
+                fail++;
+            }
+        }
+        logger.info(`[enqueue-thumbs] 入队完成：success=${ok} fail=${fail}`);
+    } catch (e) {
+        logger.error('[enqueue-thumbs] 入队失败：', e);
+    }
+}
+
+/**
+ * 将缺失 HLS 的视频入队（QUEUE_MODE 下）
+ */
+async function enqueueMissingHls(limit = 3000) {
+    if (!QUEUE_MODE) { logger.info('[enqueue-hls] 非队列模式，跳过'); return; }
+    try {
+        const { dbAll } = require('../db/multi-db');
+        const { promises: fsp } = require('fs');
+        const videos = await dbAll('main', `SELECT path FROM items WHERE type='video' LIMIT ?`, [Number(limit) || 3000]);
+        if (!videos || videos.length === 0) { logger.info('[enqueue-hls] 未发现视频'); return; }
+        const queue = new Queue(VIDEO_QUEUE_NAME, { connection: bullConnection });
+        let ok = 0; let skip = 0; let fail = 0;
+        for (const v of videos) {
+            try {
+                const master = path.join(THUMBS_DIR, 'hls', v.path, 'master.m3u8');
+                try { await fsp.access(master); skip++; continue; } catch {}
+                await queue.add('video', { relativePath: v.path }, { attempts: 2, removeOnComplete: 2000, removeOnFail: 500, priority: 3 });
+                ok++;
+            } catch (e) { fail++; }
+        }
+        logger.info(`[enqueue-hls] 入队完成：success=${ok} skip=${skip} fail=${fail}`);
+    } catch (e) {
+        logger.error('[enqueue-hls] 入队失败：', e);
+    }
+}
+
+/**
  * 主函数
  */
 async function main() {
@@ -192,6 +257,8 @@ async function main() {
         const shouldCleanLegacy = args.includes('--clean-legacy-after-migration');
         const doDirRecon = args.includes('--reconcile-dirs') || (process.env.ENABLE_NFS_SYNC || 'false').toLowerCase() === 'true';
         const doThumbRecon = args.includes('--reconcile-thumbs') || (process.env.ENABLE_THUMB_RECON || 'true').toLowerCase() === 'true';
+        const doEnqueueThumbs = args.includes('--enqueue-thumbs');
+        const doEnqueueHls = args.includes('--enqueue-hls');
 
         if (shouldCleanLegacy) {
             await cleanLegacyTablesIfMigrated();
@@ -200,6 +267,8 @@ async function main() {
         await performDatabaseMaintenance();
         if (doDirRecon) await reconcileDirectories();
         if (doThumbRecon) await reconcileThumbnails();
+        if (doEnqueueThumbs) await enqueuePendingThumbnails(Number(process.env.ENQUEUE_THUMBS_LIMIT || 5000));
+        if (doEnqueueHls) await enqueueMissingHls(Number(process.env.ENQUEUE_HLS_LIMIT || 3000));
         process.exit(0);
     } catch (error) {
         logger.error('数据库维护失败:', error.message);
@@ -282,3 +351,19 @@ async function cleanLegacyTablesIfMigrated() {
         try { historyDb && historyDb.close(); } catch {}
     }
 }
+
+// 添加HLS记录清理任务
+async function cleanupHlsRecordsTask() {
+    try {
+        logger.info('开始清理过期的HLS处理记录...');
+        await cleanupHlsRecords(30); // 保留30天
+        logger.info('HLS处理记录清理完成');
+    } catch (error) {
+        logger.error('清理HLS处理记录失败:', error);
+    }
+}
+
+// 导出清理任务
+module.exports = {
+    cleanupHlsRecordsTask
+};

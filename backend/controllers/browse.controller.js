@@ -17,8 +17,8 @@ const { getDirectoryContents } = require('../services/file.service');
  * @returns {Object} JSON响应，包含目录内容、分页信息和总数
  */
 exports.browseDirectory = async (req, res) => {
-    // 从请求头获取用户ID，用于访问记录
-    const userId = req.headers['x-user-id'];
+    // 仅信任认证中间件注入的用户ID；未认证统一为 anonymous
+    const userId = (req.user && req.user.id) ? String(req.user.id) : 'anonymous';
     // 从中间件获取已经过验证和清理的路径
     const sanitizedPath = req.sanitizedPath;
     
@@ -55,10 +55,10 @@ exports.browseDirectory = async (req, res) => {
  * @returns {Object} 204状态码表示成功，或错误信息
  */
 exports.updateViewTime = async (req, res) => {
-    // 从请求头获取用户ID
-    const userId = req.headers['x-user-id'];
+    // 仅信任认证中间件注入的用户ID
+    const userId = (req.user && req.user.id) ? String(req.user.id) : null;
     if (!userId) {
-        return res.status(400).json({ code: 'MISSING_USER_ID', message: '缺少用户ID', requestId: req.requestId });
+        return res.status(401).json({ code: 'UNAUTHORIZED', message: '未授权，请登录后重试', requestId: req.requestId });
     }
 
     // 从中间件获取已经过验证和清理的路径

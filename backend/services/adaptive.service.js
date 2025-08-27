@@ -57,17 +57,17 @@ function deriveProfile(mode) {
             };
         case 'medium':
             return {
-                thumbMaxConcurrency: Math.max(1, Math.floor(cpuBased / 2)),
+                thumbMaxConcurrency: Math.max(1, Math.floor(cpuBased / 3)), // 降低并发度：从/2改为/3
                 disableHlsBackfill: false,
-                ffmpegThreads: Math.max(1, Math.min(2, cpuBased)),
+                ffmpegThreads: Math.max(1, Math.min(1, cpuBased)), // 降低ffmpeg线程：从2改为1
                 ffmpegPreset: process.env.FFMPEG_PRESET || 'veryfast',
             };
         case 'high':
         default:
             return {
-                thumbMaxConcurrency: Math.max(1, Math.min(cpuBased, 4)),
+                thumbMaxConcurrency: Math.max(1, Math.min(cpuBased, 2)), // 降低最大并发：从4改为2
                 disableHlsBackfill: false,
-                ffmpegThreads: Math.max(1, Math.min(4, cpuBased)),
+                ffmpegThreads: Math.max(1, Math.min(2, cpuBased)), // 降低ffmpeg线程：从4改为2
                 ffmpegPreset: process.env.FFMPEG_PRESET || 'veryfast',
             };
     }
@@ -120,7 +120,7 @@ function startAdaptiveScheduler() {
             if (next !== currentMode || Date.now() - lastPublishTs > 30000) {
                 currentMode = next;
                 const prof = deriveProfile(next);
-                logger.info(`[Adaptive] 更新: mode=${next} thumbMax=${prof.thumbMaxConcurrency} ffmpegThreads=${prof.ffmpegThreads} disableBackfill=${prof.disableHlsBackfill}`);
+                logger.debug(`[Adaptive] 更新: mode=${next} thumbMax=${prof.thumbMaxConcurrency} ffmpegThreads=${prof.ffmpegThreads} disableBackfill=${prof.disableHlsBackfill}`);
                 publishProfile(next, prof);
             }
         } catch (e) {

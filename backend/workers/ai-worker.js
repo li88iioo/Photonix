@@ -171,7 +171,7 @@ const imageCache = new LRUCache(50, parseInt(process.env.AI_CACHE_MAX_BYTES || '
 
 // 定期清理缓存（每10分钟检查一次）
 const CACHE_CLEANUP_INTERVAL = 10 * 60 * 1000; // 10分钟
-setInterval(() => {
+const cacheCleanupInterval = setInterval(() => {
     const stats = imageCache.getStats();
     if (stats.usageByBytes > 80 || stats.usageByEntries > 80) {
         logger.info(`缓存使用率较高 (entries: ${stats.usageByEntries}%, bytes: ${stats.usageByBytes}%)，执行清理...`);
@@ -186,7 +186,12 @@ setInterval(() => {
 
 // 进程退出/异常时清理缓存，避免驻留的大 Buffer 延迟回收
 const safeClearCache = () => {
-    try { imageCache.clear(); } catch {}
+    try { 
+        imageCache.clear(); 
+        if (cacheCleanupInterval) {
+            clearInterval(cacheCleanupInterval);
+        }
+    } catch {}
 };
 process.on('beforeExit', safeClearCache);
 process.on('SIGTERM', safeClearCache);

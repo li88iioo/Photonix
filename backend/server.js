@@ -205,6 +205,17 @@ async function startServer() {
 			}
 
 			watchPhotosDir();
+
+			// 启动时后台回填缺失的 mtime/width/height，降低运行时 fs.stat 与动态尺寸探测
+			try {
+				const { getIndexingWorker } = require('./services/worker.manager');
+				const worker = getIndexingWorker();
+				worker.postMessage({ type: 'backfill_missing_mtime', payload: { photosDir: PHOTOS_DIR } });
+				worker.postMessage({ type: 'backfill_missing_dimensions', payload: { photosDir: PHOTOS_DIR } });
+				logger.info('已触发启动期的 mtime 与 尺寸 回填后台任务。');
+			} catch (e) {
+				logger.warn('触发启动期回填任务失败（忽略）：', e && e.message);
+			}
 		} catch (dbError) {
 			logger.debug('检查索引状态失败（降噪）：', dbError && dbError.message);
 			logger.info('由于检查失败，开始构建搜索索引...');

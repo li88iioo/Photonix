@@ -117,6 +117,7 @@ async function handleLogin(e) {
     const errorEl = document.getElementById('login-error');
     const loginButton = e.target.querySelector('button');
     const originalButtonText = loginButton.textContent;
+    let reenableTimer = null;
     
     // 重置错误信息并设置加载状态
     errorEl.textContent = '';
@@ -154,11 +155,23 @@ async function handleLogin(e) {
                 } else {
                     msg = '密码错误';
                 }
-            } else if (response.status === 429 && data.code === 'LOGIN_LOCKED') {
+            } else if (response.status === 429 && (data.code === 'LOGIN_LOCKED' || data.code === 'TOO_MANY_REQUESTS')) {
                 const seconds = data.retryAfterSeconds || Number(response.headers.get('Retry-After')) || null;
-                if (seconds) {
-                    const mins = Math.ceil(seconds / 60);
-                    msg = `尝试过于频繁，请在 ${mins} 分钟后重试`;
+                if (seconds && Number.isFinite(seconds) && seconds > 0 && seconds < 24 * 3600) {
+                    let remain = seconds;
+                    const tick = () => {
+                        const mins = Math.ceil(remain / 60);
+                        errorEl.textContent = `尝试过于频繁，请在 ${mins} 分钟后重试（${remain}s）`;
+                        if (remain <= 0) {
+                            loginButton.disabled = false;
+                            loginButton.textContent = originalButtonText;
+                            if (reenableTimer) clearInterval(reenableTimer);
+                        }
+                        remain -= 1;
+                    };
+                    tick();
+                    reenableTimer = setInterval(tick, 1000);
+                    msg = '';
                 } else {
                     msg = data.message || '尝试过于频繁，请稍后重试';
                 }
@@ -170,8 +183,10 @@ async function handleLogin(e) {
                 msg = data.message || data.error;
             }
             errorEl.textContent = msg;
-            loginButton.disabled = false;
-            loginButton.textContent = originalButtonText;
+            if (!reenableTimer) {
+                loginButton.disabled = false;
+                loginButton.textContent = originalButtonText;
+            }
             return;
         }
         

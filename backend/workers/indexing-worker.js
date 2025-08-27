@@ -3,6 +3,15 @@ const path = require('path');
 const os = require('os');
 const winston = require('winston');
 const sharp = require('sharp');
+// 控制 sharp 缓存与并行，避免首扫堆积内存
+try {
+  const memMb = Number(process.env.SHARP_CACHE_MEMORY_MB || 32);
+  const items = Number(process.env.SHARP_CACHE_ITEMS || 100);
+  const files = Number(process.env.SHARP_CACHE_FILES || 0);
+  sharp.cache({ memory: memMb, items, files });
+  const conc = Number(process.env.SHARP_CONCURRENCY || 1);
+  if (conc > 0) sharp.concurrency(conc);
+} catch {}
 const { initializeConnections, getDB, dbRun, dbGet, runPreparedBatch, adaptDbTimeouts } = require('../db/multi-db');
 const { redis } = require('../config/redis');
 const { createNgrams } = require('../utils/search.utils');

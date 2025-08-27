@@ -46,25 +46,8 @@ function createVideoSpinner() {
     spinnerWrapper.innerHTML = '<div class="spinner" style="width: 3rem; height: 3rem;"></div>';
     return spinnerWrapper;
 }
-function createVideoFallback(originalUrl, onRetry) {
-    const wrap = document.createElement('div');
-    wrap.id = 'video-fallback';
-    wrap.className = 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-40 z-20';
-    wrap.innerHTML = `
-        <div class="flex flex-col items-center gap-3 p-4 rounded-xl bg-gray-900 bg-opacity-70 border border-white/10">
-            <div class="text-white text-sm">视频网络较慢，加载失败</div>
-            <div class="flex gap-3">
-                <button id="vf-retry" class="px-3 py-1 rounded bg-purple-600 text-white text-sm">重试</button>
-                <a id="vf-open" class="px-3 py-1 rounded bg-gray-700 text-white text-sm" target="_blank" rel="noopener">新标签打开</a>
-            </div>
-        </div>
-    `;
-    const retryBtn = wrap.querySelector('#vf-retry');
-    const openLink = wrap.querySelector('#vf-open');
-    if (retryBtn) retryBtn.onclick = () => { try { wrap.remove(); } catch {}; onRetry && onRetry(); };
-    if (openLink) openLink.href = originalUrl;
-    return wrap;
-}
+
+
 
 /**
  * 更新模态框内容
@@ -325,6 +308,9 @@ export function closeModal() {
     if (typeof stopFastNavigate === 'function') {
         stopFastNavigate();
     }
+    
+    // 清理模态框资源
+    cleanupModal();
     
     // 清理媒体内容
     elements.modalImg.src = '';
@@ -604,3 +590,55 @@ export function stopFastNavigate() {
     fastNavInterval = null;
     fastNavDirection = null;
 }
+
+/**
+ * 清理模态框资源
+ * 防止内存泄漏和事件监听器累积
+ */
+export function cleanupModal() {
+    // 清理快速导航定时器
+    if (fastNavInterval) {
+        clearInterval(fastNavInterval);
+        fastNavInterval = null;
+        fastNavDirection = null;
+    }
+    
+    // 清理HLS实例
+    if (state.hlsInstance) {
+        try {
+            state.hlsInstance.destroy();
+        } catch (e) {
+            console.warn('清理HLS实例失败:', e);
+        }
+        state.hlsInstance = null;
+    }
+    
+    // 清理视频元素
+    const modalVideo = elements.modal.querySelector('video');
+    if (modalVideo) {
+        try {
+            modalVideo.pause();
+            modalVideo.src = '';
+            modalVideo.load();
+        } catch (e) {
+            console.warn('清理视频元素失败:', e);
+        }
+    }
+    
+    // 清理对象URL
+    if (state.currentObjectURL) {
+        try {
+            URL.revokeObjectURL(state.currentObjectURL);
+        } catch (e) {
+            console.warn('清理对象URL失败:', e);
+        }
+        state.currentObjectURL = null;
+    }
+    
+    // 重置状态
+    state.isModalNavigating = false;
+    state.currentModalIndex = 0;
+}
+
+// 页面卸载时清理资源
+window.addEventListener('beforeunload', cleanupModal);

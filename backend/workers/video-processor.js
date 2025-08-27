@@ -26,8 +26,39 @@ const { THUMBS_DIR, PHOTOS_DIR } = require('../config');
     const MAX_VIDEO_RETRIES = 3;
     const PERMANENT_FAILURE_TTL = 3600 * 24 * 7;
 
+    // --- 任务队列管理 ---
+    const taskQueue = [];
+    let isProcessingQueue = false;
+    const MAX_CONCURRENT_TASKS = 1; // 最大并发任务数，降低到1以减少系统压力
+
+    // 队列处理函数
+    async function processTaskQueue() {
+        if (isProcessingQueue || taskQueue.length === 0) {
+            return;
+        }
+        
+        isProcessingQueue = true;
+        logger.info(`[VIDEO-PROCESSOR] 开始处理任务队列，当前队列长度: ${taskQueue.length}`);
+        
+        while (taskQueue.length > 0) {
+            const task = taskQueue.shift();
+            try {
+                await handleTask(task);
+                // 每个任务之间增加延迟，避免系统过载
+                const { VIDEO_TASK_DELAY_MS } = require('../config');
+                await new Promise(resolve => setTimeout(resolve, VIDEO_TASK_DELAY_MS));
+            } catch (error) {
+                logger.error(`[VIDEO-PROCESSOR] 队列任务处理失败:`, error);
+            }
+        }
+        
+        isProcessingQueue = false;
+        logger.info(`[VIDEO-PROCESSOR] 任务队列处理完成`);
+    }
+
     // 核心处理函数：优化 moov 并生成 HLS
     async function processVideo(filePath, relativePath, thumbsDir) {
+        const startTime = Date.now(); // 记录处理开始时间
         const targetDir = path.dirname(filePath);
         // 在源文件目录内创建 .tmp 子目录，避免跨设备链接问题
         const tempDir = path.join(targetDir, '.tmp');
@@ -134,6 +165,14 @@ const { THUMBS_DIR, PHOTOS_DIR } = require('../config');
             await fs.writeFile(path.join(hlsOutputDir, 'master.m3u8'), masterPlaylist);
             logger.info(`[3/3] HLS 主播放列表创建成功`);
 
+            // 4. 创建HLS处理记录文件
+            const { createHlsRecord } = require('../utils/hls.utils');
+            await createHlsRecord(relativePath, {
+                resolutions: resolutions.map(r => r.name),
+                fileSize: await fs.stat(filePath).then(s => s.size).catch(() => 0),
+                processingTime: Date.now() - startTime
+            });
+
             // 清理临时目录（如果为空）
             try {
                 const tempFiles = await fs.readdir(tempDir);
@@ -180,8 +219,9 @@ const { THUMBS_DIR, PHOTOS_DIR } = require('../config');
                 return;
             }
 
-            const hlsMasterPlaylist = path.join(thumbsDir, 'hls', relativePath, 'master.m3u8');
-            const hlsExists = await fs.access(hlsMasterPlaylist).then(() => true).catch(() => false);
+            // 使用文件系统检查HLS状态，避免数据库查询
+            const { checkHlsExists } = require('../utils/hls.utils');
+            const hlsExists = await checkHlsExists(relativePath);
 
             if (hlsExists) {
                 logger.info(`HLS 流已存在，跳过: ${filePath}`);
@@ -294,12 +334,16 @@ const { THUMBS_DIR, PHOTOS_DIR } = require('../config');
                             break;
                         }
                     } catch {}
-                    // 依次处理，避免并发过高
+                    // 依次处理，避免并发过高，增加处理间隔
                     await handleTask({
                         filePath: path.join(PHOTOS_DIR, video.path),
                         relativePath: video.path,
                         thumbsDir: THUMBS_DIR
                     });
+                    
+                    // 每个视频处理完后等待，减少系统压力
+                    const { VIDEO_TASK_DELAY_MS } = require('../config');
+                    await new Promise(resolve => setTimeout(resolve, VIDEO_TASK_DELAY_MS));
                 }
                 logger.info('[VIDEO-PROCESSOR] HLS 回填任务检查完成。');
             } catch (e) {
@@ -310,8 +354,11 @@ const { THUMBS_DIR, PHOTOS_DIR } = require('../config');
             await cleanupTempFiles();
             parentPort.postMessage({ success: true, message: '临时文件清理完成' });
         } else {
-            // 处理普通单个任务
-            await handleTask(task);
+            // 将任务添加到队列而不是直接处理
+            taskQueue.push(task);
+            logger.info(`[VIDEO-PROCESSOR] 任务已添加到队列，当前队列长度: ${taskQueue.length}`);
+            // 异步启动队列处理
+            setImmediate(() => processTaskQueue());
         }
     });
 })();

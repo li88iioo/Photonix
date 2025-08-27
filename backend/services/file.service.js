@@ -7,6 +7,13 @@
 const { promises: fs } = require('fs');
 const path = require('path');
 const sharp = require('sharp');
+// 限制 file.service 中偶发 metadata 读取的缓存影响
+try {
+  const memMb = Number(process.env.SHARP_CACHE_MEMORY_MB || 16);
+  const items = Number(process.env.SHARP_CACHE_ITEMS || 50);
+  const files = Number(process.env.SHARP_CACHE_FILES || 0);
+  sharp.cache({ memory: memMb, items, files });
+} catch {}
 const logger = require('../config/logger');
 const { redis } = require('../config/redis');
 const { PHOTOS_DIR, API_BASE, COVER_INFO_LRU_SIZE } = require('../config');
@@ -270,6 +277,27 @@ async function getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, 
 // 已下沉到 SQL：旧的 getSortedDirectoryEntries 已移除
 
 /**
+ * 回退到数据库检查HLS状态
+ * @param {Array} videoRows - 视频行数据
+ * @param {Set} hlsReadySet - HLS就绪集合
+ */
+async function fallbackToDatabaseCheck(videoRows, hlsReadySet) {
+    try {
+        const videoPaths = videoRows.map(r => r.path);
+        const placeholders = videoPaths.map(() => '?').join(',');
+        const processedRows = await dbAll(
+            'main',
+            `SELECT path FROM processed_videos WHERE path IN (${placeholders})`,
+            videoPaths
+        );
+        processedRows.forEach(r => hlsReadySet.add(r.path));
+        logger.debug(`数据库检查HLS状态: ${hlsReadySet.size}/${videoPaths.length} 个视频已就绪`);
+    } catch (e) {
+        logger.warn(`数据库检查HLS状态失败: ${e.message}`);
+    }
+}
+
+/**
  * 获取目录内容
  * 获取指定目录的分页内容，包括相册和媒体文件，支持封面图片和尺寸信息
  * @param {string} directory - 目录路径
@@ -332,22 +360,26 @@ async function getDirectoryContents(relativePathPrefix, page, limit, userId, sor
             }
         }
 
-        // 获取HLS就绪状态
+        // 获取HLS就绪状态 - 使用文件系统检查替代数据库查询
         const videoRows = rowsEffective.filter(r => !r.is_dir && /\.(mp4|webm|mov)$/i.test(r.name));
         let hlsReadySet = new Set();
         if (videoRows.length > 0) {
-            try {
-                const videoPaths = videoRows.map(r => r.path);
-                const placeholders = videoPaths.map(() => '?').join(',');
-                const processedRows = await dbAll(
-                    'main',
-                    `SELECT path FROM processed_videos WHERE path IN (${placeholders})`,
-                    videoPaths
-                );
-                hlsReadySet = new Set(processedRows.map(r => r.path));
-            } catch (e) {
-                logger.warn(`无法检查HLS就绪状态，可能processed_videos表不存在或结构不兼容: ${e.message}`);
-                // On error, continue gracefully with an empty set, assuming no videos are ready.
+            const { USE_FILE_SYSTEM_HLS_CHECK } = require('../config');
+            
+            if (USE_FILE_SYSTEM_HLS_CHECK) {
+                try {
+                    const { batchCheckHlsStatus } = require('../utils/hls.utils');
+                    const videoPaths = videoRows.map(r => r.path);
+                    hlsReadySet = await batchCheckHlsStatus(videoPaths);
+                    logger.debug(`文件系统检查HLS状态: ${hlsReadySet.size}/${videoPaths.length} 个视频已就绪`);
+                } catch (e) {
+                    logger.warn(`文件系统检查HLS状态失败，回退到数据库查询: ${e.message}`);
+                    // 回退到数据库查询
+                    await fallbackToDatabaseCheck(videoRows, hlsReadySet);
+                }
+            } else {
+                // 使用数据库查询
+                await fallbackToDatabaseCheck(videoRows, hlsReadySet);
             }
         }
 

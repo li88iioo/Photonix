@@ -78,6 +78,13 @@ const withTimeout = (promise, ms, queryInfo) => {
 // 数据库连接池
 const dbConnections = {};
 
+// 数据库连接健康状态
+const dbHealthStatus = new Map();
+
+// 连接监控配置
+const DB_HEALTH_CHECK_INTERVAL = Number(process.env.DB_HEALTH_CHECK_INTERVAL || 60000); // 1分钟
+const DB_RECONNECT_ATTEMPTS = Number(process.env.DB_RECONNECT_ATTEMPTS || 3);
+
 // 创建数据库连接的通用函数
 const createDBConnection = (dbPath, dbName) => {
     return new Promise((resolve, reject) => {
@@ -98,6 +105,21 @@ const createDBConnection = (dbPath, dbName) => {
                 db.run(`PRAGMA journal_mode = ${SQLITE_JOURNAL_MODE};`);
                 db.run(`PRAGMA mmap_size = ${SQLITE_MMAP_SIZE};`);
                 db.run('PRAGMA foreign_keys = ON;');
+            
+            // 设置连接健康状态
+            dbHealthStatus.set(dbName, 'connected');
+            
+            // 监听连接错误
+            db.on('error', (err) => {
+                logger.error(`${dbName} 数据库连接错误:`, err.message);
+                dbHealthStatus.set(dbName, 'error');
+            });
+            
+            // 监听连接关闭
+            db.on('close', () => {
+                logger.warn(`${dbName} 数据库连接已关闭`);
+                dbHealthStatus.set(dbName, 'closed');
+            });
                 db.run('PRAGMA optimize;');
             } catch (e) {
                 logger.warn(`${dbName} PRAGMA 优化参数设置失败:`, e.message);
@@ -215,8 +237,145 @@ const hasColumn = (dbType, table, column) => {
             resolve(rows.some(row => row.name === column));
         });
     });
-    return withTimeout(promise, getQueryTimeoutMs(), { sql });
+    return withTimeout(promise, getQueryTimeoutMs(), { sql     });
 };
+
+/**
+ * 检查数据库连接健康状态
+ */
+async function checkDatabaseHealth() {
+    const dbTypes = ['main', 'settings', 'history', 'index'];
+    
+    for (const dbType of dbTypes) {
+        const db = dbConnections[dbType];
+        if (!db) continue;
+        
+        try {
+            // 执行简单查询测试连接
+            await new Promise((resolve, reject) => {
+                db.get('SELECT 1 as test', (err, row) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        resolve(row);
+                    }
+                });
+            });
+            
+            // 连接正常
+            if (dbHealthStatus.get(dbType) !== 'connected') {
+                logger.info(`${dbType} 数据库连接已恢复`);
+                dbHealthStatus.set(dbType, 'connected');
+            }
+        } catch (error) {
+            logger.warn(`${dbType} 数据库连接检查失败:`, error.message);
+            dbHealthStatus.set(dbType, 'unhealthy');
+            
+            // 尝试重新连接
+            await attemptReconnect(dbType);
+        }
+    }
+}
+
+/**
+ * 尝试重新连接数据库
+ */
+async function attemptReconnect(dbType) {
+    const maxAttempts = DB_RECONNECT_ATTEMPTS;
+    let attempts = 0;
+    
+    while (attempts < maxAttempts) {
+        attempts++;
+        try {
+            logger.info(`尝试重新连接 ${dbType} 数据库 (第${attempts}次)...`);
+            
+            // 关闭旧连接
+            if (dbConnections[dbType]) {
+                try {
+                    await new Promise((resolve, reject) => {
+                        dbConnections[dbType].close((err) => {
+                            if (err) reject(err);
+                            else resolve();
+                        });
+                    });
+                } catch (error) {
+                    logger.warn(`关闭 ${dbType} 旧连接失败:`, error.message);
+                }
+            }
+            
+            // 重新创建连接
+            const dbPath = getDbPath(dbType);
+            const dbName = getDbName(dbType);
+            dbConnections[dbType] = await createDBConnection(dbPath, dbName);
+            
+            logger.info(`${dbType} 数据库重新连接成功`);
+            return true;
+        } catch (error) {
+            logger.error(`${dbType} 数据库重新连接失败 (第${attempts}次):`, error.message);
+            
+            if (attempts < maxAttempts) {
+                // 指数退避重试
+                const delay = Math.min(1000 * Math.pow(2, attempts - 1), 10000);
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+    }
+    
+    logger.error(`${dbType} 数据库重新连接最终失败，已达到最大重试次数`);
+    return false;
+}
+
+/**
+ * 获取数据库路径
+ */
+function getDbPath(dbType) {
+    switch (dbType) {
+        case 'main': return DB_FILE;
+        case 'settings': return SETTINGS_DB_FILE;
+        case 'history': return HISTORY_DB_FILE;
+        case 'index': return INDEX_DB_FILE;
+        default: throw new Error(`未知的数据库类型: ${dbType}`);
+    }
+}
+
+/**
+ * 获取数据库名称
+ */
+function getDbName(dbType) {
+    switch (dbType) {
+        case 'main': return 'main';
+        case 'settings': return 'settings';
+        case 'history': return 'history';
+        case 'index': return 'index';
+        default: return dbType;
+    }
+}
+
+// 启动数据库健康检查
+const dbHealthCheckInterval = setInterval(checkDatabaseHealth, DB_HEALTH_CHECK_INTERVAL);
+
+// 清理数据库健康检查定时器
+function cleanupDbHealthCheck() {
+    if (dbHealthCheckInterval) {
+        clearInterval(dbHealthCheckInterval);
+    }
+}
+
+// 进程退出时清理数据库连接
+process.on('beforeExit', async () => {
+    cleanupDbHealthCheck();
+    await closeAllConnections();
+});
+process.on('SIGINT', async () => {
+    logger.info('收到 SIGINT 信号，清理数据库连接...');
+    cleanupDbHealthCheck();
+    await closeAllConnections();
+});
+process.on('SIGTERM', async () => {
+    logger.info('收到 SIGTERM 信号，清理数据库连接...');
+    cleanupDbHealthCheck();
+    await closeAllConnections();
+});
 
 const hasTable = (dbType, table) => {
     const sql = `SELECT name FROM sqlite_master WHERE type='table' AND name=?`;
@@ -240,6 +399,9 @@ module.exports = {
     hasColumn,
     hasTable,
     dbConnections,
+    checkDatabaseHealth,
+    attemptReconnect,
+    dbHealthStatus,
     /**
      * 动态调节 SQLite 超时参数（全局）
      * busyTimeoutDeltaMs/queryTimeoutDeltaMs 可正可负，内部自动裁剪到[min,max]

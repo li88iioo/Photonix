@@ -1,11 +1,19 @@
 const express = require('express');
 const router = express.Router();
 const rateLimit = require('express-rate-limit');
+const RedisStore = require('rate-limit-redis');
+const { redis } = require('../config/redis');
 const { getCacheStats } = require('../middleware/cache');
 const { aiCaptionQueue } = require('../config/redis');
 
 // 轻量限流，避免监控轮询放大流量
-const metricsLimiter = rateLimit({ windowMs: 30 * 1000, max: 60, standardHeaders: true, legacyHeaders: false });
+const metricsLimiter = rateLimit({
+  windowMs: 30 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: new RedisStore({ sendCommand: (...args) => redis.call(...args) })
+});
 
 // 缓存命中率指标
 router.get('/cache', metricsLimiter, (req, res) => {

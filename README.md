@@ -1,4 +1,4 @@
-# Photonix
+# 光影画廊 | Shadow Gallery
 
 一个极简、AI驱动的智能图片画廊，支持 PWA、流式加载、多数据库架构与高性能缓存。
 
@@ -54,7 +54,7 @@
 ### 2. 克隆项目
 ```bash
 
-cd Photonix
+cd Shadow-Gallery
 ```
 
 ### 3. 配置环境变量（可选）
@@ -89,7 +89,7 @@ docker compose logs -f
 ## 📁 项目架构
 
 ```
-Photonix/
+Shadow-Gallery/
 ├── Dockerfile                          # 单容器构建（前端打包→拷贝到 backend/public，pm2 启动 server+ai-worker）
 ├── docker-compose.yml                   # 编排（app + redis），端口与卷映射
 ├── README.md                            # 项目说明
@@ -212,6 +212,8 @@ Photonix/
 > **注意：**
 > - `ADMIN_SECRET` 必须在 `.env` 文件中手动设置，否则涉及超级管理员权限的敏感操作（如设置/修改/禁用访问密码）将无法进行。
 > - 请务必将 `ADMIN_SECRET` 设置为高强度、难以猜测的字符串，并妥善保管。
+>
+> 更完整的环境变量说明与不同规模服务器的推荐配置，请参见 `ENV_GUIDE.md`。
 
 ### Docker 服务配置
 
@@ -262,6 +264,21 @@ proxy_connect_timeout 60s;
 
 - Traefik/Caddy：确保对 `/api/events` 关闭缓冲并提升 read timeout。
 
+### 多实例一致限流（Redis Store）
+
+自 v1.0.0 起，应用在以下路由上使用 Redis 作为 express-rate-limit 的共享存储，以保证多实例/多进程环境下的限流一致性：
+
+- `/api` 全局限流：见 `backend/middleware/rateLimiter.js`
+- `/api/auth/login`、`/api/auth/refresh`：见 `backend/routes/auth.routes.js`
+- `/api/metrics/*`：见 `backend/routes/metrics.routes.js`
+
+依赖：`REDIS_URL`（默认 `redis://redis:6379`）。如需调整窗口和配额，可通过以下环境变量：
+
+- `RATE_LIMIT_WINDOW_MINUTES`（默认 15）
+- `RATE_LIMIT_MAX_REQUESTS`（默认 100）
+
+说明：Redis Store 通过现有的 ioredis 客户端进行 `sendCommand`，无需额外配置。
+
 ### 前端开发
 ```bash
 cd frontend
@@ -279,6 +296,39 @@ sqlite3 data/gallery.db ".tables"
 # 手动执行数据迁移
 node backend/db/migrate-to-multi-db.js
 ```
+
+### 启动期回填任务（降低运行时 IO）
+
+为减少浏览大目录时的 `fs.stat` 与动态尺寸探测开销，服务在启动后会异步触发两类后台回填任务（由 `indexing-worker` 执行）：
+
+- 回填 mtime：`backfill_missing_mtime`
+- 回填媒体尺寸（width/height）：`backfill_missing_dimensions`
+
+相关环境变量（可选）：
+
+- `MTIME_BACKFILL_BATCH`（默认 500）：单批更新条数
+- `MTIME_BACKFILL_SLEEP_MS`（默认 200）：批次间休眠
+- `DIM_BACKFILL_BATCH`（默认 500）：尺寸回填单批条数
+- `DIM_BACKFILL_SLEEP_MS`（默认 200）：批次间休眠
+
+回填任务在 `backend/server.js` 启动阶段触发，属于后台低优先级操作，不影响正常功能。
+
+### 生产部署建议
+
+- 反向代理
+  - 为 `/api/events` 关闭缓冲、提升 read timeout（见上文 Nginx 片段）。
+  - 建议统一 HTTPS，同源部署前后端，降低 CSP/COOP 噪音。
+- Redis 高可用
+  - 生产建议使用外部 Redis（主从或哨兵/集群）。
+  - 仅需配置 `REDIS_URL`，express-rate-limit 与 BullMQ 共用连接。
+- 资源与并发
+  - `NUM_WORKERS` 控制缩略图并行度，内存紧张时适当下调。
+  - 大相册首次索引耗时较长，建议在业务低峰进行全量重建。
+- 监控与可观测
+  - `/api/metrics/cache` 查看路由缓存命中；`/api/metrics/queue` 查看队列状态。
+  - 结合容器日志与 `LOG_LEVEL=debug` 进行排查。
+- 私有模式 SSE
+  - 如反代支持 Cookie 注入，可以通过 Cookie 传递认证；或改用自定义头的 SSE polyfill（需自行启用）。
 
 ## 🎯 功能详解
 
