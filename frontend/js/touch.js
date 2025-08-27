@@ -153,3 +153,105 @@ export class SwipeHandler {
         this.touchEndY = 0;
     }
 }
+
+/**
+ * 启用图片的双指缩放与拖拽
+ * 返回一个清理函数以移除相关监听
+ * @param {HTMLImageElement} img
+ * @param {HTMLElement} container 承载手势事件的容器（建议为媒体面板）
+ */
+export function enablePinchZoom(img, container) {
+    let scale = 1;
+    let translateX = 0;
+    let translateY = 0;
+    let startScale = 1;
+    let lastDistance = 0;
+    let isPanning = false;
+    let lastX = 0, lastY = 0;
+    const MIN_SCALE = 1;
+    const MAX_SCALE = 4;
+
+    if (!img || !container) return () => {};
+
+    img.style.transformOrigin = 'center center';
+    img.style.touchAction = 'none';
+
+    function getDistance(touches) {
+        const [a, b] = touches;
+        return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    }
+    function applyTransform() {
+        img.style.transform = `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`;
+    }
+    function clampPan() {
+        const rect = img.getBoundingClientRect();
+        const maxX = (rect.width * (scale - 1)) / 2;
+        const maxY = (rect.height * (scale - 1)) / 2;
+        translateX = Math.max(-maxX, Math.min(maxX, translateX));
+        translateY = Math.max(-maxY, Math.min(maxY, translateY));
+    }
+
+    let lastTapTime = 0; let lastTapX = 0; let lastTapY = 0;
+
+    function onTouchStart(e) {
+        if (e.touches.length === 2) {
+            lastDistance = getDistance(e.touches);
+            startScale = scale;
+            e.preventDefault();
+            return;
+        }
+        if (e.touches.length === 1) {
+            isPanning = scale > 1;
+            lastX = e.touches[0].clientX;
+            lastY = e.touches[0].clientY;
+        }
+    }
+    function onTouchMove(e) {
+        if (e.touches.length === 2) {
+            const d = getDistance(e.touches);
+            const factor = d / (lastDistance || d);
+            scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, startScale * factor));
+            clampPan();
+            applyTransform();
+            e.preventDefault();
+            return;
+        }
+        if (e.touches.length === 1 && isPanning) {
+            const x = e.touches[0].clientX;
+            const y = e.touches[0].clientY;
+            translateX += x - lastX;
+            translateY += y - lastY;
+            lastX = x; lastY = y;
+            clampPan();
+            applyTransform();
+            e.preventDefault();
+        }
+    }
+    function onTouchEnd(e) {
+        if (e.touches.length === 0 && e.changedTouches && e.changedTouches.length === 1) {
+            const now = Date.now();
+            const cx = e.changedTouches[0].clientX;
+            const cy = e.changedTouches[0].clientY;
+            const dt = now - lastTapTime;
+            const dist = Math.hypot(cx - lastTapX, cy - lastTapY);
+            if (dt < 280 && dist < 24) {
+                scale = scale > 1 ? 1 : 2;
+                translateX = 0; translateY = 0;
+                applyTransform();
+            }
+            lastTapTime = now; lastTapX = cx; lastTapY = cy;
+        }
+    }
+
+    container.addEventListener('touchstart', onTouchStart, { passive: false });
+    container.addEventListener('touchmove', onTouchMove, { passive: false });
+    container.addEventListener('touchend', onTouchEnd, { passive: true });
+
+    return function cleanup() {
+        container.removeEventListener('touchstart', onTouchStart, { passive: false });
+        container.removeEventListener('touchmove', onTouchMove, { passive: false });
+        container.removeEventListener('touchend', onTouchEnd, { passive: true });
+        img.style.transform = '';
+        img.style.touchAction = '';
+    };
+}

@@ -4,6 +4,7 @@ import { state, elements, backdrops } from './state.js';
 import { preloadNextImages, showNotification } from './utils.js';
 import { generateImageCaption } from './api.js';
 import Hls from 'hls.js'; // 引入 HLS.js
+import { SwipeHandler, enablePinchZoom } from './touch.js';
 
 /**
  * 模态框管理模块
@@ -278,6 +279,12 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
             captionContainer.innerHTML = '<div class="flex items-center justify-center h-full"><div class="spinner"></div><p class="ml-4">酝酿中...</p></div>';
             captionContainerMobile.innerHTML = '酝酿中...';
         }
+
+        // 启用移动端双指缩放/拖拽（touch.js）
+        try {
+            if (window._imageGestureCleanup) { try { window._imageGestureCleanup(); } catch {} }
+            window._imageGestureCleanup = enablePinchZoom(modalImg, mediaPanel);
+        } catch {}
     }
     
     // 预加载下一批图片
@@ -652,6 +659,9 @@ export function cleanupModal() {
         }
     }
     
+    // 清理图片手势监听
+    try { if (window._imageGestureCleanup) { window._imageGestureCleanup(); window._imageGestureCleanup = null; } } catch {}
+
     // 清理对象URL
     if (state.currentObjectURL) {
         try {
