@@ -108,6 +108,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
         const cleanRelativePath = originalPathForAI.startsWith('/static/') ? originalPathForAI.substring(8) : originalPathForAI;
         const hlsUrl = `/thumbs/hls/${cleanRelativePath}/master.m3u8`;
 
+        let _onResizeRef = null;
         const cleanup = () => {
             if (state.hlsInstance) {
                 state.hlsInstance.destroy();
@@ -118,6 +119,8 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
             modalVideo.removeEventListener('canplay', onCanPlay);
             modalVideo.removeEventListener('loadeddata', onLoadedData);
             modalVideo.removeEventListener('timeupdate', onTimeUpdate);
+            modalVideo.removeEventListener('loadedmetadata', onLoadedMetadata);
+            try { if (_onResizeRef) window.removeEventListener('resize', _onResizeRef); } catch {}
         };
 
         const removeSpinnerAndUnbind = () => {
@@ -153,6 +156,26 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
         const onTimeUpdate = () => {
             if (myToken !== activeVideoToken) return cleanup();
             removeSpinnerAndUnbind();
+        };
+
+        // 根据视口和视频比例，计算一个“适中”的尺寸并固定，避免播放中忽大忽小
+        const applyStableSize = () => {
+            if (!modalVideo) return;
+            const vw = Math.max(1, modalVideo.videoWidth || 16);
+            const vh = Math.max(1, modalVideo.videoHeight || 9);
+            const aspect = vw / vh;
+            const maxW = Math.min(window.innerWidth * 0.86, 1280);
+            const maxH = Math.min(window.innerHeight * 0.78, 820);
+            let width = maxW;
+            let height = width / aspect;
+            if (height > maxH) { height = maxH; width = height * aspect; }
+            modalVideo.style.width = `${Math.round(width)}px`;
+            modalVideo.style.height = `${Math.round(height)}px`;
+            try { modalVideo.style.aspectRatio = `${vw}/${vh}`; } catch {}
+        };
+
+        const onLoadedMetadata = () => {
+            applyStableSize();
         };
 
         cleanup(); // Clean up previous instance if any
@@ -227,6 +250,10 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
         modalVideo.addEventListener('canplay', onCanPlay, { once: true });
         modalVideo.addEventListener('loadeddata', onLoadedData, { once: true });
         modalVideo.addEventListener('timeupdate', onTimeUpdate, { once: true });
+        modalVideo.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
+        const onResize = () => applyStableSize();
+        window.addEventListener('resize', onResize);
+        _onResizeRef = onResize;
         modalVideo.play().catch(e => {
             if (myToken !== activeVideoToken) return cleanup();
             console.warn('Autoplay was likely prevented by the browser.', e);
