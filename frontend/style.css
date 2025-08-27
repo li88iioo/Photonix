@@ -435,6 +435,52 @@ body { font-family: 'Noto Sans SC', sans-serif; }
 #content-grid.masonry-mode {
     position: relative;
 }
+#content-grid.grid-mode {
+    position: relative;
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 1rem;
+}
+#content-grid.grid-mode .grid-item {
+    margin: 0 !important;
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    width: auto !important;
+    /* 覆盖瀑布流的虚拟高度，避免高度错乱 */
+    content-visibility: visible !important;
+    contain-intrinsic-size: auto !important;
+}
+/* 统一网格卡片纵横比，消除行高参差导致的大面积空白 */
+#content-grid.grid-mode .grid-item .relative {
+    aspect-ratio: var(--grid-aspect, 3/4) !important;
+}
+#content-grid.grid-mode .grid-item img,
+#content-grid.grid-mode .grid-item .image-placeholder {
+    object-fit: cover;
+}
+
+/* 移动端：网格一行两个 */
+@media (max-width: 768px) {
+  #content-grid.grid-mode {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 0.75rem;
+  }
+}
+
+/* 布局切换按钮：文字悬浮气泡（桌面端显示，移动端隐藏） */
+.layout-tooltip { display: none; }
+@media (hover: hover) and (pointer: fine) {
+  #layout-toggle-btn { position: relative; }
+  #layout-toggle-btn .layout-tooltip {
+    display: block; position: absolute; left: 50%; top: -30px; transform: translateX(-50%);
+    background: rgba(17,24,39,0.9); border: 1px solid rgba(255,255,255,0.08); color: #fff;
+    padding: 4px 8px 7px; border-radius: 8px; font-size: 12px; line-height: 1.1; white-space: nowrap;
+    box-shadow: 0 10px 24px rgba(0,0,0,0.35); opacity: 0; visibility: hidden; transition: opacity .15s ease, transform .15s ease; pointer-events: none;
+  }
+  #layout-toggle-btn .layout-tooltip::after { content: ''; position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%) rotate(45deg); width: 10px; height: 10px; background: rgba(17,24,39,0.9); border-left: 1px solid rgba(255,255,255,0.08); border-bottom: 1px solid rgba(255,255,255,0.08); }
+  #layout-toggle-btn:hover .layout-tooltip { opacity: 1; visibility: visible; transform: translateX(-50%) translateY(-1px); }
+}
 .grid-item { break-inside: avoid; margin-bottom: 0.5rem; }
 @media (min-width: 640px) { .grid-item { margin-bottom: 1rem; } }
 #content-grid .grid-item { content-visibility: auto; contain-intrinsic-size: 300px 400px; }
@@ -1050,6 +1096,26 @@ body.modal-open .topbar {
 }
 .sort-option { border-radius: 0.5rem; }
 .sort-option:hover { background: rgba(75,85,99,0.65) !important; }
+
+/* 让“布局切换”按钮与排序按钮对齐（高度/边框/阴影一致） */
+#layout-toggle-btn {
+  background: transparent; /* 取消外框背景，保留纯图标 */
+  border: 0;                 /* 取消外框线 */
+  box-shadow: none;          /* 取消外框阴影 */
+  height: 42px;
+  border-radius: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  position: relative; /* 作为 tooltip 的定位容器 */
+}
+
+/* 顶部容器：按钮对齐并留出间距 */
+#sort-container { display: flex; align-items: center; gap: 8px; }
+
+/* 分割线 */
+.layout-divider { width: 1px; height: 28px; background: rgba(255,255,255,0.08); border-radius: 1px; }
 
 /* 统一的搜索历史下拉视觉（与顶栏风格一致） */
 #search-history {

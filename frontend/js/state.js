@@ -51,6 +51,8 @@ class StateManager {
             currentColumnCount: 0,                          // 当前列数
             currentLayoutWidth: 0,                          // 当前内容容器宽度（用于监听尺寸变化触发布局重排）
             pageCache: new Map(),                           // 页面缓存
+            // 预览布局模式：'masonry' | 'grid'
+            layoutMode: (typeof localStorage !== 'undefined' && localStorage.getItem('sg_layout_mode')) || 'masonry',
         };
         
         // 按状态键分组的订阅者

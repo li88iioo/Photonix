@@ -2,6 +2,7 @@
 
 import { elements, state } from './state.js';
 import { getAllViewed } from './indexeddb-helper.js';
+import { applyMasonryLayout, triggerMasonryUpdate } from './masonry.js';
 
 // 重新导出 elements 以供其他模块使用
 export { elements };
@@ -93,7 +94,42 @@ export function renderBreadcrumb(path) {
 	setTimeout(() => {
 		const sortContainer = document.getElementById('sort-container');
 		if (sortContainer) {
-			checkIfHasMediaFiles(path).then(hasMedia => { if (!hasMedia) renderSortDropdown(); }).catch(() => renderSortDropdown());
+			// 不清空容器，避免闪烁
+			let toggleWrap = sortContainer.querySelector('#layout-toggle-wrap');
+			if (!toggleWrap) {
+				const toggle = createLayoutToggle();
+				sortContainer.appendChild(toggle.container);
+				toggleWrap = toggle.container;
+			}
+			// 分割线
+			if (!sortContainer.querySelector('.layout-divider')) {
+				const divider = document.createElement('div');
+				divider.className = 'layout-divider';
+				sortContainer.appendChild(divider);
+			}
+			// 排序下拉专用容器
+			let sortWrapper = sortContainer.querySelector('#sort-wrapper');
+			if (!sortWrapper) {
+				sortWrapper = document.createElement('div');
+				sortWrapper.id = 'sort-wrapper';
+				sortWrapper.style.display = 'inline-block';
+				sortWrapper.style.position = 'relative';
+				sortContainer.appendChild(sortWrapper);
+			}
+			// 没有媒体文件时才显示排序下拉
+			checkIfHasMediaFiles(path)
+				.then(hasMedia => {
+					if (!hasMedia) {
+						sortWrapper.innerHTML = '';
+						renderSortDropdown();
+					} else {
+						sortWrapper.innerHTML = '';
+					}
+				})
+				.catch(() => {
+					sortWrapper.innerHTML = '';
+					renderSortDropdown();
+				});
 		}
 	}, 100);
 }
@@ -233,6 +269,29 @@ export function renderSearchGrid(results, currentPhotoCount) {
 export function renderSortDropdown() {
 	const sortContainer = document.getElementById('sort-container');
 	if (!sortContainer) return;
+
+	// 确保稳定结构：布局切换器 + 分割线 + 排序 wrapper
+	let toggleWrap = sortContainer.querySelector('#layout-toggle-wrap');
+	if (!toggleWrap) {
+		const toggle = createLayoutToggle();
+		sortContainer.appendChild(toggle.container);
+		toggleWrap = toggle.container;
+	}
+	if (!sortContainer.querySelector('.layout-divider')) {
+		const divider = document.createElement('div');
+		divider.className = 'layout-divider';
+		sortContainer.appendChild(divider);
+	}
+	let sortWrapper = sortContainer.querySelector('#sort-wrapper');
+	if (!sortWrapper) {
+		sortWrapper = document.createElement('div');
+		sortWrapper.id = 'sort-wrapper';
+		sortWrapper.style.position = 'relative';
+		sortWrapper.style.display = 'inline-block';
+		sortContainer.appendChild(sortWrapper);
+	}
+	// 清空并在 wrapper 中渲染
+	sortWrapper.innerHTML = '';
 	const sortOptions = { smart: '🧠 智能', name: '📝 名称', mtime: '📅 日期', viewed_desc: '👁️ 访问' };
 	const hash = window.location.hash;
 	const questionMarkIndex = hash.indexOf('?');
@@ -258,7 +317,6 @@ export function renderSortDropdown() {
 	}
 
 	const currentOption = getCurrentOption(currentSort);
-	sortContainer.innerHTML = '';
 
 	const sortDisplay = createElement('span', { attributes: { id: 'sort-display' }, textContent: getSortDisplayText(currentSort) });
     const iconContainer = createElement('div', { classes: ['w-3','h-3','sm:w-4','sm:h-4','text-gray-400', 'transition-transform', 'duration-200'] });
@@ -275,7 +333,7 @@ export function renderSortDropdown() {
 	const dropdownOptions = Object.entries(sortOptions).map(([value, label]) => createElement('button', { classes: ['sort-option','w-full','text-left','px-3','py-2','text-sm','text-white','hover:bg-gray-700','transition-colors',...(currentOption === value ? ['bg-purple-600'] : [])], attributes: { 'data-value': value }, textContent: label }));
 	const sortDropdown = createElement('div', { classes: ['absolute','top-full','right-0','mt-1','bg-gray-800','border','border-gray-700','rounded-lg','shadow-lg','z-50','hidden','w-full'], attributes: { id: 'sort-dropdown' }, children: dropdownOptions });
 	const container = createElement('div', { classes: ['relative','inline-flex','items-center'], children: [sortButton, sortDropdown] });
-	sortContainer.appendChild(container);
+	sortWrapper.appendChild(container);
 
 	sortButton.addEventListener('click', (e) => { 
         e.stopPropagation(); 
@@ -316,6 +374,21 @@ export function renderSortDropdown() {
 }
 
 /**
+ * 仅渲染布局切换按钮到现有的 sort-container（搜索页用）
+ */
+export function renderLayoutToggleOnly() {
+    const sortContainer = document.getElementById('sort-container');
+    if (!sortContainer) return;
+    sortContainer.innerHTML = '';
+    const toggle = createLayoutToggle();
+    sortContainer.appendChild(toggle.container);
+    // 分割线
+    const divider = document.createElement('div');
+    divider.className = 'layout-divider';
+    sortContainer.appendChild(divider);
+}
+
+/**
  * 检查路径是否包含媒体文件
  */
 export async function checkIfHasMediaFiles(path) {
@@ -326,5 +399,73 @@ export async function checkIfHasMediaFiles(path) {
 		return data.items.some(item => item.type === 'photo' || item.type === 'video');
 	} catch {
 		return false;
+	}
+}
+
+/**
+ * 创建布局切换按钮（网格/瀑布）
+ */
+function createLayoutToggle() {
+	const wrap = createElement('div', { attributes: { id: 'layout-toggle-wrap' }, classes: ['relative','inline-flex','items-center','mr-2'] });
+	const btn = createElement('button', {
+		classes: ['bg-gray-800','border','border-gray-700','text-white','text-sm','rounded-lg','focus:ring-purple-500','focus:border-purple-500','px-2.5','py-1.5','transition-colors','hover:border-purple-500','cursor-pointer','flex','items-center','gap-1'],
+		attributes: { id: 'layout-toggle-btn', type: 'button', 'aria-pressed': state.get('layoutMode') === 'grid' ? 'true' : 'false' }
+	});
+	// Provided icons (data URL)
+	const GRID_ICON_URL = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M5.42 2.558a3.56 3.56 0 0 0-2.119 1.23c-.27.327-.541.844-.667 1.272-.091.309-.094.368-.094 1.7 0 1.338.003 1.389.094 1.68.328 1.045.95 1.773 1.898 2.222.516.245.82.299 1.828.325 1.005.025 1.766-.025 2.14-.141A3.53 3.53 0 0 0 10.846 8.5c.183-.588.205-2.699.035-3.36-.258-1.003-.989-1.89-1.896-2.3-.628-.284-.681-.292-2.085-.304-.704-.005-1.37.004-1.48.022m10.48.002a4 4 0 0 0-1 .331c-.617.311-1.189.894-1.52 1.549-.294.581-.378 1.098-.379 2.32-.001 1.408.13 1.984.612 2.7.207.307.62.72.927.927.773.521 1.407.643 3.1.6 1.008-.026 1.312-.08 1.828-.325.948-.449 1.57-1.177 1.898-2.222.091-.291.094-.342.094-1.68 0-1.332-.003-1.391-.094-1.7a3.58 3.58 0 0 0-2.406-2.422c-.28-.084-.386-.091-1.56-.101-.693-.006-1.368.005-1.5.023M7.52 4.515c.768.062 1.248.441 1.423 1.125.051.199.061.434.05 1.233-.013.986-.013.987-.126 1.231a1.7 1.7 0 0 1-.767.764l-.24.112h-1.1c-1.056 0-1.109-.004-1.328-.092a1.5 1.5 0 0 1-.757-.713c-.163-.33-.211-.823-.177-1.807.03-.842.081-1.014.408-1.368.293-.316.569-.45.993-.483a12 12 0 0 1 1.621-.002m11 .081c.391.149.734.491.881.876.093.245.143 1.374.089 2.009-.054.636-.277 1.043-.71 1.297-.34.199-.571.229-1.653.215-.985-.013-.988-.013-1.227-.125a1.7 1.7 0 0 1-.767-.764l-.113-.244v-1.1c0-1.056.004-1.109.092-1.328.129-.319.396-.601.718-.76.331-.163.62-.192 1.698-.169.656.013.822.029.992.093m-12.9 8.446a3.38 3.38 0 0 0-2.098 1.005c-.43.432-.686.868-.888 1.513-.091.291-.094.342-.094 1.68 0 1.332.003 1.391.094 1.7a3.57 3.57 0 0 0 2.426 2.426c.308.09.37.094 1.66.094 1.444 0 1.526-.009 2.079-.222.938-.362 1.681-1.16 2.028-2.178.217-.638.236-2.816.03-3.525a3.5 3.5 0 0 0-.894-1.498c-.609-.609-1.279-.921-2.139-.997a18 18 0 0 0-2.204.002m10.5 0c-.99.088-1.94.656-2.507 1.498-.521.773-.643 1.407-.6 3.1.026 1.008.08 1.312.325 1.828.449.948 1.177 1.57 2.222 1.898.291.091.342.094 1.68.094 1.332 0 1.391-.003 1.7-.094a3.57 3.57 0 0 0 2.426-2.426c.09-.308.094-.37.094-1.66 0-1.444-.009-1.526-.222-2.079-.294-.763-.912-1.434-1.678-1.821a3.1 3.1 0 0 0-1.24-.34 18 18 0 0 0-2.2.002m-8.016 2.091c.309.143.617.452.764.767l.112.24v1.1c0 1.056-.004 1.109-.092 1.328a1.5 1.5 0 0 1-.717.76c-.243.119-.311.133-.834.167-.35.023-.8.023-1.165 0-.693-.043-.9-.118-1.225-.442-.323-.324-.4-.535-.443-1.22-.053-.849.006-1.661.143-1.958.124-.269.346-.524.571-.656.329-.193.52-.217 1.622-.208l1.02.009zm10.35-.052c.443.137.771.45.95.908.085.219.09.286.089 1.271 0 1.27-.022 1.356-.449 1.784-.377.377-.526.425-1.41.456-.985.036-1.479-.012-1.809-.175a1.5 1.5 0 0 1-.713-.757c-.088-.219-.092-.272-.092-1.328v-1.1l.112-.24c.193-.414.603-.759 1.018-.857.082-.019.576-.037 1.096-.039.844-.004.974.005 1.208.077'/%3E%3C/svg%3E";
+	const MASONRY_ICON_URL = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M5.073 2.562c-.729.111-1.178.33-1.667.809-.419.41-.656.832-.791 1.409-.069.296-.075.52-.075 2.98 0 2.085.012 2.712.054 2.9.233 1.036 1.006 1.887 1.97 2.166.492.142 1.217.188 2.575.161 1.516-.029 1.785-.077 2.401-.43.532-.304 1.054-.926 1.249-1.488.168-.487.18-.654.199-2.947.025-2.898-.012-3.35-.332-3.989a2.95 2.95 0 0 0-1.85-1.503c-.285-.079-.418-.085-1.906-.094-.88-.005-1.702.006-1.827.026m10.262.018c-1.166.253-2.075 1.215-2.284 2.418-.076.433-.048 1.429.048 1.776.287 1.03 1.078 1.821 2.127 2.13.333.098 3.27.132 3.782.044a2.84 2.84 0 0 0 1.593-.828c.349-.345.587-.723.744-1.18.1-.291.111-.384.127-1.044.02-.889-.031-1.194-.29-1.716-.4-.804-1.189-1.431-2.015-1.6-.398-.082-3.457-.082-3.832 0M15.8 11.042c-.508.046-.859.141-1.211.329-.547.291-.93.674-1.215 1.215-.333.632-.371 1.004-.373 3.654-.001 2.59.039 3.021.343 3.627a2.96 2.96 0 0 0 1.932 1.522c.266.062.511.071 1.964.071 1.794 0 2.009-.021 2.5-.239.712-.317 1.335-.997 1.558-1.701.175-.554.188-.815.173-3.5-.014-2.417-.018-2.532-.098-2.82a2.96 2.96 0 0 0-1.422-1.815c-.325-.182-.743-.293-1.291-.344-.498-.046-2.344-.046-2.86.001m3.1 2.051c.088.039.228.137.311.218.268.261.274.316.297 2.409.023 2.133-.015 3.019-.14 3.263-.189.37-.383.455-1.144.505-.681.045-2.276.01-2.534-.055-.217-.054-.499-.302-.595-.522-.07-.159-.076-.33-.087-2.467-.008-1.524.002-2.392.032-2.58.073-.475.323-.744.76-.82.121-.021.832-.034 1.58-.03 1.207.007 1.378.016 1.52.079M4.939 15.057c-.597.111-1.096.381-1.558.844-.372.372-.542.64-.713 1.129-.117.331-.124.39-.14 1.074-.02.889.031 1.195.29 1.716q.452.91 1.362 1.362c.588.292.707.305 2.707.29l1.733-.012.35-.125c.486-.174.752-.343 1.127-.715.694-.689.933-1.376.89-2.56-.022-.622-.074-.892-.245-1.279-.277-.626-.896-1.246-1.521-1.522-.514-.228-.553-.232-2.341-.243-1.238-.009-1.731.002-1.941.041m3.401 2.009c.253.087.507.341.594.594.078.229.089.851.021 1.124-.057.226-.334.541-.565.641-.152.066-.311.076-1.502.087-.884.009-1.405-.002-1.549-.032a1 1 0 0 1-.718-.537c-.113-.222-.121-.266-.121-.68 0-.558.065-.749.343-.998.108-.097.264-.195.347-.217.084-.022.763-.042 1.553-.044 1.208-.003 1.43.005 1.597.062'/%3E%3C/svg%3E";
+	function iconHtml(kind) {
+		// 使用内嵌 SVG，匹配系统图标视觉（描边2px、圆角矩形/四格）
+		if (kind === 'grid') {
+			return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>`;
+		}
+		// masonry：两大两小交错
+		return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="10" height="8" rx="2"/><rect x="15" y="3" width="6" height="6" rx="2"/><rect x="3" y="13" width="6" height="8" rx="2"/><rect x="11" y="13" width="10" height="8" rx="2"/></svg>`;
+	}
+	function updateLabel() {
+		const isGrid = state.get('layoutMode') === 'grid';
+		btn.innerHTML = `${iconHtml(isGrid ? 'grid' : 'masonry')}<span class="layout-tooltip" style="margin-left:4px;">${isGrid ? '瀑布流' : '网格'}</span>`;
+		btn.setAttribute('aria-pressed', isGrid ? 'true' : 'false');
+	}
+	btn.addEventListener('click', () => {
+		const current = state.get('layoutMode');
+		const next = current === 'grid' ? 'masonry' : 'grid';
+		state.update('layoutMode', next);
+		try { localStorage.setItem('sg_layout_mode', next); } catch {}
+		applyLayoutMode();
+		updateLabel();
+	});
+	updateLabel();
+	wrap.appendChild(btn);
+	return { container: wrap, button: btn };
+}
+
+/**
+ * 应用当前布局模式到内容容器
+ */
+export function applyLayoutMode() {
+	const grid = elements.contentGrid;
+	if (!grid) return;
+	const mode = state.get('layoutMode');
+	if (mode === 'grid') {
+		grid.classList.remove('masonry-mode');
+		grid.classList.add('grid-mode');
+		// 清除瀑布流产生的内联样式
+		Array.from(grid.children).forEach(item => {
+			item.style.position = '';
+			item.style.width = '';
+			item.style.left = '';
+			item.style.top = '';
+		});
+		grid.style.height = '';
+		// 统一网格卡片纵横比（可按需改为 1/1 或 16/9）
+		grid.style.setProperty('--grid-aspect', '1/1');
+	} else {
+		grid.classList.remove('grid-mode');
+		grid.classList.add('masonry-mode');
+		requestAnimationFrame(() => {
+			applyMasonryLayout();
+			triggerMasonryUpdate();
+		});
 	}
 }

@@ -39,6 +39,7 @@ class LoadingStateManager {
         if (elements.contentGrid) {
             elements.contentGrid.classList.remove('virtual-scroll-mode');
             elements.contentGrid.classList.remove('masonry-mode');
+            elements.contentGrid.classList.remove('grid-mode');
             elements.contentGrid.style.height = 'auto';
         }
 
@@ -117,6 +118,7 @@ class LoadingStateManager {
         if (elements.contentGrid) {
             elements.contentGrid.classList.remove('virtual-scroll-mode');
             elements.contentGrid.classList.remove('masonry-mode');
+            elements.contentGrid.classList.remove('grid-mode');
             elements.contentGrid.style.height = 'auto';
         }
 
@@ -223,8 +225,9 @@ export function showSkeletonGrid(preferredCount) {
         // 仅在 App 可见时渲染骨架，避免登录页布局被撑开
         const appVisible = document.getElementById('app-container')?.classList.contains('opacity-100');
         if (!appVisible) return;
-        // 保持布局稳定：此处不强制添加 masonry-mode，避免样式切换时宽度测量抖动
-        // grid.classList.add('masonry-mode');
+        // 统一加载态样式：网格页面的 loading 全部使用瀑布流样式
+        grid.classList.remove('grid-mode');
+        grid.classList.add('masonry-mode');
         // 注入一次骨架动画样式（无需重新构建CSS）
         if (!document.getElementById('skeleton-style')) {
             const style = document.createElement('style');

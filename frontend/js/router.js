@@ -4,7 +4,7 @@ import { state, elements } from './state.js';
 import { applyMasonryLayout, getMasonryColumns, initializeVirtualScroll } from './masonry.js';
 import { setupLazyLoading } from './lazyload.js';
 import { fetchSearchResults, fetchBrowseResults, postViewed } from './api.js';
-import { renderBreadcrumb, renderBrowseGrid, renderSearchGrid, sortAlbumsByViewed, renderSortDropdown, checkIfHasMediaFiles } from './ui.js';
+import { renderBreadcrumb, renderBrowseGrid, renderSearchGrid, sortAlbumsByViewed, renderSortDropdown, checkIfHasMediaFiles, applyLayoutMode, renderLayoutToggleOnly } from './ui.js';
 import { saveViewed, getUnsyncedViewed, markAsSynced } from './indexeddb-helper.js';
 import { AbortBus } from './abort-bus.js';
 import { handleBrowseScroll, handleSearchScroll, removeScrollListeners } from './listeners.js';
@@ -154,6 +154,7 @@ export async function streamPath(path, signal) {
             }
         }
 
+        // 应用布局模式（网格或瀑布）
         elements.contentGrid.classList.add('masonry-mode');
         const { contentElements, newMediaUrls } = renderBrowseGrid(data.items, 0);
         const skeleton = document.getElementById('skeleton-grid');
@@ -168,6 +169,7 @@ export async function streamPath(path, signal) {
         state.currentBrowsePage++;
         
         if (AbortBus.get('page') !== signal || getPathOnlyFromHash() !== path) return;
+        applyLayoutMode();
         finalizeNewContent(path);
 
     } catch (error) {
@@ -208,12 +210,15 @@ async function executeSearch(query, signal) {
         state.currentBrowsePath = searchPathKey;
         
         elements.breadcrumbNav.innerHTML = `
-           <div class="flex items-center">
-               <a href="${state.preSearchHash}" class="flex items-center text-purple-400 hover:text-purple-300 transition-colors duration-200 group">
-                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="mr-1 group-hover:-translate-x-1 transition-transform"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
-                   返回
-               </a>
-               ${data.results.length > 0 ? `<span class="mx-3 text-gray-600">/</span><span class="text-white">搜索结果: "${data.query || query}" (${data.totalResults || 0}项)</span>` : ''}
+           <div class="flex items-center justify-between w-full">
+               <div class="flex items-center">
+                   <a href="${state.preSearchHash}" class="flex items-center text-purple-400 hover:text-purple-300 transition-colors duration-200 group">
+                       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="mr-1 group-hover:-translate-x-1 transition-transform"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+                       返回
+                   </a>
+                   ${data.results.length > 0 ? `<span class=\"mx-3 text-gray-600\">/</span><span class=\"text-white\">搜索结果: \"${data.query || query}\" (${data.totalResults || 0}项)</span>` : ''}
+               </div>
+               <div id="sort-container" class="flex-shrink-0 ml-4"></div>
            </div>`;
 
        if (data.results.length === 0) {
@@ -241,6 +246,9 @@ async function executeSearch(query, signal) {
         state.currentSearchPage++;
         
         if (AbortBus.get('page') !== signal) return;
+        // 搜索页也显示布局切换按钮
+        renderLayoutToggleOnly();
+        applyLayoutMode();
         finalizeNewContent(searchPathKey);
 
     } catch (error) {
@@ -297,7 +305,10 @@ function prepareForNewContent() {
 function finalizeNewContent(pathKey) {
     if (!state.get('virtualScroller')) {
         setupLazyLoading();
-        applyMasonryLayout();
+        // 仅在瀑布流模式下执行瀑布流布局
+        if (elements.contentGrid.classList.contains('masonry-mode')) {
+            applyMasonryLayout();
+        }
     }
     
     sortAlbumsByViewed();
