@@ -413,14 +413,18 @@ export async function fetchBrowseResults(path, page, signal) {
  */
 export function postViewed(path) {
     if (!path) return;
-    
+
+    // 如果用户未登录，跳过访问记录，避免401错误
+    const token = getAuthToken();
+    if (!token) return;
+
     // 内网穿透环境下的健壮请求函数
     const makeRobustRequest = async (retries = 1) => { // 减少重试次数
         for (let attempt = 0; attempt <= retries; attempt++) {
             try {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 3000); // 减少超时时间
-                
+
                 const response = await fetch('/api/browse/viewed', {
                     method: 'POST',
                     headers: getAuthHeaders(),
