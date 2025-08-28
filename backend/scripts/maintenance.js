@@ -260,6 +260,14 @@ async function main() {
         const doEnqueueThumbs = args.includes('--enqueue-thumbs');
         const doEnqueueHls = args.includes('--enqueue-hls');
 
+        // 初始化数据库连接（修复：enqueue操作需要数据库连接）
+        if (doEnqueueThumbs || doEnqueueHls) {
+            logger.info('初始化数据库连接...');
+            const { initializeConnections } = require('../db/multi-db');
+            await initializeConnections();
+            logger.info('数据库连接初始化完成');
+        }
+
         if (shouldCleanLegacy) {
             await cleanLegacyTablesIfMigrated();
         }
@@ -267,8 +275,8 @@ async function main() {
         await performDatabaseMaintenance();
         if (doDirRecon) await reconcileDirectories();
         if (doThumbRecon) await reconcileThumbnails();
-        if (doEnqueueThumbs) await enqueuePendingThumbnails(Number(process.env.ENQUEUE_THUMBS_LIMIT || 5000));
-        if (doEnqueueHls) await enqueueMissingHls(Number(process.env.ENQUEUE_HLS_LIMIT || 3000));
+        if (doEnqueueThumbs) await enqueuePendingThumbnails(Number(process.env.ENQUEUE_THUMBS_LIMIT || 2000000));
+        if (doEnqueueHls) await enqueueMissingHls(Number(process.env.ENQUEUE_HLS_LIMIT || 1000));
         process.exit(0);
     } catch (error) {
         logger.error('数据库维护失败:', error.message);
@@ -280,12 +288,6 @@ async function main() {
 if (require.main === module) {
     main();
 }
-
-module.exports = {
-    performDatabaseMaintenance,
-    reconcileDirectories,
-    reconcileThumbnails
-}; 
 
 /**
  * 安全清理：在确认 settings/history 已迁移到对应独立库后，清理主库中的遗留旧表
@@ -363,7 +365,12 @@ async function cleanupHlsRecordsTask() {
     }
 }
 
-// 导出清理任务
+// 导出所有函数
 module.exports = {
+    performDatabaseMaintenance,
+    reconcileDirectories,
+    reconcileThumbnails,
+    enqueuePendingThumbnails,
+    enqueueMissingHls,
     cleanupHlsRecordsTask
 };
