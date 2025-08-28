@@ -18,6 +18,7 @@ const logger = require('../config/logger');
 const { Queue } = require('bullmq');
 const { bullConnection } = require('../config/redis');
 const { QUEUE_MODE, THUMBS_DIR, PHOTOS_DIR, THUMBNAIL_QUEUE_NAME, VIDEO_QUEUE_NAME } = require('../config');
+const { initializeConnections, closeAllConnections } = require('../db/multi-db');
 
 /**
  * 执行数据库维护
@@ -252,6 +253,11 @@ async function enqueueMissingHls(limit = 3000) {
  */
 async function main() {
     try {
+        // 初始化数据库连接
+        logger.info('正在初始化数据库连接...');
+        await initializeConnections();
+        logger.info('数据库连接初始化完成');
+
         // 解析命令行
         const args = process.argv.slice(2);
         const shouldCleanLegacy = args.includes('--clean-legacy-after-migration');
@@ -269,9 +275,22 @@ async function main() {
         if (doThumbRecon) await reconcileThumbnails();
         if (doEnqueueThumbs) await enqueuePendingThumbnails(Number(process.env.ENQUEUE_THUMBS_LIMIT || 5000));
         if (doEnqueueHls) await enqueueMissingHls(Number(process.env.ENQUEUE_HLS_LIMIT || 3000));
+
+        // 关闭数据库连接
+        await closeAllConnections();
+        logger.info('数据库连接已关闭');
+
         process.exit(0);
     } catch (error) {
         logger.error('数据库维护失败:', error.message);
+
+        // 确保在出错时也关闭数据库连接
+        try {
+            await closeAllConnections();
+        } catch (closeError) {
+            logger.warn('关闭数据库连接时出错:', closeError.message);
+        }
+
         process.exit(1);
     }
 }
