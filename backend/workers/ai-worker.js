@@ -321,8 +321,8 @@ logger.info('AI Worker 已启动，正在等待任务...');
 // 定期输出缓存统计信息（每30分钟，且仅在有缓存内容时）
 setInterval(() => {
     const stats = imageCache.getStats();
-    if (stats.size > 0) {
-        logger.info(`AI Worker 缓存统计: ${stats.size}/${stats.maxSize} (${stats.usage}% 使用率)`);
+    if (stats.entries > 0) {
+        logger.info(`AI Worker 缓存统计: ${stats.entries}/${stats.maxEntries} (${stats.usageByEntries}% 使用率)`);
     }
 }, 30 * 60 * 1000);
 

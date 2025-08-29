@@ -382,7 +382,10 @@ async function cleanupHlsRecordsTask() {
     }
 }
 
-// 导出清理任务
+// 合并所有导出
 module.exports = {
+    performDatabaseMaintenance,
+    reconcileDirectories,
+    reconcileThumbnails,
     cleanupHlsRecordsTask
 };

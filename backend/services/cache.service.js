@@ -41,13 +41,13 @@ async function invalidateTags(tags) {
             const chunkSize = 500;
             for (let i = 0; i < keysToDelete.length; i += chunkSize) {
                 const chunk = keysToDelete.slice(i, i + chunkSize);
-                pipeline.unlink(chunk);
+                pipeline.unlink(...chunk);
             }
         }
         
         // 删除标签键本身
         if (tagKeys.length > 0) {
-            pipeline.unlink(tagKeys);
+            pipeline.unlink(...tagKeys);
         }
 
         await pipeline.exec();
