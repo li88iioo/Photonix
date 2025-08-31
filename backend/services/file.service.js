@@ -308,209 +308,307 @@ async function fallbackToDatabaseCheck(videoRows, hlsReadySet) {
  * @returns {Promise<Object>} 包含items、totalPages、totalResults的对象
  */
 async function getDirectoryContents(relativePathPrefix, page, limit, userId, sort = 'smart') {
-    // 安全前置：首先验证路径，防止路径遍历漏洞
+    // 验证路径安全性
     if (!isPathSafe(relativePathPrefix)) {
         throw new Error(`不安全的路径访问: ${relativePathPrefix}`);
     }
 
+    // 验证并获取目录信息
+    const directoryInfo = await validateDirectory(relativePathPrefix);
+    if (!directoryInfo.exists) {
+        return { items: [], totalPages: 1, totalResults: 0 };
+    }
+
+    // 获取数据库数据
+    const offset = (page - 1) * limit;
+    const { total: totalResults, rows } = await getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, offset);
+
+    if (totalResults === 0 || rows.length === 0) {
+        return { items: [], totalPages: 1, totalResults: 0 };
+    }
+
+    // 处理排序
+    const rowsEffective = await processSorting(rows, sort, relativePathPrefix, userId);
+
+    // 处理视频HLS状态
+    const hlsReadySet = await processHlsStatus(rowsEffective);
+
+    // 处理相册封面
+    const coversMap = await processAlbumCovers(rowsEffective);
+
+    // 构建最终结果
+    const items = await buildItems(rowsEffective, hlsReadySet, coversMap);
+
+    return {
+        items,
+        totalPages: Math.ceil(totalResults / limit) || 1,
+        totalResults
+    };
+}
+
+/**
+ * 验证目录是否存在且可访问
+ */
+async function validateDirectory(relativePathPrefix) {
     const directory = path.join(PHOTOS_DIR, relativePathPrefix);
-    // 检查路径是否存在且为目录
     const stats = await fs.stat(directory).catch(() => null);
+
     if (!stats || !stats.isDirectory()) {
-        // 对于根目录不存在的特殊情况，返回空结果而不是抛出错误
         if (relativePathPrefix === '') {
             logger.warn('照片根目录似乎不存在或不可读，返回空列表。');
-            return { items: [], totalPages: 1, totalResults: 0 };
+            return { exists: false };
         }
         throw new Error(`路径未找到或不是目录: ${relativePathPrefix}`);
     }
+
+    return { exists: true, directory };
+}
+
+/**
+ * 处理排序逻辑
+ */
+async function processSorting(rows, sort, relativePathPrefix, userId) {
+    const isSubdirSmart = sort === 'smart' && (relativePathPrefix || '').length > 0;
+    const needViewedSort = sort === 'viewed_desc' || isSubdirSmart;
+
+    if (!needViewedSort || !userId) {
+        return rows;
+    }
+
+    const albumRows = rows.filter(r => r.is_dir === 1);
+    if (albumRows.length === 0) {
+        return rows;
+    }
+
     try {
-        const offset = (page - 1) * limit;
-        const { total: totalResults, rows } = await getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, offset);
-        const totalPages = Math.ceil(totalResults / limit) || 1;
+        const albumPaths = albumRows.map(r => r.path);
+        const placeholders = albumPaths.map(() => '?').join(',');
+        const viewRows = await dbAll(
+            'history',
+            `SELECT item_path, MAX(viewed_at) AS last_viewed FROM view_history WHERE user_id = ? AND item_path IN (${placeholders}) GROUP BY item_path`,
+            [userId, ...albumPaths]
+        );
 
-        if (totalResults === 0 || rows.length === 0) {
-            // 目录为空
-            return { items: [], totalPages: 1, totalResults: 0 };
-        }
+        const lastViewedMap = new Map(viewRows.map(v => [v.item_path, v.last_viewed || 0]));
+        const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
 
-        // 若需要“最近浏览优先”，在当前页范围内做二次排序（避免跨库 JOIN）
-        const isSubdirSmart = sort === 'smart' && (relativePathPrefix || '').length > 0;
-        const needViewedSort = sort === 'viewed_desc' || isSubdirSmart;
-        let rowsEffective = rows;
-        if (needViewedSort && userId) {
-            const albumRows = rows.filter(r => r.is_dir === 1);
-            if (albumRows.length > 0) {
-                const albumPaths = albumRows.map(r => r.path);
-                const placeholders = albumPaths.map(() => '?').join(',');
-                try {
-                    const viewRows = await dbAll(
-                        'history',
-                        `SELECT item_path, MAX(viewed_at) AS last_viewed FROM view_history WHERE user_id = ? AND item_path IN (${placeholders}) GROUP BY item_path`,
-                        [userId, ...albumPaths]
-                    );
-                    const lastViewedMap = new Map(viewRows.map(v => [v.item_path, v.last_viewed || 0]));
-                    const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
-                    const albumsSorted = albumRows.slice().sort((a, b) => (lastViewedMap.get(b.path) || 0) - (lastViewedMap.get(a.path) || 0) || collator.compare(a.name, b.name));
-                    const mediaRows = rows.filter(r => r.is_dir === 0).slice().sort((a, b) => collator.compare(a.name, b.name));
-                    rowsEffective = [...albumsSorted, ...mediaRows];
-                } catch (e) {
-                    logger.warn('读取最近浏览排序信息失败，回退为名称排序', e);
-                }
-            }
-        }
+        const albumsSorted = albumRows.slice().sort((a, b) =>
+            (lastViewedMap.get(b.path) || 0) - (lastViewedMap.get(a.path) || 0) ||
+            collator.compare(a.name, b.name)
+        );
 
-        // 获取HLS就绪状态 - 使用文件系统检查替代数据库查询
-        const videoRows = rowsEffective.filter(r => !r.is_dir && /\.(mp4|webm|mov)$/i.test(r.name));
-        let hlsReadySet = new Set();
-        if (videoRows.length > 0) {
-            const { USE_FILE_SYSTEM_HLS_CHECK } = require('../config');
-            
-            if (USE_FILE_SYSTEM_HLS_CHECK) {
-                try {
-                    const { batchCheckHlsStatus } = require('../utils/hls.utils');
-                    const videoPaths = videoRows.map(r => r.path);
-                    hlsReadySet = await batchCheckHlsStatus(videoPaths);
-                    logger.debug(`文件系统检查HLS状态: ${hlsReadySet.size}/${videoPaths.length} 个视频已就绪`);
-                } catch (e) {
-                    logger.warn(`文件系统检查HLS状态失败，回退到数据库查询: ${e.message}`);
-                    // 回退到数据库查询
-                    await fallbackToDatabaseCheck(videoRows, hlsReadySet);
-                }
-            } else {
-                // 使用数据库查询
-                await fallbackToDatabaseCheck(videoRows, hlsReadySet);
-            }
-        }
+        const mediaRows = rows.filter(r => r.is_dir === 0).slice().sort((a, b) =>
+            collator.compare(a.name, b.name)
+        );
 
-        // 相册封面预取（基于 DB，避免递归 FS）
-        const albumRows = rowsEffective.filter(r => r.is_dir === 1);
-        const albumPathsRel = albumRows.map(r => r.path);
-        const coversMap = await findCoverPhotosBatchDb(albumPathsRel);
-
-        const items = await Promise.all(rowsEffective.map(async (row) => {
-                const entryRelativePath = row.path;
-                const fullAbsPath = path.join(PHOTOS_DIR, entryRelativePath);
-
-                if (row.is_dir === 1) {
-                    const coverInfo = coversMap.get(fullAbsPath);
-                    let coverUrl = 'data:image/svg+xml,...';
-                    let coverWidth = 1, coverHeight = 1;
-                    
-                    if (coverInfo && coverInfo.path) {
-                        const relativeCoverPath = path.relative(PHOTOS_DIR, coverInfo.path);
-                        let coverMtime;
-                        if (coverInfo.mtime != null) {
-                            coverMtime = coverInfo.mtime;
-                        } else {
-                            logger.debug(`封面信息中缺少 mtime，回退到 fs.stat: ${coverInfo.path}`);
-                            coverMtime = await fs.stat(coverInfo.path).then(s => s.mtimeMs).catch(() => Date.now());
-                        }
-                        coverUrl = `${API_BASE}/api/thumbnail?path=${encodeURIComponent(relativeCoverPath)}&v=${Math.floor(coverMtime)}`;
-                        coverWidth = coverInfo.width;
-                        coverHeight = coverInfo.height;
-                    }
-                    
-                return {
-                    type: 'album',
-                    data: {
-                        name: row.name || path.basename(entryRelativePath),
-                        path: entryRelativePath,
-                        coverUrl,
-                        mtime: row.mtime || 0,
-                        coverWidth,
-                        coverHeight
-                    }
-                };
-                } else {
-                    const isVideo = /\.(mp4|webm|mov)$/i.test(row.name || path.basename(entryRelativePath));
-                    let mtime = row.mtime;
-
-                    if (!mtime) {
-                    try {
-                        const stats = await fs.stat(fullAbsPath);
-                        mtime = stats.mtimeMs;
-                    } catch (e) {
-                        logger.warn(`无法获取文件状态: ${fullAbsPath}`, e);
-                        mtime = Date.now();
-                    }
-                }
-
-                // 优先使用数据库中的预存储宽高信息
-                    let dimensions = { width: row.width, height: row.height };
-                    
-                // 如果数据库中没有宽高信息或数据无效，则动态获取
-                    if (!dimensions || !dimensions.width || !dimensions.height) {
-                        const cacheKey = `dim:${entryRelativePath}:${mtime}`;
-                        let cachedDimensions = null;
-                        try {
-                            cachedDimensions = await redis.get(cacheKey);
-                        } catch (e) {
-                            logger.warn(`获取尺寸Redis缓存失败: ${cacheKey}`, e.message);
-                        }
-
-                        if (cachedDimensions) {
-                        try {
-                            dimensions = JSON.parse(cachedDimensions);
-                            if (!dimensions || typeof dimensions.width !== 'number' || typeof dimensions.height !== 'number') {
-                                logger.debug(`无效的缓存尺寸数据 for ${entryRelativePath}, 将重新计算。`);
-                                dimensions = null;
-                            }
-                        } catch (e) {
-                            logger.debug(`解析缓存尺寸失败 for ${entryRelativePath}, 将重新计算。`, e);
-                            dimensions = null;
-                        }
-                    }
-
-                    if (!dimensions) {
-                        try {
-                            dimensions = await limitDimensionProbe(async () => {
-                                if (isVideo) {
-                                    return await getVideoDimensions(fullAbsPath);
-                                } else {
-                                    const metadata = await sharp(fullAbsPath).metadata();
-                                    return { width: metadata.width, height: metadata.height };
-                                }
-                            });
-                            try {
-                                await redis.set(cacheKey, JSON.stringify(dimensions), 'EX', 60 * 60 * 24 * 30);
-                            } catch (e) {
-                                logger.warn(`设置尺寸Redis缓存失败: ${cacheKey}`, e.message);
-                            }
-                            logger.debug(`动态获取 ${entryRelativePath} 的尺寸: ${dimensions.width}x${dimensions.height}`);
-                        } catch (e) {
-                            logger.error(`无法获取媒体文件尺寸: ${entryRelativePath}`, e);
-                            dimensions = { width: 1920, height: 1080 };
-                        }
-                    }
-                } else {
-                    logger.debug(`使用数据库预存储的 ${entryRelativePath} 尺寸: ${dimensions.width}x${dimensions.height}`);
-                }
-
-                    const originalUrl = `/static/${entryRelativePath.split(path.sep).map(encodeURIComponent).join('/')}`;
-                    const thumbnailUrl = `${API_BASE}/api/thumbnail?path=${encodeURIComponent(entryRelativePath)}&v=${Math.floor(mtime)}`;
-
-                return {
-                    type: isVideo ? 'video' : 'photo',
-                    data: {
-                        originalUrl,
-                        thumbnailUrl,
-                        width: dimensions.width,
-                        height: dimensions.height,
-                        mtime,
-                        hlsReady: isVideo ? hlsReadySet.has(entryRelativePath) : false
-                    }
-                };
-            }
-        }));
-
-        return { items, totalPages, totalResults };
-
-    } catch (err) {
-        logger.error(`获取目录内容时出错 ${directory}:`, err);
-        throw err;
+        return [...albumsSorted, ...mediaRows];
+    } catch (e) {
+        logger.warn('读取最近浏览排序信息失败，回退为名称排序', e);
+        return rows;
     }
 }
+
+/**
+ * 处理视频HLS状态
+ */
+async function processHlsStatus(rows) {
+    const videoRows = rows.filter(r => !r.is_dir && /\.(mp4|webm|mov)$/i.test(r.name));
+    const hlsReadySet = new Set();
+
+    if (videoRows.length === 0) {
+        return hlsReadySet;
+    }
+
+    const { USE_FILE_SYSTEM_HLS_CHECK } = require('../config');
+
+    if (USE_FILE_SYSTEM_HLS_CHECK) {
+        try {
+            const { batchCheckHlsStatus } = require('../utils/hls.utils');
+            const videoPaths = videoRows.map(r => r.path);
+            const result = await batchCheckHlsStatus(videoPaths);
+            result.forEach(path => hlsReadySet.add(path));
+            logger.debug(`文件系统检查HLS状态: ${hlsReadySet.size}/${videoPaths.length} 个视频已就绪`);
+        } catch (e) {
+            logger.warn(`文件系统检查HLS状态失败，回退到数据库查询: ${e.message}`);
+            await fallbackToDatabaseCheck(videoRows, hlsReadySet);
+        }
+    } else {
+        await fallbackToDatabaseCheck(videoRows, hlsReadySet);
+    }
+
+    return hlsReadySet;
+}
+
+/**
+ * 处理相册封面
+ */
+async function processAlbumCovers(rows) {
+    const albumRows = rows.filter(r => r.is_dir === 1);
+    const albumPathsRel = albumRows.map(r => r.path);
+    return await findCoverPhotosBatchDb(albumPathsRel);
+}
+
+/**
+ * 构建最终的项目列表
+ */
+async function buildItems(rows, hlsReadySet, coversMap) {
+    return await Promise.all(rows.map(async (row) => {
+        const entryRelativePath = row.path;
+        const fullAbsPath = path.join(PHOTOS_DIR, entryRelativePath);
+
+        if (row.is_dir === 1) {
+            return await buildAlbumItem(row, coversMap, entryRelativePath);
+        } else {
+            return await buildMediaItem(row, hlsReadySet, entryRelativePath, fullAbsPath);
+        }
+    }));
+}
+
+/**
+ * 构建相册项目
+ */
+async function buildAlbumItem(row, coversMap, entryRelativePath) {
+    const fullAbsPath = path.join(PHOTOS_DIR, entryRelativePath);
+    const coverInfo = coversMap.get(fullAbsPath);
+
+    let coverUrl = 'data:image/svg+xml,...';
+    let coverWidth = 1, coverHeight = 1;
+
+    if (coverInfo && coverInfo.path) {
+        const relativeCoverPath = path.relative(PHOTOS_DIR, coverInfo.path);
+        let coverMtime = coverInfo.mtime;
+
+        if (coverMtime == null) {
+            logger.debug(`封面信息中缺少 mtime，回退到 fs.stat: ${coverInfo.path}`);
+            coverMtime = await fs.stat(coverInfo.path).then(s => s.mtimeMs).catch(() => Date.now());
+        }
+
+        coverUrl = `${API_BASE}/api/thumbnail?path=${encodeURIComponent(relativeCoverPath)}&v=${Math.floor(coverMtime)}`;
+        coverWidth = coverInfo.width;
+        coverHeight = coverInfo.height;
+    }
+
+    return {
+        type: 'album',
+        data: {
+            name: row.name || path.basename(entryRelativePath),
+            path: entryRelativePath,
+            coverUrl,
+            mtime: row.mtime || 0,
+            coverWidth,
+            coverHeight
+        }
+    };
+}
+
+/**
+ * 构建媒体项目
+ */
+async function buildMediaItem(row, hlsReadySet, entryRelativePath, fullAbsPath) {
+    const isVideo = /\.(mp4|webm|mov)$/i.test(row.name || path.basename(entryRelativePath));
+    let mtime = row.mtime;
+
+    if (!mtime) {
+        try {
+            const stats = await fs.stat(fullAbsPath);
+            mtime = stats.mtimeMs;
+        } catch (e) {
+            logger.warn(`无法获取文件状态: ${fullAbsPath}`, e);
+            mtime = Date.now();
+        }
+    }
+
+    // 获取尺寸信息，传入数据库中的尺寸信息
+    const dbDimensions = { width: row.width, height: row.height };
+    const dimensions = await getMediaDimensions(entryRelativePath, fullAbsPath, isVideo, mtime, dbDimensions);
+
+    const originalUrl = `/static/${entryRelativePath.split(path.sep).map(encodeURIComponent).join('/')}`;
+    const thumbnailUrl = `${API_BASE}/api/thumbnail?path=${encodeURIComponent(entryRelativePath)}&v=${Math.floor(mtime)}`;
+
+    return {
+        type: isVideo ? 'video' : 'photo',
+        data: {
+            originalUrl,
+            thumbnailUrl,
+            width: dimensions.width,
+            height: dimensions.height,
+            mtime,
+            hlsReady: isVideo ? hlsReadySet.has(entryRelativePath) : false
+        }
+    };
+}
+
+/**
+ * 获取媒体文件尺寸
+ * @param {string} entryRelativePath - 相对路径
+ * @param {string} fullAbsPath - 绝对路径
+ * @param {boolean} isVideo - 是否为视频
+ * @param {number} mtime - 文件修改时间
+ * @param {Object} dbDimensions - 从数据库查询到的尺寸信息
+ * @returns {Promise<Object>} 包含width和height的对象
+ */
+async function getMediaDimensions(entryRelativePath, fullAbsPath, isVideo, mtime, dbDimensions = null) {
+    // 优先使用数据库中的预存储宽高信息
+    let dimensions = dbDimensions ? { width: dbDimensions.width, height: dbDimensions.height } : { width: null, height: null };
+
+    // 如果数据库中有有效的尺寸信息，直接使用
+    if (dimensions.width && dimensions.height && dimensions.width > 0 && dimensions.height > 0) {
+        logger.debug(`使用数据库预存储的 ${entryRelativePath} 尺寸: ${dimensions.width}x${dimensions.height}`);
+        return dimensions;
+    }
+
+    // 如果数据库中没有宽高信息或数据无效，则动态获取
+    logger.debug(`数据库中没有尺寸信息，开始动态获取 ${entryRelativePath}`);
+    const cacheKey = `dim:${entryRelativePath}:${mtime}`;
+    let cachedDimensions = null;
+
+    try {
+        cachedDimensions = await redis.get(cacheKey);
+    } catch (e) {
+        logger.warn(`获取尺寸Redis缓存失败: ${cacheKey}`, e.message);
+    }
+
+    if (cachedDimensions) {
+        try {
+            dimensions = JSON.parse(cachedDimensions);
+            if (!dimensions || typeof dimensions.width !== 'number' || typeof dimensions.height !== 'number') {
+                logger.debug(`无效的缓存尺寸数据 for ${entryRelativePath}, 将重新计算。`);
+                dimensions = null;
+            }
+        } catch (e) {
+            logger.debug(`解析缓存尺寸失败 for ${entryRelativePath}, 将重新计算。`, e);
+            dimensions = null;
+        }
+    }
+
+    if (!dimensions) {
+        try {
+            dimensions = await limitDimensionProbe(async () => {
+                if (isVideo) {
+                    return await getVideoDimensions(fullAbsPath);
+                } else {
+                    const metadata = await sharp(fullAbsPath).metadata();
+                    return { width: metadata.width, height: metadata.height };
+                }
+            });
+
+            try {
+                await redis.set(cacheKey, JSON.stringify(dimensions), 'EX', 60 * 60 * 24 * 30);
+            } catch (e) {
+                logger.warn(`设置尺寸Redis缓存失败: ${cacheKey}`, e.message);
+            }
+
+            logger.debug(`动态获取 ${entryRelativePath} 的尺寸: ${dimensions.width}x${dimensions.height}`);
+        } catch (e) {
+            logger.error(`无法获取媒体文件尺寸: ${entryRelativePath}`, e);
+            dimensions = { width: 1920, height: 1080 };
+        }
+    }
+
+    return dimensions;
+}
+
+
 
 /**
  * 智能失效封面缓存

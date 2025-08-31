@@ -2,14 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
-#处理状态栏沉浸安全区域
+/* 处理状态栏沉浸安全区域 */
 body {
     padding-top: env(safe-area-inset-top);
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
     padding-bottom: env(safe-area-inset-bottom);
 }
-#修复抖动
+/* 修复抖动 */
 html {
     overflow-y: scroll;
     scrollbar-gutter: stable;
@@ -530,7 +530,7 @@ body { font-family: 'Noto Sans SC', sans-serif; }
 .photo-item { transition: all 0.3s ease-in-out; }
 /* 避免外层缩放导致圆角裁剪失效，仅缩放内部容器 */
 .photo-item:hover { transform: none; }
-.photo-item > div:first-child { transition: transform 0.3s ease-in-out; will-change: transform; }
+
 .photo-item:hover > div:first-child { transform: scale(1.02); }
 
 .photo-item {
@@ -789,21 +789,65 @@ body { font-family: 'Noto Sans SC', sans-serif; }
     50% { transform: translate(-50%, -50%) rotate(135deg); opacity: 0.5; }
 }
 
-.lazy-image { opacity: 0; transition: opacity 0.3s ease; }
-.lazy-image.loaded { opacity: 1; }
-/* 处理缩略图生成中的占位 SVG：始终完整显示三点并置于占位层之上 */
+.lazy-image {
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: crisp-edges;
+    object-fit: cover;
+    opacity: 0;
+    transition: opacity 0.4s ease-in-out;
+    position: relative;
+    z-index: 2;
+}
+
+.lazy-image.loaded {
+    opacity: 1;
+}
+
 .lazy-image.processing {
     object-fit: contain !important;
     z-index: 2;
 }
-.image-placeholder { 
-    background: linear-gradient(45deg, #374151, #4B5563); 
-    display: flex; 
-    align-items: center; 
-    justify-content: center; 
-    color: #9CA3AF; 
-    font-size: 0.875rem;
+
+.lazy-image.error {
+    opacity: 1; /* 确保错误SVG可见 */
+    z-index: 3; /* 确保在占位符之上 */
+    object-fit: contain; /* 适应SVG尺寸 */
 }
+
+.image-placeholder {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(45deg, #374151, #4B5563);
+    background-size: 200% 100%;
+    animation: loading-shimmer 1.5s infinite;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #9CA3AF;
+    font-size: 0.875rem;
+    z-index: 1;
+    opacity: 1;
+    transition: opacity 0.3s ease-out;
+}
+
+.lazy-image.loaded ~ .image-placeholder,
+.lazy-image.error ~ .image-placeholder {
+    opacity: 0;
+    animation: none;
+    pointer-events: none;
+}
+
+.thumbnail-generating-indicator svg {
+    will-change: transform, opacity;
+    position: relative;
+    z-index: 3;
+}
+
+a.thumbnail-generating .image-placeholder {
+    animation: none;
+    background: #374151;
+}
+
 .search-container { 
     position: relative; 
     max-width: 400px; 
@@ -1097,7 +1141,7 @@ body.modal-open .topbar {
 .sort-option { border-radius: 0.5rem; }
 .sort-option:hover { background: rgba(75,85,99,0.65) !important; }
 
-/* 让“布局切换”按钮与排序按钮对齐（高度/边框/阴影一致） */
+/* 让"布局切换"按钮与排序按钮对齐（高度/边框/阴影一致） */
 #layout-toggle-btn {
   background: transparent; /* 取消外框背景，保留纯图标 */
   border: 0;                 /* 取消外框线 */
@@ -1112,7 +1156,26 @@ body.modal-open .topbar {
 }
 
 /* 顶部容器：按钮对齐并留出间距 */
-#sort-container { display: flex; align-items: center; gap: 8px; }
+#sort-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s ease-out;
+}
+
+/* 布局切换按钮容器动画 */
+#layout-toggle-wrap {
+    opacity: 0;
+    transform: translateX(-8px);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    /* 确保按钮可见性 */
+    visibility: visible !important;
+}
+
+#layout-toggle-wrap.visible {
+    opacity: 1;
+    transform: translateX(0);
+}
 
 /* 分割线 */
 .layout-divider { width: 1px; height: 28px; background: rgba(255,255,255,0.08); border-radius: 1px; }
@@ -1197,10 +1260,12 @@ html.modal-open {
     position: relative;
 }
 
-/* 占位符样式 */
-.image-placeholder {
+/* ===== 第二套懒加载系统：带进度指示器的详细加载 ===== */
+
+/* 占位符样式 - 简单版本，用于进度显示场景 */
+.image-placeholder-detailed {
     position: absolute;
-     top: 0;
+    top: 0;
     left: 0;
     width: 100%;
     height: 100%;
@@ -1212,14 +1277,7 @@ html.modal-open {
     z-index: 1; /* 确保在图片下方 */
 }
 
-/* 图片加载成功后的过渡效果 */
-.lazy-image.opacity-0 {
-    opacity: 0;
-}
-
-.lazy-image.loaded {
-    opacity: 1;
-}
+/* 图片加载成功后的过渡效果 - 已由统一的动画系统处理 */
 
 /* --- Thumbnail Loading Progress Indicator --- */
 .loading-overlay {
@@ -1312,6 +1370,7 @@ html.modal-open {
     opacity: 0.7;
     transition: opacity 0.3s ease-in-out;
     pointer-events: none; /* 确保不会遮挡下方的图片 */
+    z-index: 4; /* 确保在图片之上，但低于信息覆盖层 */
 }
 
 /* 当鼠标悬浮在 photo-item 上时，显示播放图标 */
@@ -1341,7 +1400,7 @@ html.modal-open {
     color: white;
 }
 /* --- 新增：为图片和占位符添加平滑的过渡效果 --- */
-.real-image, .image-placeholder {
+.real-image, .image-placeholder, .image-placeholder-detailed {
   transition: opacity 300ms ease-in-out;
 }
 
@@ -1786,6 +1845,8 @@ body.demo-body { background-color: var(--gray-900); color: white; display: flex;
 .photo-item img,
 .album-card .image-placeholder,
 .photo-item .image-placeholder,
+.album-card .image-placeholder-detailed,
+.photo-item .image-placeholder-detailed,
 .album-card .card-info-overlay,
 .photo-item .video-thumbnail-overlay,
 .photo-item .loading-overlay { border-radius: inherit; }
@@ -1802,6 +1863,7 @@ body.demo-body { background-color: var(--gray-900); color: white; display: flex;
     transform: translateY(100%);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     pointer-events: none;
+    z-index: 4; /* 确保在图片和其他元素之上 */
 }
 
 .album-card:hover .card-info-overlay {
@@ -1846,6 +1908,7 @@ body.demo-body { background-color: var(--gray-900); color: white; display: flex;
         /* 移动端默认显示信息 */
         opacity: 1;
         transform: translateY(0);
+        pointer-events: auto; /* 移动端启用交互 */
     }
     
     .card-info-overlay .album-title {
@@ -1932,8 +1995,8 @@ body.demo-body { background-color: var(--gray-900); color: white; display: flex;
 }
 
 @keyframes loading-shimmer {
-    0% { left: -100%; }
-    100% { left: 100%; }
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
 }
 
 /* === 优化的空状态样式 === */
@@ -2472,28 +2535,54 @@ body.demo-body { background-color: var(--gray-900); color: white; display: flex;
         padding: 1rem;
         margin: 1rem auto;
     }
-    
+
     .connecting-icon-container {
         width: 100px;
         height: 100px;
     }
-    
+
     .connecting-icon {
         width: 50px;
         height: 50px;
     }
-    
+
     .connecting-title {
         font-size: 1.25rem;
     }
-    
+
     .connecting-message {
         font-size: 0.9rem;
     }
-    
+
     .connecting-dot {
         width: 10px;
         height: 10px;
     }
+}
+
+/* ===== 无限滚动加载器优化 - 避免重排抖动 ===== */
+
+/* 优化后的加载器容器：始终占据空间，避免重排 */
+#infinite-scroll-loader-container {
+    /* 让它始终占据空间，即使在隐藏时 */
+    min-height: 80px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    /* 默认状态：不可见但占据空间 */
+    opacity: 0;
+    transform: scale(0.95);
+    /* 平滑过渡 */
+    transition: opacity 0.2s ease-in-out, transform 0.2s ease-in-out;
+    /* 防止用户意外点击到透明的加载器 */
+    pointer-events: none;
+}
+
+/* 当加载器需要显示时的状态 */
+#infinite-scroll-loader-container.visible {
+    opacity: 1;
+    transform: scale(1);
+    pointer-events: auto;
 }
 

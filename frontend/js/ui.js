@@ -146,25 +146,34 @@ export function displayAlbum(album) {
 		const questionMarkIndex = hash.indexOf('?');
 		sortParam = questionMarkIndex !== -1 ? hash.substring(questionMarkIndex) : '';
 	}
-	const img = createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','opacity-0','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': album.coverUrl, alt: album.name } });
+	const img = createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': album.coverUrl, alt: album.name } });
 	const albumTitle = createElement('div', { classes: ['album-title'], textContent: album.name });
 	const albumMetaKids = [createElement('span', { classes: ['album-type'], textContent: '相册' })];
 	if (timeText) albumMetaKids.push(createElement('span', { classes: ['album-time'], textContent: timeText }));
 	const infoOverlay = createElement('div', { classes: ['card-info-overlay'], children: [albumTitle, createElement('div', { classes: ['album-meta'], children: albumMetaKids })] });
+	
 	const relativeDiv = createElement('div', { classes: ['relative'], attributes: { style: `aspect-ratio: ${aspectRatio}` }, children: [createElement('div', { classes: ['image-placeholder','absolute','inset-0'] }), img, infoOverlay] });
 	const link = createElement('a', { classes: ['album-card','group','block','bg-gray-800','rounded-lg','overflow-hidden','shadow-lg','hover:shadow-purple-500/30','transition-shadow'], attributes: { href: `#/${encodeURIComponent(album.path)}${sortParam}` }, children: [relativeDiv] });
 	return createElement('div', { classes: ['grid-item','album-link'], attributes: { 'data-path': album.path, 'data-width': album.coverWidth || 1, 'data-height': album.coverHeight || 1 }, children: [link] });
 }
 
 /**
- * 渲染流式媒体项（安全 DOM）
+ * 渲染流式媒体项（安全 DOM）- 增强布局稳定性
  */
 export function displayStreamedMedia(type, mediaData, index, showTimestamp) {
 	const isVideo = type === 'video';
-	const aspectRatio = mediaData.height ? mediaData.width / mediaData.height : 1;
+	// 使用精确的宽高比，避免布局偏移
+	const aspectRatio = (mediaData.height && mediaData.width) 
+		? mediaData.width / mediaData.height 
+		: (isVideo ? 16/9 : 1); // 视频默认 16:9，图片默认 1:1
 	const timeText = showTimestamp ? formatTime(mediaData.mtime) : '';
-	// 占位层
-	const kids = [createElement('div', { classes: ['image-placeholder','absolute','inset-0'] })];
+	
+	// 占位层 - 添加最小高度确保布局稳定性
+	const placeholderClasses = ['image-placeholder','absolute','inset-0'];
+	if (!mediaData.height || !mediaData.width) {
+		placeholderClasses.push('min-h-[200px]'); // 未知尺寸时的最小高度
+	}
+	const kids = [createElement('div', { classes: placeholderClasses })];
 	// 加载覆盖层（含SVG进度环，慢网速下更可见）
 	const loadingOverlay = createElement('div', { classes: ['loading-overlay'] });
 	const progressHolder = createElement('div');
@@ -177,7 +186,7 @@ export function displayStreamedMedia(type, mediaData, index, showTimestamp) {
 	loadingOverlay.append(progressHolder);
 	kids.push(loadingOverlay);
 	if (isVideo) {
-		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','opacity-0','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': mediaData.thumbnailUrl, alt: '视频预览' } }));
+		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': mediaData.thumbnailUrl, alt: '视频预览' } }));
 		const overlay = createElement('div', { classes: ['video-thumbnail-overlay'] });
 		const playBtn = createElement('div', { classes: ['video-play-button'] });
 		playBtn.innerHTML = `
@@ -188,10 +197,21 @@ export function displayStreamedMedia(type, mediaData, index, showTimestamp) {
 		overlay.append(playBtn);
 		kids.push(overlay);
 	} else {
-		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','opacity-0','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': mediaData.thumbnailUrl, alt: '图片' } }));
+		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': mediaData.thumbnailUrl, alt: '图片' } }));
 	}
 	if (timeText) kids.push(createElement('div', { classes: ['absolute','bottom-2','right-2','bg-black/50','text-white','text-sm','px-2','py-1','rounded','shadow-lg'], textContent: timeText }));
-	const relativeDiv = createElement('div', { classes: ['relative','w-full','h-full'], attributes: { style: `aspect-ratio: ${aspectRatio}` }, children: kids });
+	// 使用更精确的容器样式，确保布局稳定性
+	const containerStyle = `aspect-ratio: ${aspectRatio}; min-height: 150px;`;
+	const relativeDiv = createElement('div', { 
+		classes: ['relative','w-full','h-full'], 
+		attributes: { 
+			style: containerStyle,
+			'data-aspect-ratio': aspectRatio.toFixed(3),
+			'data-original-width': mediaData.width || 0,
+			'data-original-height': mediaData.height || 0
+		}, 
+		children: kids 
+	});
 	const photoItem = createElement('div', { classes: ['photo-item','group','block','bg-gray-800','rounded-lg','overflow-hidden','cursor-pointer'], children: [relativeDiv] });
 	return createElement('div', { classes: ['grid-item','photo-link'], attributes: { 'data-url': mediaData.originalUrl, 'data-index': index, 'data-width': mediaData.width, 'data-height': mediaData.height }, children: [photoItem] });
 }
@@ -208,7 +228,7 @@ export function displaySearchMedia(result, index) {
 		createElement('div', { classes: ['loading-overlay'], children: [createElement('div', { classes: ['progress-circle'] })] })
 	];
 	if (isVideo) {
-		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','opacity-0','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': result.thumbnailUrl, alt: `视频预览：${result.name}` } }));
+		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': result.thumbnailUrl, alt: `视频预览：${result.name}` } }));
 		const overlay = createElement('div', { classes: ['video-thumbnail-overlay'] });
 		const playBtn = createElement('div', { classes: ['video-play-button'] });
 		playBtn.innerHTML = `
@@ -225,7 +245,7 @@ export function displaySearchMedia(result, index) {
 		const infoOverlay = createElement('div', { classes: ['card-info-overlay'], children: [title, createElement('div', { classes: ['album-meta'], children: metaKids })] });
 		kids.push(infoOverlay);
 	} else {
-		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','opacity-0','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': result.thumbnailUrl, alt: result.name } }));
+		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': result.thumbnailUrl, alt: result.name } }));
 	}
 	// 非视频保留角标时间；视频信息已在覆盖层中
 	if (!isVideo && timeText) kids.push(createElement('div', { classes: ['absolute','bottom-2','right-2','bg-black/50','text-white','text-sm','px-2','py-1','rounded','shadow-lg'], textContent: timeText }));
@@ -242,42 +262,60 @@ export function displaySearchMedia(result, index) {
 }
 
 /**
- * 渲染浏览网格（返回 DOM 元素数组）
+ * 渲染浏览网格（返回 DOM 元素数组）- 批量优化版本
  */
 export function renderBrowseGrid(items, currentPhotoCount) {
 	const contentElements = [];
 	const newMediaUrls = [];
 	// 规则：浏览页中，媒体项（图片/视频）不显示日期角标；仅相册卡片显示
 	const showTimestampForMedia = false;
+	
+	// 使用 DocumentFragment 进行批量 DOM 操作
+	const fragment = document.createDocumentFragment();
+	
 	items.forEach(item => {
 		const itemData = item.data;
+		let element;
 		if (item.type === 'album') {
-			contentElements.push(displayAlbum(itemData));
+			element = displayAlbum(itemData);
 		} else {
 			const mediaIndex = currentPhotoCount + newMediaUrls.length;
-			contentElements.push(displayStreamedMedia(item.type, itemData, mediaIndex, showTimestampForMedia));
+			element = displayStreamedMedia(item.type, itemData, mediaIndex, showTimestampForMedia);
 			newMediaUrls.push(itemData.originalUrl);
 		}
+		contentElements.push(element);
+		fragment.appendChild(element);
 	});
-	return { contentElements, newMediaUrls };
+	
+	return { contentElements, newMediaUrls, fragment };
 }
 
 /**
- * 渲染搜索网格（返回 DOM 元素数组）
+ * 渲染搜索网格（返回 DOM 元素数组）- 批量优化版本
  */
 export function renderSearchGrid(results, currentPhotoCount) {
 	const contentElements = [];
 	const newMediaUrls = [];
+	
+	// 使用 DocumentFragment 进行批量 DOM 操作
+	const fragment = document.createDocumentFragment();
+	
 	results.forEach(result => {
+		let element;
 		if (result.type === 'album') {
-			contentElements.push(displayAlbum(result));
+			element = displayAlbum(result);
 		} else if (result.type === 'photo' || result.type === 'video') {
 			const mediaIndex = currentPhotoCount + newMediaUrls.length;
-			contentElements.push(displaySearchMedia(result, mediaIndex));
+			element = displaySearchMedia(result, mediaIndex);
 			newMediaUrls.push(result.originalUrl);
 		}
+		if (element) {
+			contentElements.push(element);
+			fragment.appendChild(element);
+		}
 	});
-	return { contentElements, newMediaUrls };
+	
+	return { contentElements, newMediaUrls, fragment };
 }
 
 /**
@@ -293,6 +331,13 @@ export function renderSortDropdown() {
 		const toggle = createLayoutToggle();
 		sortContainer.appendChild(toggle.container);
 		toggleWrap = toggle.container;
+	}
+
+	// 无论按钮是新建的还是已存在的，都要确保可见
+	if (toggleWrap && !toggleWrap.classList.contains('visible')) {
+		requestAnimationFrame(() => {
+			toggleWrap.classList.add('visible');
+		});
 	}
 	if (!sortContainer.querySelector('.layout-divider')) {
 		const divider = document.createElement('div');
@@ -396,13 +441,81 @@ export function renderSortDropdown() {
 export function renderLayoutToggleOnly() {
     const sortContainer = document.getElementById('sort-container');
     if (!sortContainer) return;
-    sortContainer.innerHTML = '';
-    const toggle = createLayoutToggle();
-    sortContainer.appendChild(toggle.container);
-    // 分割线
-    const divider = document.createElement('div');
-    divider.className = 'layout-divider';
-    sortContainer.appendChild(divider);
+
+    // 使用requestAnimationFrame确保时序正确
+    requestAnimationFrame(() => {
+        sortContainer.innerHTML = '';
+        const toggle = createLayoutToggle();
+        sortContainer.appendChild(toggle.container);
+
+        // 分割线
+        const divider = document.createElement('div');
+        divider.className = 'layout-divider';
+        sortContainer.appendChild(divider);
+
+        // 强制重新计算布局
+        sortContainer.offsetHeight;
+
+        // 在下一帧触发动画，确保按钮可见
+        requestAnimationFrame(() => {
+            if (toggle.container && !toggle.container.classList.contains('visible')) {
+                toggle.container.classList.add('visible');
+            }
+        });
+    });
+}
+
+/**
+ * 确保布局切换按钮可见
+ * 用于修复按钮显示状态的问题
+ */
+export function ensureLayoutToggleVisible() {
+    const sortContainer = document.getElementById('sort-container');
+    if (!sortContainer) return;
+
+    const toggleWrap = sortContainer.querySelector('#layout-toggle-wrap');
+    if (toggleWrap && !toggleWrap.classList.contains('visible')) {
+        requestAnimationFrame(() => {
+            toggleWrap.classList.add('visible');
+        });
+    }
+}
+
+/**
+ * 根据内容长度动态调整滚动优化策略
+ * @param {string} path - 当前路径
+ */
+export function adjustScrollOptimization(path) {
+    // 使用requestAnimationFrame确保在DOM更新后执行
+    requestAnimationFrame(() => {
+        const contentGrid = document.getElementById('content-grid');
+        if (!contentGrid) return;
+
+        const gridItems = contentGrid.querySelectorAll('.grid-item');
+        const viewportHeight = window.innerHeight;
+
+        // 计算内容的总高度
+        let totalContentHeight = 0;
+        gridItems.forEach(item => {
+            const rect = item.getBoundingClientRect();
+            totalContentHeight = Math.max(totalContentHeight, rect.bottom);
+        });
+
+        // 获取body元素
+        const body = document.body;
+
+        // 移除之前的类
+        body.classList.remove('has-short-content', 'has-long-content');
+
+        // 根据内容高度判断并添加相应类
+        if (totalContentHeight > viewportHeight * 1.2) {
+            // 内容高度超过视口高度的120%，认为是长内容
+            body.classList.add('has-long-content');
+        } else {
+            // 内容较少，一页能显示完
+            body.classList.add('has-short-content');
+        }
+    });
 }
 
 /**

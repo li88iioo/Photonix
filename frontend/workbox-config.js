@@ -1,5 +1,5 @@
 module.exports = {
-  // Run from /app/frontend, so use project-local paths
+  // 从 /app/frontend 运行，因此使用项目本地路径
   swSrc: 'sw-src.js',
   swDest: 'sw.js',
   globDirectory: '.',

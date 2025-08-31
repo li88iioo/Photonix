@@ -10,10 +10,18 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="manifest" href="/manifest.json">
+    
+    <link rel="preload" href="/output.css" as="style">
     <link rel="modulepreload" href="/js/dist/main.js">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700&display=swap" rel="stylesheet"></noscript>
+    <style>
+        body, html {
+            font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+        }
+    </style>
     <link rel="stylesheet" href="/output.css">
 </head>
 
@@ -100,7 +108,7 @@
         <div id="modal-backdrop-two" class="modal-backdrop"></div>
         <div id="modal-content" class="relative w-full h-full flex flex-col items-center justify-center">
             <div id="media-panel" class="w-full h-full flex items-center justify-center p-4">
-                <img id="modal-img" src="" alt="" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+                <img id="modal-img" alt="" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
                     draggable="false" style="user-select: none; -webkit-user-select: none;">
                 <video id="modal-video" class="hidden max-w-full max-h-full object-contain rounded-lg shadow-2xl"
                     controls></video>

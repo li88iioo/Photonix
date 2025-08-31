@@ -58,12 +58,31 @@ export function handleSearchScroll() {
     handleScroll('search');
 }
 
+// 滚动处理防抖控制
+let scrollTimeout = null;
+const SCROLL_DEBOUNCE_DELAY = 16; // 约 60fps
+
 /**
- * 通用滚动处理函数
+ * 通用滚动处理函数（带防抖优化）
  * 实现无限滚动加载功能
  * @param {string} type - 滚动类型 ('browse' 或 'search')
  */
 async function handleScroll(type) {
+    // 简单防抖：清除之前的定时器
+    if (scrollTimeout) {
+        clearTimeout(scrollTimeout);
+    }
+    
+    scrollTimeout = setTimeout(async () => {
+        await handleScrollCore(type);
+    }, SCROLL_DEBOUNCE_DELAY);
+}
+
+/**
+ * 滚动处理核心逻辑
+ * @param {string} type - 滚动类型
+ */
+async function handleScrollCore(type) {
     // 获取对应类型的状态
     const isLoading = type === 'browse' ? state.isBrowseLoading : state.isSearchLoading;
     const currentPage = type === 'browse' ? state.currentBrowsePage : state.currentSearchPage;
@@ -80,7 +99,8 @@ async function handleScroll(type) {
             firstChild.id === 'skeleton-grid'
         );
         if (isBlockedState) {
-            if (elements.infiniteScrollLoader) elements.infiniteScrollLoader.classList.add('hidden');
+            // 【优化】使用新的容器控制可见性，避免重排抖动
+            if (elements.infiniteScrollLoader) elements.infiniteScrollLoader.classList.remove('visible');
             return;
         }
     }
@@ -88,13 +108,14 @@ async function handleScroll(type) {
     // 如果正在加载或已到最后一页，则跳过
     if (isLoading || currentPage > totalPages) return;
 
-    // 检查是否接近页面底部（距离底部500px时触发加载）
-    if ((window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 500) {
+    // 【优化】增加滚动位置检查，避免临界状态抖动 + 检查是否接近页面底部（距离底部500px时触发加载）
+    if (window.scrollY > 100 && (window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 500) {
         // 设置加载状态
         if (type === 'browse') state.isBrowseLoading = true;
         else state.isSearchLoading = true;
 
-        elements.infiniteScrollLoader.classList.remove('hidden');
+        // 【优化】使用新的容器控制可见性，避免重排抖动
+        if (elements.infiniteScrollLoader) elements.infiniteScrollLoader.classList.add('visible');
         
         try {
             let data;
@@ -113,7 +134,8 @@ async function handleScroll(type) {
             const items = type === 'browse' ? data.items : data.results;
             if (items.length === 0) {
                  if (type === 'browse') state.isBrowseLoading = false; else state.isSearchLoading = false;
-                 elements.infiniteScrollLoader.classList.add('hidden');
+                 // 【优化】使用新的容器控制可见性，避免重排抖动
+                 if (elements.infiniteScrollLoader) elements.infiniteScrollLoader.classList.remove('visible');
                  return;
             };
 
@@ -121,13 +143,20 @@ async function handleScroll(type) {
             if (type === 'browse') state.totalBrowsePages = data.totalPages;
             else state.totalSearchPages = data.totalPages;
 
-            // 渲染新内容
+            // 渲染新内容 - 使用批量 DOM 操作
             const prevCount = elements.contentGrid.children.length;
-            const { contentElements, newMediaUrls } = type === 'browse' 
+            const renderResult = type === 'browse' 
                 ? renderBrowseGrid(items, state.currentPhotos.length)
                 : renderSearchGrid(items, state.currentPhotos.length);
             
-            elements.contentGrid.append(...contentElements);
+            const { contentElements, newMediaUrls, fragment } = renderResult;
+            
+            // 批量插入 DOM 元素
+            if (fragment && fragment.children.length > 0) {
+                elements.contentGrid.appendChild(fragment);
+            } else {
+                elements.contentGrid.append(...contentElements);
+            }
             state.currentPhotos = state.currentPhotos.concat(newMediaUrls);
 
             // 更新页码
@@ -143,7 +172,8 @@ async function handleScroll(type) {
         } finally {
              if (type === 'browse') state.isBrowseLoading = false;
              else state.isSearchLoading = false;
-            elements.infiniteScrollLoader.classList.add('hidden');
+            // 【优化】使用新的容器控制可见性，避免重排抖动
+            if (elements.infiniteScrollLoader) elements.infiniteScrollLoader.classList.remove('visible');
         }
     }
 }
@@ -175,16 +205,16 @@ export function setupEventListeners() {
             const threshold = 8; // 小幅滚动不触发
 
             if (Math.abs(delta) > threshold) {
-                if (isScrollingDown) {
+                if (isScrollingDown && currentY > 100) {
                     topbar.classList.add('topbar--hidden');
                     topbar.classList.add('topbar--condensed'); // B 方案：折叠上下文层
                 } else {
                     topbar.classList.remove('topbar--hidden');
                     topbar.classList.remove('topbar--condensed');
                 }
-                lastScrollY = currentY;
             }
-            ticking = false;
+            // 始终更新 lastScrollY，确保滚动检测准确
+            lastScrollY = currentY;
         }
 
         // 根据上下文层的显隐动态调整顶部内边距，避免遮挡
@@ -208,7 +238,18 @@ export function setupEventListeners() {
         setTimeout(updateTopbarOffset, 360);
         window.addEventListener('load', updateTopbarOffset);
         window.addEventListener('resize', () => { updateTopbarOffset(); });
-        window.addEventListener('scroll', () => { if (!ticking) requestAnimationFrame(updateTopbarOffset); }, { passive: true });
+        // 合并滚动事件监听器，避免冲突
+        window.addEventListener('scroll', () => {
+            if (!ticking) {
+                requestAnimationFrame(() => {
+                    onScroll();
+                    updateTopbarOffset();
+                    ticking = false;
+                });
+                ticking = true;
+            }
+        }, { passive: true });
+        
         // 监听尺寸变化
         if (window.ResizeObserver) {
             const ro = new ResizeObserver(() => updateTopbarOffset());
@@ -216,12 +257,6 @@ export function setupEventListeners() {
             if (contextEl) ro.observe(contextEl);
         }
 
-        window.addEventListener('scroll', () => {
-            if (!ticking) {
-                window.requestAnimationFrame(onScroll);
-                ticking = true;
-            }
-        }, { passive: true });
 
         // 移动端搜索开关
         if (searchToggleBtn) {
@@ -544,7 +579,7 @@ export function setupEventListeners() {
         const containerWidth = document.getElementById('content-grid')?.clientWidth || 0;
         const changedCols = newColumnCount !== state.currentColumnCount;
         const changedWidth = Math.abs(containerWidth - (state.currentLayoutWidth || 0)) > 1;
-        if (changedCols || changedWidth) {
+        if ((changedCols || changedWidth) && elements.contentGrid.classList.contains('masonry-mode')) {
             state.currentColumnCount = newColumnCount;
             state.currentLayoutWidth = containerWidth;
             applyMasonryLayout();

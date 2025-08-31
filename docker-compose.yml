@@ -7,7 +7,7 @@ services:
     ports:
       - "${APP_PORT:-12080}:13001"
     volumes:
-      - /mnt/nas/Coser:/app/photos
+      - /you/path:/app/photos
       - ./data:/app/data
     container_name: Photonix
     env_file:

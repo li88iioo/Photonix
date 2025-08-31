@@ -29,8 +29,30 @@ function handleImageLoad(event) {
             URL.revokeObjectURL(img.src);
         }
     } catch {}
+
+    // 清理父元素的生成状态类，停止SVG动画
     const parent = img.closest('.photo-item, .album-card');
-    if (parent) parent.querySelector('.image-placeholder')?.remove();
+    if (parent) {
+        parent.classList.remove('thumbnail-generating');
+    }
+
+    // 手动隐藏占位符和加载覆盖层，因为CSS选择器无法向前选择
+    const container = img.parentElement;
+    if (container) {
+        const placeholder = container.querySelector('.image-placeholder');
+        const loadingOverlay = container.querySelector('.loading-overlay');
+        
+        if (placeholder) {
+            placeholder.style.opacity = '0';
+            placeholder.style.animation = 'none';
+            placeholder.style.pointerEvents = 'none';
+        }
+        
+        if (loadingOverlay) {
+            loadingOverlay.style.display = 'none';
+            loadingOverlay.style.opacity = '0';
+        }
+    }
     triggerMasonryUpdate();
 }
 
@@ -54,7 +76,24 @@ function handleImageError(event) {
     img.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(brokenSvg);
     img.classList.add('error');
     img.classList.remove('blurred');
-    // 保留占位元素，等待后续重试或 SSE 推送
+    
+    // 手动隐藏占位符和加载覆盖层
+    const container = img.parentElement;
+    if (container) {
+        const placeholder = container.querySelector('.image-placeholder');
+        const loadingOverlay = container.querySelector('.loading-overlay');
+        
+        if (placeholder) {
+            placeholder.style.opacity = '0';
+            placeholder.style.animation = 'none';
+            placeholder.style.pointerEvents = 'none';
+        }
+        
+        if (loadingOverlay) {
+            loadingOverlay.style.display = 'none';
+            loadingOverlay.style.opacity = '0';
+        }
+    }
 }
 
 /**

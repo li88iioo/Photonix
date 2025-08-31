@@ -179,7 +179,7 @@ class VirtualScroller {
     }
     
     /**
-     * 计算可见范围
+     * 计算可见范围 - 优化版本使用二分查找
      */
     calculateVisibleRange() {
         if (!this.items || this.items.length === 0) {
@@ -189,41 +189,118 @@ class VirtualScroller {
         const scrollTop = this.container.scrollTop;
         const visibleTop = scrollTop;
         const visibleBottom = scrollTop + this.viewportHeight;
+        const bufferHeight = this.buffer * this.estimatedItemHeight;
         
-        // 找到可见范围内的项目
-        let startIndex = 0;
-        let endIndex = 0;
+        // 使用二分查找优化可见范围计算
+        const startIndex = this.binarySearchStartIndex(visibleTop - bufferHeight);
+        const endIndex = this.binarySearchEndIndex(visibleBottom + bufferHeight, startIndex);
+        
+        return { startIndex, endIndex };
+    }
+    
+    /**
+     * 二分查找起始索引
+     */
+    binarySearchStartIndex(targetTop) {
+        let left = 0;
+        let right = this.items.length - 1;
         let currentTop = 0;
         
-        // 计算开始索引
+        // 如果缓存不足，回退到线性搜索
+        if (this.measurementCache.size < this.items.length * 0.5) {
+            return this.linearSearchStartIndex(targetTop);
+        }
+        
+        while (left <= right) {
+            const mid = Math.floor((left + right) / 2);
+            const midTop = this.getItemTop(mid);
+            
+            if (midTop <= targetTop) {
+                left = mid + 1;
+            } else {
+                right = mid - 1;
+            }
+        }
+        
+        return Math.max(0, right);
+    }
+    
+    /**
+     * 二分查找结束索引
+     */
+    binarySearchEndIndex(targetBottom, startIndex) {
+        let left = startIndex;
+        let right = this.items.length - 1;
+        
+        // 如果缓存不足，回退到线性搜索
+        if (this.measurementCache.size < this.items.length * 0.5) {
+            return this.linearSearchEndIndex(targetBottom, startIndex);
+        }
+        
+        while (left <= right) {
+            const mid = Math.floor((left + right) / 2);
+            const midTop = this.getItemTop(mid);
+            
+            if (midTop <= targetBottom) {
+                left = mid + 1;
+            } else {
+                right = mid - 1;
+            }
+        }
+        
+        return Math.min(this.items.length, left);
+    }
+    
+    /**
+     * 获取项目顶部位置
+     */
+    getItemTop(index) {
+        let top = 0;
+        for (let i = 0; i < index; i++) {
+            const itemHeight = this.measurementCache.has(i) 
+                ? this.measurementCache.get(i).height 
+                : this.estimatedItemHeight;
+            top += itemHeight;
+        }
+        return top;
+    }
+    
+    /**
+     * 线性搜索起始索引（回退方案）
+     */
+    linearSearchStartIndex(targetTop) {
+        let currentTop = 0;
         for (let i = 0; i < this.items.length; i++) {
             const itemHeight = this.measurementCache.has(i) 
                 ? this.measurementCache.get(i).height 
                 : this.estimatedItemHeight;
             
-            if (currentTop + itemHeight > visibleTop - (this.buffer * this.estimatedItemHeight)) {
-                startIndex = i;
-                break;
+            if (currentTop + itemHeight > targetTop) {
+                return i;
             }
             currentTop += itemHeight;
         }
+        return 0;
+    }
+    
+    /**
+     * 线性搜索结束索引（回退方案）
+     */
+    linearSearchEndIndex(targetBottom, startIndex) {
+        let currentTop = this.getItemTop(startIndex);
         
-        // 计算结束索引（从startIndex开始，避免重复计算）
         for (let i = startIndex; i < this.items.length; i++) {
             const itemHeight = this.measurementCache.has(i) 
                 ? this.measurementCache.get(i).height 
                 : this.estimatedItemHeight;
             
-            if (currentTop > visibleBottom + (this.buffer * this.estimatedItemHeight)) {
-                endIndex = i;
-                break;
+            if (currentTop > targetBottom) {
+                return i;
             }
             currentTop += itemHeight;
         }
         
-        if (endIndex === 0) endIndex = this.items.length;
-        
-        return { startIndex, endIndex };
+        return this.items.length;
     }
     
     /**

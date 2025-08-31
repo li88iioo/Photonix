@@ -6,6 +6,7 @@ import { fetchSettings } from './api.js';
 import { showSkeletonGrid } from './loading-states.js';
 import { showNotification } from './utils.js';
 import { initializeSSE } from './sse.js';
+import { handleError, ErrorTypes, ErrorSeverity } from './error-handler.js';
 
 let appStarted = false;
 
@@ -117,6 +118,10 @@ async function initializeApp() {
         }
     } catch (error) {
         console.error('应用初始化失败:', error);
+        
+        // 记录错误但避免触发额外的网络请求
+        console.error('应用初始化错误:', error);
+        
         setUIState('error');
         const authContainer = document.getElementById('auth-container');
         if(authContainer) {
@@ -170,6 +175,10 @@ async function loadAppSettings() {
         state.update('passwordEnabled', clientSettings.PASSWORD_ENABLED === 'true');
     } catch (e) {
         console.warn("无法获取应用设置:", e.message);
+        
+        // 使用统一错误处理 - 避免触发额外的网络请求
+        console.warn("设置加载失败，使用默认配置:", e.message);
+        
         state.batchUpdate({ aiEnabled: false, passwordEnabled: false });
     }
 }

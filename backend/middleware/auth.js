@@ -39,7 +39,7 @@ module.exports = async function(req, res, next) {
         const isRootBrowseRequest = req.method === 'GET' && (req.path === '/browse' || req.path === '/browse/');
         const isCoversRequest = false; // 旧的封面API已移除
         const isThumbnailRequest = req.method === 'GET' && req.path === '/thumbnail'; // 新增对缩略图路由的检查
-        const isEventsRequest = req.method === 'GET' && req.path === '/events'; // SSE 事件流
+        const isEventsRequest = req.method === 'GET' && req.path === '/events'; // SSE 事件流 - 允许无认证访问
         const isSettingsGetRequest = req.method === 'GET' && req.path === '/settings'; // 公开：仅 GET /api/settings（非敏感字段）
             const isSettingsStatusRequest = req.method === 'GET' && req.path === '/settings/status'; // 公开：设置更新状态轮询（只读、非敏感）
         const isLoginBgRequest = req.method === 'GET' && req.path === '/login-bg';

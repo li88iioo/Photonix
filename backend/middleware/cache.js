@@ -4,7 +4,27 @@ const { addTagsToKey } = require('../services/cache.service.js');
 
 const cacheStats = { hits: 0, misses: 0, totalRequests: 0 };
 const inFlight = new Map();
+const inFlightTimestamps = new Map();
 const INFLIGHT_TIMEOUT_MS = 8000;
+const INFLIGHT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5分钟清理一次
+
+// 定期清理超时的inFlight请求
+setInterval(() => {
+    const now = Date.now();
+    let cleaned = 0;
+
+    for (const [key, timestamp] of inFlightTimestamps.entries()) {
+        if ((now - timestamp) > INFLIGHT_TIMEOUT_MS * 2) { // 两倍超时时间
+            inFlight.delete(key);
+            inFlightTimestamps.delete(key);
+            cleaned++;
+        }
+    }
+
+    if (cleaned > 0) {
+        logger.debug(`[CACHE CLEANUP] 清理了 ${cleaned} 个超时的inFlight请求`);
+    }
+}, INFLIGHT_CLEANUP_INTERVAL_MS);
 
 function generateTagsFromReq(req) {
     const tags = new Set();
@@ -31,6 +51,20 @@ function generateTagsFromReq(req) {
             }
         }
     }
+
+    // 为缩略图API添加缓存标签
+    if (routePath.startsWith('/api/thumbnail')) {
+        const thumbPath = req.query.path;
+        if (thumbPath) {
+            // 添加缩略图自身的标签
+            tags.add(`thumbnail:${thumbPath}`);
+
+            // 添加所属相册的标签
+            const dirname = thumbPath.substring(0, thumbPath.lastIndexOf('/') + 1);
+            tags.add(`album:${dirname || '/'}`);
+            tags.add('album:/');
+        }
+    }
     return Array.from(tags);
 }
 
@@ -38,11 +72,17 @@ async function singleflight(key, producer) {
     if (inFlight.has(key)) return inFlight.get(key);
     const p = (async () => {
         try { return await producer(); }
-        finally { setTimeout(() => inFlight.delete(key), 0); }
+        finally {
+            setTimeout(() => {
+                inFlight.delete(key);
+                inFlightTimestamps.delete(key);
+            }, 0);
+        }
     })();
     const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('singleflight_timeout')), INFLIGHT_TIMEOUT_MS));
     const wrapped = Promise.race([p, timeout]);
     inFlight.set(key, wrapped);
+    inFlightTimestamps.set(key, Date.now());
     return wrapped;
 }
 

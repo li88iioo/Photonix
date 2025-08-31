@@ -6,9 +6,12 @@ const sharp = require('sharp');
 const { bullConnection } = require('../config/redis');
 const { THUMBS_DIR, PHOTOS_DIR, THUMBNAIL_QUEUE_NAME } = require('../config');
 
+// 环境检测：开发环境显示详细日志
+const isDevelopment = process.env.NODE_ENV !== 'production';
+
 // Configure logging
 const logger = winston.createLogger({
-	level: process.env.LOG_LEVEL || 'info',
+	level: isDevelopment ? 'debug' : 'info',
 	format: winston.format.combine(
 		winston.format.colorize(),
 		winston.format.timestamp(),
@@ -68,7 +71,14 @@ async function processThumbJob(job) {
 	const srcPath = path.isAbsolute(filePath) ? filePath : path.join(PHOTOS_DIR, relativePath);
 
 	// Skip if exists
-	try { await fs.access(thumbPath); return { skipped: true }; } catch {}
+	try {
+		await fs.access(thumbPath);
+		logger.debug(`跳过（已存在）: ${relativePath}`);
+		// 即使跳过，也要确保状态正确
+		await handleThumbSuccess(relativePath, thumbPath);
+		return { skipped: true };
+	} catch {}
+
 	await fs.mkdir(path.dirname(thumbPath), { recursive: true });
 	try {
 		if (isVideo) {
@@ -81,11 +91,56 @@ async function processThumbJob(job) {
 			await generateImageThumbnail(srcPath, thumbPath);
 		}
 		logger.info(`生成完成: ${relativePath}`);
+
+		// 缩略图生成成功后的后续处理
+		await handleThumbSuccess(relativePath, thumbPath);
+
 		return { success: true };
 	} catch (e) {
 		const msg = translateErrorMessage(e && e.message);
 		logger.warn(`生成失败: ${relativePath} - ${msg}`);
 		throw e;
+	}
+}
+
+// 处理缩略图生成成功后的逻辑
+async function handleThumbSuccess(relativePath, thumbPath) {
+	try {
+		// 1. 通过Redis发布订阅发送SSE事件通知前端（跨进程通信）
+		const { redis } = require('../config/redis');
+		await redis.publish('thumbnail-generated', JSON.stringify({ path: relativePath }));
+
+		// 2. 更新Redis缓存，清除永久失败标记
+		const failureKey = `thumb_failed_permanently:${relativePath}`;
+		await redis.del(failureKey).catch(err => logger.warn(`清理Redis永久失败标记时出错: ${err.message}`));
+
+		// 3. 更新数据库状态
+		const { queueThumbStatusUpdate } = require('../services/thumbnail.service');
+		const thumbMtime = await fs.stat(thumbPath).then(s => s.mtimeMs).catch(() => Date.now());
+		queueThumbStatusUpdate(relativePath, thumbMtime, 'exists');
+
+		// 4. 失效相关页面的缓存
+		try {
+			const { invalidateTags } = require('../services/cache.service');
+			const dirname = path.dirname(relativePath);
+			const tags = [
+				`thumbnail:${relativePath}`,  // 缩略图自身缓存
+				`album:${dirname}`,           // 所属相册缓存
+				'album:/'                     // 根相册缓存
+			];
+
+			await invalidateTags(tags);
+			logger.debug(`[CACHE] 已失效缩略图相关的缓存标签: ${tags.join(', ')}`);
+		} catch (cacheError) {
+			logger.warn(`[CACHE] 失效缩略图缓存失败（已忽略）: ${cacheError.message}`);
+		}
+
+		// 5. 更新指标
+		try { await redis.incr('metrics:thumb:success'); } catch {}
+
+		logger.debug(`[QUEUE-THUMB] 缩略图生成后处理完成: ${relativePath}`);
+	} catch (error) {
+		logger.error(`[QUEUE-THUMB] 缩略图生成后处理失败: ${relativePath}`, error);
 	}
 }
 

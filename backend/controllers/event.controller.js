@@ -1,6 +1,9 @@
 const eventBus = require('../services/event.service.js');
 const logger = require('../config/logger');
 
+// 环境检测：开发环境显示详细日志
+const isDevelopment = process.env.NODE_ENV !== 'production';
+
 // 保存活跃的客户端连接
 const clients = new Set();
 
@@ -54,7 +57,9 @@ exports.streamEvents = (req, res) => {
 
     // 3. 定义事件监听器
     const onThumbnailGenerated = (data) => {
-        logger.debug(`[SSE] 监听到 thumbnail-generated 事件，将发送给 ${clientId}`);
+        if (isDevelopment) {
+            logger.debug(`[SSE] 监听到 thumbnail-generated 事件，将发送给 ${clientId}`);
+        }
         sendEvent('thumbnail-generated', data);
     };
 

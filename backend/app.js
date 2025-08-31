@@ -200,12 +200,13 @@ app.get('/health', async (req, res) => {
 
 /**
  * 全局错误处理中间件
- * 
- * 捕获所有未处理的错误：
- * - 记录错误日志
- * - 返回500状态码
- * - 发送通用错误消息
- * 
+ *
+ * 统一的错误处理：
+ * - 区分操作错误和编程错误
+ * - 记录详细的错误日志
+ * - 返回适当的HTTP状态码和错误信息
+ * - 隐藏敏感的错误详情
+ *
  * @param {Error} err - 错误对象
  * @param {express.Request} req - 请求对象
  * @param {express.Response} res - 响应对象
@@ -213,8 +214,84 @@ app.get('/health', async (req, res) => {
  */
 app.use((err, req, res, next) => {
     const requestIdVal = req && req.requestId ? req.requestId : undefined;
-    logger.error(`[${requestIdVal || '-'}] 未捕获的服务器错误:`, err);
-    res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器发生内部错误', requestId: requestIdVal });
+    let statusCode = 500;
+    let errorCode = 'INTERNAL_ERROR';
+    let message = '服务器发生内部错误';
+
+    // 处理自定义应用错误
+    if (err.code && err.statusCode) {
+        statusCode = err.statusCode;
+        errorCode = err.code;
+        message = err.message;
+    }
+    // 处理Joi验证错误
+    else if (err.isJoi) {
+        statusCode = 400;
+        errorCode = 'VALIDATION_ERROR';
+        message = '参数验证失败';
+    }
+    // 处理JWT错误
+    else if (err.name === 'JsonWebTokenError') {
+        statusCode = 401;
+        errorCode = 'INVALID_TOKEN';
+        message = 'Token无效';
+    }
+    else if (err.name === 'TokenExpiredError') {
+        statusCode = 401;
+        errorCode = 'TOKEN_EXPIRED';
+        message = 'Token已过期';
+    }
+    // 处理文件系统错误
+    else if (err.code === 'ENOENT') {
+        statusCode = 404;
+        errorCode = 'FILE_NOT_FOUND';
+        message = '文件不存在';
+    }
+    else if (err.code === 'EACCES') {
+        statusCode = 403;
+        errorCode = 'ACCESS_DENIED';
+        message = '访问被拒绝';
+    }
+    // 处理数据库错误
+    else if (err.message && err.message.includes('SQLITE_')) {
+        statusCode = 500;
+        errorCode = 'DATABASE_ERROR';
+        message = '数据库操作失败';
+    }
+
+    // 记录错误日志
+    if (statusCode >= 500) {
+        // 服务器错误记录详细信息
+        logger.error(`[${requestIdVal || '-'}] 服务器错误 (${statusCode}):`, {
+            error: err.message,
+            stack: err.stack,
+            url: req.originalUrl,
+            method: req.method,
+            ip: req.ip,
+            userAgent: req.get('User-Agent')
+        });
+    } else {
+        // 客户端错误记录基本信息
+        logger.warn(`[${requestIdVal || '-'}] 客户端错误 (${statusCode}): ${err.message}`);
+    }
+
+    // 生产环境不返回详细的错误信息
+    const isDevelopment = process.env.NODE_ENV !== 'production';
+    const response = {
+        code: errorCode,
+        message,
+        requestId: requestIdVal
+    };
+
+    // 开发环境添加更多调试信息
+    if (isDevelopment && statusCode >= 500) {
+        response.details = err.message;
+        if (err.stack) {
+            response.stack = err.stack;
+        }
+    }
+
+    res.status(statusCode).json(response);
 });
 
 // --- SPA Catch-all：应在错误中间件之后，且在最后 ---

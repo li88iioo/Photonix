@@ -4,7 +4,7 @@ import { state, elements } from './state.js';
 import { applyMasonryLayout, getMasonryColumns, initializeVirtualScroll } from './masonry.js';
 import { setupLazyLoading } from './lazyload.js';
 import { fetchSearchResults, fetchBrowseResults, postViewed } from './api.js';
-import { renderBreadcrumb, renderBrowseGrid, renderSearchGrid, sortAlbumsByViewed, renderSortDropdown, checkIfHasMediaFiles, applyLayoutMode, renderLayoutToggleOnly } from './ui.js';
+import { renderBreadcrumb, renderBrowseGrid, renderSearchGrid, sortAlbumsByViewed, renderSortDropdown, checkIfHasMediaFiles, applyLayoutMode, renderLayoutToggleOnly, ensureLayoutToggleVisible, adjustScrollOptimization } from './ui.js';
 import { saveViewed, getUnsyncedViewed, markAsSynced } from './indexeddb-helper.js';
 import { AbortBus } from './abort-bus.js';
 import { handleBrowseScroll, handleSearchScroll, removeScrollListeners } from './listeners.js';
@@ -139,7 +139,8 @@ export async function streamPath(path, signal) {
             if (sortContainer) sortContainer.innerHTML = '';
             state.totalBrowsePages = 0;
             state.currentBrowsePage = 1;
-            elements.infiniteScrollLoader.classList.add('hidden');
+            // 【优化】隐藏无限滚动加载器 - 避免重排抖动
+            if (elements.infiniteScrollLoader) elements.infiniteScrollLoader.classList.remove('visible');
             showEmptyAlbum();
             return;
         }
@@ -148,8 +149,10 @@ export async function streamPath(path, signal) {
         const sortContainer = document.getElementById('sort-container');
         if (sortContainer) {
             if (hasMediaFiles) {
-                sortContainer.innerHTML = '';
+                // 对于有媒体文件的相册，显示布局切换按钮
+                renderLayoutToggleOnly();
             } else {
+                // 对于只有相册的页面，显示排序下拉框
                 renderSortDropdown();
             }
         }
@@ -171,6 +174,13 @@ export async function streamPath(path, signal) {
         if (AbortBus.get('page') !== signal || getPathOnlyFromHash() !== path) return;
         applyLayoutMode();
         finalizeNewContent(path);
+
+        // 确保布局切换按钮正确显示
+        setTimeout(() => {
+            ensureLayoutToggleVisible();
+            // 根据内容长度动态调整优化策略
+            adjustScrollOptimization(path);
+        }, 50);
 
     } catch (error) {
         if (error.name !== 'AbortError') {
@@ -224,7 +234,9 @@ async function executeSearch(query, signal) {
        if (data.results.length === 0) {
           state.totalSearchPages = 0;
           state.currentSearchPage = 1;
-          elements.infiniteScrollLoader.classList.add('hidden');
+          // 【优化】隐藏无限滚动加载器 - 避免重排抖动
+          const loaderContainer = document.getElementById('infinite-scroll-loader-container');
+          if (loaderContainer) loaderContainer.classList.remove('visible');
           showEmptySearchResults(query);
           removeScrollListeners();
           elements.contentGrid.style.minHeight = '';
@@ -250,6 +262,13 @@ async function executeSearch(query, signal) {
         renderLayoutToggleOnly();
         applyLayoutMode();
         finalizeNewContent(searchPathKey);
+
+        // 确保布局切换按钮正确显示
+        setTimeout(() => {
+            ensureLayoutToggleVisible();
+            // 根据内容长度动态调整优化策略
+            adjustScrollOptimization(searchPathKey);
+        }, 50);
 
     } catch (error) {
         if (error.name !== 'AbortError') {
@@ -289,7 +308,8 @@ function prepareForNewContent() {
             elements.contentGrid.classList.remove('masonry-mode', 'grid-leaving');
             elements.contentGrid.classList.add('grid-entering');
             elements.contentGrid.style.height = 'auto';
-            elements.infiniteScrollLoader.classList.add('hidden');
+            // 【优化】隐藏无限滚动加载器 - 避免重排抖动
+            if (elements.infiniteScrollLoader) elements.infiniteScrollLoader.classList.remove('visible');
             state.update('currentPhotos', []);
 
             // 动画结束后移除 entering class

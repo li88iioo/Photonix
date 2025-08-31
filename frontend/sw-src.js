@@ -1,22 +1,22 @@
-// frontend/sw-src.js (source for Workbox injectManifest)
+// frontend/sw-src.js (Workbox injectManifest 的源文件)
 
-// Load Workbox runtime (CDN) and enable precache injection point
+// 加载 Workbox 运行时（CDN）并启用预缓存注入点
 try {
   importScripts('https://storage.googleapis.com/workbox-cdn/releases/7.0.0/workbox-sw.js');
   if (self.workbox && self.workbox.precaching) {
-    // precache manifest injected at build time
+    // 构建时注入的预缓存清单
     // eslint-disable-next-line no-undef
     self.workbox.precaching.precacheAndRoute(self.__WB_MANIFEST || []);
   }
 } catch (e) {
-  // If CDN is not reachable, SW still works with runtime caching below
+  // 如果 CDN 不可达，SW 仍可通过下面的运行时缓存工作
 }
 
-// --- Below is your existing custom Service Worker logic ---
+// --- 以下是您现有的自定义 Service Worker 逻辑 ---
 
-// Derive cache versions automatically from the injected precache manifest
+// 从注入的预缓存清单自动派生缓存版本
 function hashString(str) {
-  // FNV-1a 32-bit hash
+  // FNV-1a 32 位哈希
   let h = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) {
     h ^= str.charCodeAt(i);
@@ -31,10 +31,11 @@ try {
   __BUILD_REV = hashString(JSON.stringify(__WB_ENTRIES));
 } catch {}
 
-// Cache versioning（自动随构建更新）
+// 缓存版本控制（自动随构建更新）
 const STATIC_CACHE_VERSION = `static-${__BUILD_REV}`;
 const API_CACHE_VERSION = `api-${__BUILD_REV}`;
 const MEDIA_CACHE_VERSION = `media-${__BUILD_REV}`;
+const THUMBNAIL_CACHE_VERSION = `thumb-${__BUILD_REV}`;
 
 // 仅缓存稳定核心；JS 使用 dist 入口，其他 chunk 运行时按策略缓存
 const CORE_ASSETS = [
@@ -47,7 +48,7 @@ const CORE_ASSETS = [
   '/js/dist/main.js',
 
   // --- 静态资源 (assets) ---
-  
+
 
   // --- 外部资源 ---
   'https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700&display=swap'
@@ -57,16 +58,16 @@ const CORE_ASSETS = [
 function isCacheableResponse(response, request) {
   // 只缓存成功的响应
   if (!response.ok) return false;
-  
+
   // 不缓存206 Partial Content响应（内网穿透常见问题）
   if (response.status === 206) return false;
-  
+
   // 不缓存非GET请求
   if (request && request.method !== 'GET') return false;
-  
+
   // 不缓存非基本或CORS响应
   if (response.type !== 'basic' && response.type !== 'cors') return false;
-  
+
   return true;
 }
 
@@ -75,12 +76,12 @@ self.addEventListener('install', event => {
   event.waitUntil((async () => {
     try {
       const cache = await caches.open(STATIC_CACHE_VERSION);
-      console.log('Service Worker: Caching core assets');
+      console.log('Service Worker: 正在缓存核心资源');
       // 柔性安装：单个失败不阻断 SW 安装
       await Promise.allSettled(CORE_ASSETS.map(u => cache.add(u)));
     } catch (e) {
       // 忽略，继续安装
-      console.warn('SW install: some core assets failed to cache:', e && e.message);
+      console.warn('SW 安装：某些核心资源缓存失败:', e && e.message);
     }
     await self.skipWaiting();
   })());
@@ -116,7 +117,7 @@ self.addEventListener('activate', event => {
           const isStaleMediaCache = cacheName.startsWith('media-') && cacheName !== MEDIA_CACHE_VERSION;
 
           if (isLegacyApiSearch || isStaleApiCache || isStaleStaticCache || isStaleMediaCache || isOurCache) {
-            console.log('Service Worker: Deleting old cache:', cacheName);
+            console.log('Service Worker: 删除旧缓存:', cacheName);
             return caches.delete(cacheName);
           }
 
@@ -174,7 +175,7 @@ self.addEventListener('fetch', event => {
           }
           return resp;
         })
-        .catch(() => caches.match(request).then(r => r || new Response('', { status: 503, statusText: 'Service Unavailable' })))
+        .catch(() => caches.match(request).then(r => r || new Response('', { status: 503, statusText: '服务不可用' })))
     );
     return;
   }
@@ -197,7 +198,7 @@ self.addEventListener('fetch', event => {
           }
           return response;
         })
-        .catch(() => caches.match(request).then(r => r || new Response('', { status: 503, statusText: 'Service Unavailable' })))
+        .catch(() => caches.match(request).then(r => r || new Response('', { status: 503, statusText: '服务不可用' })))
     );
     return;
   }
@@ -209,7 +210,7 @@ self.addEventListener('fetch', event => {
       event.respondWith(
         fetch(request)
           .then(response => response)
-          .catch(() => new Response('', { status: 503, statusText: 'Service Unavailable' }))
+          .catch(() => new Response('', { status: 503, statusText: '服务不可用' }))
       );
       return;
     }
@@ -231,28 +232,42 @@ self.addEventListener('fetch', event => {
           return networkResponse;
         })
         .catch(error => {
-          console.warn('Network request failed for browse API:', error);
+          console.warn('浏览 API 的网络请求失败:', error);
           // SWR：返回缓存（若有），无缓存则 503
-          return caches.match(request).then(r => r || new Response('', { status: 503, statusText: 'Service Unavailable' }));
+          return caches.match(request).then(r => r || new Response('', { status: 503, statusText: '服务不可用' }));
         })
     );
     return;
   }
 
-  // 3. /api/thumbnail 采用网络优先，仅缓存 200（避免将 202 占位缓存）
+  // 3. /api/thumbnail 采用激进缓存策略：缓存优先 + 后台更新
   if (url.pathname.startsWith('/api/thumbnail')) {
     event.respondWith(
-      fetch(new Request(request, { cache: 'no-store' }))
-        .then(response => {
-          if (response.status === 200 && isCacheableResponse(response, request)) {
-            const responseForCache = response.clone();
-            return caches.open(API_CACHE_VERSION)
-              .then(cache => cache.put(request, responseForCache))
-              .then(() => response);
+      caches.open(THUMBNAIL_CACHE_VERSION).then(cache => {
+        return cache.match(request).then(cachedResponse => {
+          // 后台更新策略
+          const fetchPromise = fetch(new Request(request, { cache: 'no-store' }))
+            .then(networkResponse => {
+              if (networkResponse.status === 200 && isCacheableResponse(networkResponse, request)) {
+                const responseForCache = networkResponse.clone();
+                cache.put(request, responseForCache).catch(err => {
+                  console.warn('缩略图缓存失败:', err);
+                });
+              }
+              return networkResponse;
+            })
+            .catch(() => new Response('', { status: 503, statusText: '服务不可用' }));
+          
+          // 如果有缓存，立即返回缓存，同时后台更新
+          if (cachedResponse) {
+            fetchPromise.catch(() => {}); // 静默处理后台更新错误
+            return cachedResponse;
           }
-          return response; // 202/4xx/5xx 直接透传且不缓存
-        })
-        .catch(() => caches.match(request).then(r => r || new Response('', { status: 503, statusText: 'Service Unavailable' })))
+          
+          // 无缓存时等待网络请求
+          return fetchPromise;
+        });
+      })
     );
     return;
   }
@@ -263,7 +278,7 @@ self.addEventListener('fetch', event => {
       event.respondWith(
         fetch(request)
           .then(response => response)
-          .catch(() => new Response('', { status: 503, statusText: 'Service Unavailable' }))
+          .catch(() => new Response('', { status: 503, statusText: '服务不可用' }))
       );
       return;
     }
@@ -279,11 +294,11 @@ self.addEventListener('fetch', event => {
             if (networkResponse.ok && isCacheableResponse(networkResponse, request)) {
               const responseForCache = networkResponse.clone();
               cache.put(request, responseForCache).catch(err => {
-                console.warn('Failed to cache API response:', err);
+                console.warn('API 响应缓存失败:', err);
               });
             }
             return networkResponse;
-          }).catch(() => new Response('', { status: 503, statusText: 'Service Unavailable' }));
+          }).catch(() => new Response('', { status: 503, statusText: '服务不可用' }));
           return response || fetchPromise;
         });
       })
@@ -291,40 +306,63 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // 5. 静态媒体资源
+  // 5. 静态媒体资源 - 激进缓存策略
   if (url.pathname.startsWith('/static/') || url.pathname.startsWith('/thumbs/')) {
     // 对 Range 请求与视频资源禁用缓存，直接走网络，避免大文件卡顿与 206 兼容问题
     const hasRange = request.headers && request.headers.has('range');
     const fetchDirect = () => fetch(new Request(request, { cache: 'no-store' }))
       .then(resp => resp)
-      .catch(() => new Response('', { status: 503, statusText: 'Service Unavailable' }));
+      .catch(() => new Response('', { status: 503, statusText: '服务不可用' }));
 
     if (hasRange) {
       event.respondWith(fetchDirect());
       return;
     }
 
-    event.respondWith(
-      fetch(new Request(request, { cache: 'no-store' }))
-        .then(networkResponse => {
-          // HLS 清单与分片一律不缓存，强制走网络直连
-          const pathname = url.pathname.toLowerCase();
-          if (pathname.endsWith('.m3u8') || pathname.endsWith('.ts') || pathname.includes('/thumbs/hls/')) {
-            return networkResponse;
-          }
+    // HLS 清单与分片一律不缓存，强制走网络直连
+    const pathname = url.pathname.toLowerCase();
+    if (pathname.endsWith('.m3u8') || pathname.endsWith('.ts') || pathname.includes('/thumbs/hls/')) {
+      event.respondWith(fetchDirect());
+      return;
+    }
 
-          // 仅对非视频的小文件做缓存（排除 HLS）
-          const ct = (networkResponse.headers.get('Content-Type') || '').toLowerCase();
-          const cl = parseInt(networkResponse.headers.get('Content-Length') || '0', 10) || 0;
-          const isVideo = ct.startsWith('video/');
-          const isSmall = cl > 0 && cl <= 5 * 1024 * 1024; // <=5MB 认为小文件
-          if (!isVideo && isSmall && isCacheableResponse(networkResponse, request)) {
-            const copy = networkResponse.clone();
-            caches.open(MEDIA_CACHE_VERSION).then(cache => cache.put(request, copy)).catch(() => {});
+    // 激进缓存策略：缓存优先 + 后台更新
+    event.respondWith(
+      caches.open(MEDIA_CACHE_VERSION).then(cache => {
+        return cache.match(request).then(cachedResponse => {
+          // 后台更新策略
+          const fetchPromise = fetch(new Request(request, { cache: 'no-store' }))
+            .then(networkResponse => {
+              // 对所有成功响应进行缓存（移除文件大小限制）
+              if (networkResponse.ok && isCacheableResponse(networkResponse, request)) {
+                const ct = (networkResponse.headers.get('Content-Type') || '').toLowerCase();
+                const isVideo = ct.startsWith('video/');
+                
+                // 缓存图片和小于 10MB 的非视频文件
+                const cl = parseInt(networkResponse.headers.get('Content-Length') || '0', 10) || 0;
+                const shouldCache = !isVideo && (cl === 0 || cl <= 10 * 1024 * 1024);
+                
+                if (shouldCache) {
+                  const copy = networkResponse.clone();
+                  cache.put(request, copy).catch(err => {
+                    console.warn('媒体缓存失败:', err);
+                  });
+                }
+              }
+              return networkResponse;
+            })
+            .catch(() => new Response('', { status: 503, statusText: '服务不可用' }));
+          
+          // 如果有缓存，立即返回缓存，同时后台更新
+          if (cachedResponse) {
+            fetchPromise.catch(() => {}); // 静默处理后台更新错误
+            return cachedResponse;
           }
-          return networkResponse;
-        })
-        .catch(() => caches.open(MEDIA_CACHE_VERSION).then(cache => cache.match(request)).then(r => r || new Response('', { status: 503, statusText: 'Service Unavailable' })))
+          
+          // 无缓存时等待网络请求
+          return fetchPromise;
+        });
+      })
     );
     return;
   }
@@ -341,7 +379,7 @@ self.addEventListener('fetch', event => {
               .then(() => response);
           }
           return response;
-        }).catch(() => new Response('', { status: 503, statusText: 'Service Unavailable' }));
+        }).catch(() => new Response('', { status: 503, statusText: '服务不可用' }));
       })
     );
     return;
@@ -363,11 +401,11 @@ self.addEventListener('fetch', event => {
           if (networkResponse.ok && isCacheableResponse(networkResponse, request)) {
             const responseForCache = networkResponse.clone();
             cache.put(request, responseForCache).catch(err => {
-              console.warn('Failed to cache response:', err);
+              console.warn('响应缓存失败:', err);
             });
           }
           return networkResponse;
-        }).catch(() => new Response('', { status: 503, statusText: 'Service Unavailable' }));
+        }).catch(() => new Response('', { status: 503, statusText: '服务不可用' }));
         return response || fetchPromise;
       });
     })
@@ -378,7 +416,7 @@ self.addEventListener('fetch', event => {
 // 4. 后台同步，处理离线请求
 self.addEventListener('sync', event => {
     if (event.tag === 'sync-gallery-requests') {
-        console.log('Service Worker: Background sync triggered');
+        console.log('Service Worker: 后台同步已触发');
         event.waitUntil(syncFailedRequests());
     }
 });
@@ -433,17 +471,17 @@ function openDb() {
 // 5. 监听手动刷新消息，清除 API 缓存
 self.addEventListener('message', event => {
     if (event.data && event.data.type === 'MANUAL_REFRESH') {
-        console.log('Service Worker: Manual refresh for API data triggered');
+        console.log('Service Worker: 手动刷新 API 数据已触发');
         event.waitUntil(
             (async () => {
                 // 清理与 API 相关的所有缓存（含搜索专用缓存）
                 const keys = await caches.keys();
                 await Promise.all(keys.map(k => {
-                    if (k === API_CACHE_VERSION || k.startsWith('api-')) {
+                    if (k === API_CACHE_VERSION || k === THUMBNAIL_CACHE_VERSION || k.startsWith('api-') || k.startsWith('thumb-')) {
                         return caches.delete(k);
                     }
                 }));
-                console.log('Service Worker: API caches cleared');
+                console.log('Service Worker: API 缓存已清除');
             })()
         );
     }

@@ -73,15 +73,12 @@ async function processVideoJob(job) {
 	if (await checkHlsExists(relativePath)) return { skipped: true };
 	await fs.mkdir(hlsOutputDir, { recursive: true });
 	const targetDir = path.dirname(filePath);
-	const tempDir = path.join(targetDir, '.tmp');
+	const tempDir = path.join(thumbsDir, 'temp', relativePath);
 	const tempPath = path.join(tempDir, `temp_opt_${path.basename(filePath)}`);
 	await fs.mkdir(tempDir, { recursive: true });
-	try { await fs.access(targetDir, FS_CONST.W_OK); } catch {}
 
-	// 1) faststart
-	await execPromise(`ffmpeg -v error -y -i "${filePath}" -c copy -movflags +faststart "${tempPath}"`);
-	await fs.copyFile(tempPath, filePath).catch(()=>{});
-	await fs.unlink(tempPath).catch(()=>{});
+	// 跳过MOOV atom优化，保持原文件不变
+	logger.info(`跳过MOOV atom优化，保持原文件不变: ${filePath}`);
 
 	const rotation = await detectRotationDegrees(filePath);
 	let rotateFilter = '';

@@ -388,6 +388,33 @@ const hasTable = (dbType, table) => {
     return withTimeout(promise, getQueryTimeoutMs(), { sql });
 };
 
+/**
+ * 安全的SQL IN子句构建器
+ * @param {Array} values - 值数组
+ * @returns {Object} 包含 placeholders 和 values 的对象
+ */
+function buildSafeInClause(values) {
+    if (!Array.isArray(values) || values.length === 0) {
+        return { placeholders: '(NULL)', values: [] };
+    }
+
+    // 验证所有值都是基本类型，防止SQL注入
+    const validValues = values.filter(value => {
+        const type = typeof value;
+        return type === 'string' || type === 'number' || value === null || value === undefined;
+    });
+
+    if (validValues.length === 0) {
+        return { placeholders: '(NULL)', values: [] };
+    }
+
+    const placeholders = validValues.map(() => '?').join(',');
+    return {
+        placeholders: `(${placeholders})`,
+        values: validValues
+    };
+}
+
 module.exports = {
     initializeConnections,
     getDB,
@@ -398,6 +425,7 @@ module.exports = {
     dbGet,
     hasColumn,
     hasTable,
+    buildSafeInClause,
     dbConnections,
     checkDatabaseHealth,
     attemptReconnect,

@@ -60,31 +60,23 @@ const { THUMBS_DIR, PHOTOS_DIR } = require('../config');
     async function processVideo(filePath, relativePath, thumbsDir) {
         const startTime = Date.now(); // 记录处理开始时间
         const targetDir = path.dirname(filePath);
-        // 在源文件目录内创建 .tmp 子目录，避免跨设备链接问题
-        const tempDir = path.join(targetDir, '.tmp');
+        // 在data/thumbs目录下创建临时目录，避免修改原相册
+        const tempDir = path.join(thumbsDir, 'temp', relativePath);
         const tempPath = path.join(tempDir, `temp_opt_${path.basename(filePath)}`);
         const hlsOutputDir = path.join(thumbsDir, 'hls', relativePath);
 
         try {
-            // 0. 预检测：目录是否可写，并创建临时目录
-            await fs.access(targetDir, FS_CONST.W_OK);
+            // 0. 创建临时目录
             await fs.mkdir(tempDir, { recursive: true });
             
-            // 在 .tmp 目录中创建 .nomedia 文件，防止被索引工具读取
+            // 在临时目录中创建 .nomedia 文件，防止被索引工具读取
             const nomediaFile = path.join(tempDir, '.nomedia');
             await fs.writeFile(nomediaFile, '# 临时目录，请勿索引\n').catch(() => {});
-            
+
             await fs.mkdir(hlsOutputDir, { recursive: true });
 
-            // 1. 优化 moov atom (faststart)
-            logger.info(`[1/3] 优化 MOOV atom: ${filePath}`);
-            const faststartCommand = `ffmpeg -v error -y -i "${filePath}" -c copy -movflags +faststart "${tempPath}"`;
-            await execPromise(faststartCommand);
-            
-            // 使用复制替代重命名，避免跨设备问题
-            await fs.copyFile(tempPath, filePath);
-            await fs.unlink(tempPath); // 删除临时文件
-            logger.info(`[1/3] MOOV atom 优化成功: ${filePath}`);
+            // 跳过MOOV atom优化，保持原文件不变，直接进行HLS处理
+            logger.info(`跳过MOOV atom优化，保持原文件不变: ${filePath}`);
 
             // 2. 生成 HLS 多码率流
             logger.info(`[2/3] 开始生成 HLS 流: ${filePath}`);

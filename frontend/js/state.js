@@ -64,6 +64,13 @@ class StateManager {
         // 批量更新队列
         this.batchUpdates = new Set();
         this.batchTimeout = null;
+        
+        // 调试模式
+        this.debugMode = false;
+        
+        // 状态变更历史（开发模式）
+        this.history = [];
+        this.maxHistorySize = 50;
     }
     
     /**
@@ -97,16 +104,33 @@ class StateManager {
     }
     
     /**
-     * 更新状态
+     * 更新状态 - 增强数据流控制
      * @param {string} key - 状态键
      * @param {any} value - 新值
+     * @param {Object} options - 更新选项
      */
-    update(key, value) {
+    update(key, value, options = {}) {
         const oldValue = this.state[key];
-        this.state[key] = value;
         
-        // 如果值没有变化，不触发回调
-        if (oldValue === value) return;
+        // 数据验证
+        if (options.validator && !options.validator(value, oldValue)) {
+            console.warn(`State update rejected for key "${key}": validation failed`);
+            return false;
+        }
+        
+        // 深度比较选项
+        const hasChanged = options.deepCompare 
+            ? !this.deepEqual(oldValue, value)
+            : oldValue !== value;
+        
+        if (!hasChanged) return false;
+        
+        // 记录状态变更历史（调试模式）
+        if (options.debug || this.debugMode) {
+            console.log(`State update: ${key}`, { from: oldValue, to: value });
+        }
+        
+        this.state[key] = value;
         
         // 添加到批量更新队列
         this.batchUpdates.add(key);
@@ -117,6 +141,32 @@ class StateManager {
                 this.executeBatchUpdates();
             }, 0);
         }
+        
+        return true;
+    }
+    
+    /**
+     * 深度比较两个值
+     */
+    deepEqual(a, b) {
+        if (a === b) return true;
+        if (a == null || b == null) return false;
+        if (typeof a !== typeof b) return false;
+        
+        if (typeof a === 'object') {
+            const keysA = Object.keys(a);
+            const keysB = Object.keys(b);
+            if (keysA.length !== keysB.length) return false;
+            
+            for (const key of keysA) {
+                if (!keysB.includes(key) || !this.deepEqual(a[key], b[key])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        
+        return false;
     }
     
     /**
@@ -264,5 +314,6 @@ export const elements = {
     navigationHint: document.getElementById('navigation-hint'),             // 导航提示
     mediaPanel: document.getElementById('media-panel'),                     // 媒体面板
     searchInput: document.getElementById('search-input'),                   // 搜索输入框
-    infiniteScrollLoader: document.getElementById('infinite-scroll-loader'), // 无限滚动加载器
+    infiniteScrollLoader: document.getElementById('infinite-scroll-loader-container'), // 无限滚动加载器容器
+
 };

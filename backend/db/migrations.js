@@ -59,6 +59,18 @@ const initializeMainDB = async () => {
                 sql: `CREATE INDEX IF NOT EXISTS idx_thumb_status_mtime ON thumb_status(mtime)`
             },
             {
+                key: 'create_idx_thumb_status_path',
+                sql: `CREATE INDEX IF NOT EXISTS idx_thumb_status_path ON thumb_status(path)`
+            },
+            {
+                key: 'create_idx_thumb_status_status_last_checked',
+                sql: `CREATE INDEX IF NOT EXISTS idx_thumb_status_status_last_checked ON thumb_status(status, last_checked)`
+            },
+            {
+                key: 'create_idx_thumb_status_status_mtime',
+                sql: `CREATE INDEX IF NOT EXISTS idx_thumb_status_status_mtime ON thumb_status(status, mtime DESC)`
+            },
+            {
                 key: 'create_album_covers_table',
                 sql: `CREATE TABLE IF NOT EXISTS album_covers (
                     album_path TEXT PRIMARY KEY,
@@ -138,6 +150,22 @@ const initializeMainDB = async () => {
             {
                 key: 'create_idx_items_type_path',
                 sql: `CREATE INDEX IF NOT EXISTS idx_items_type_path ON items(type, path)`
+            },
+            {
+                key: 'create_idx_items_type_mtime_desc',
+                sql: `CREATE INDEX IF NOT EXISTS idx_items_type_mtime_desc ON items(type, mtime DESC)`
+            },
+            {
+                key: 'create_idx_items_path_prefix',
+                sql: `CREATE INDEX IF NOT EXISTS idx_items_path_prefix ON items(path) WHERE path LIKE '%/%'`
+            },
+            {
+                key: 'create_idx_items_mtime_type',
+                sql: `CREATE INDEX IF NOT EXISTS idx_items_mtime_type ON items(mtime DESC, type)`
+            },
+            {
+                key: 'create_idx_items_width_height',
+                sql: `CREATE INDEX IF NOT EXISTS idx_items_width_height ON items(width, height) WHERE width > 0 AND height > 0`
             }
         ];
 

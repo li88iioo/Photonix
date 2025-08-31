@@ -16,11 +16,65 @@ const { getThumbMaxConcurrency } = require('./adaptive.service');
 const { indexingWorker } = require('./worker.manager');
 const eventBus = require('./event.service');
 
+// 环境检测：开发环境显示详细日志
+const isDevelopment = process.env.NODE_ENV !== 'production';
+
 // 缩略图任务队列管理
 const highPriorityThumbnailQueue = [];  // 高优先级队列（浏览器直接请求）
 const lowPriorityThumbnailQueue = [];   // 低优先级队列（后台批量生成）
 const activeTasks = new Set();          // 正在处理的任务集合
 const failureCounts = new Map();        // 任务失败次数统计
+const failureTimestamps = new Map();    // 失败记录的时间戳
+
+// 内存清理配置
+const CLEANUP_INTERVAL_MS = 30 * 60 * 1000; // 30分钟清理一次
+const FAILURE_ENTRY_TTL_MS = 24 * 60 * 60 * 1000; // 失败记录保留24小时
+const ACTIVE_TASK_TTL_MS = 60 * 60 * 1000; // 活动任务记录保留1小时
+
+// 任务记录的时间戳追踪
+const taskTimestamps = new Map();
+
+// 定期清理过期记录
+setInterval(() => {
+    const now = Date.now();
+    let cleanedFailures = 0;
+    let cleanedTasks = 0;
+
+    // 清理失败计数记录
+    for (const [path, timestamp] of failureTimestamps.entries()) {
+        if ((now - timestamp) > FAILURE_ENTRY_TTL_MS) {
+            failureCounts.delete(path);
+            failureTimestamps.delete(path);
+            cleanedFailures++;
+        }
+    }
+
+    // 清理活动任务记录（防止任务卡住）
+    for (const path of activeTasks) {
+        const timestamp = taskTimestamps.get(path);
+        if (timestamp && (now - timestamp) > ACTIVE_TASK_TTL_MS) {
+            activeTasks.delete(path);
+            taskTimestamps.delete(path);
+            cleanedTasks++;
+        }
+    }
+
+    // 清理时间戳记录
+    for (const [path, timestamp] of taskTimestamps.entries()) {
+        if ((now - timestamp) > Math.max(FAILURE_ENTRY_TTL_MS, ACTIVE_TASK_TTL_MS)) {
+            taskTimestamps.delete(path);
+        }
+    }
+
+    if (cleanedFailures > 0 || cleanedTasks > 0) {
+        logger.debug(`[THUMBNAIL CLEANUP] 清理了 ${cleanedFailures} 个失败记录和 ${cleanedTasks} 个过期任务`);
+    }
+}, CLEANUP_INTERVAL_MS);
+
+// 更新任务时间戳的辅助函数
+function updateTaskTimestamp(path) {
+    taskTimestamps.set(path, Date.now());
+}
 
 // 缩略图状态批处理相关变量
 const thumbStatusPending = new Map();
@@ -171,13 +225,44 @@ function setupThumbnailWorkerListeners() {
                     logger.info(`${workerLogId} 生成完成: ${relativePath}`);
                 }
 
+                // 通过Redis发布订阅发送SSE事件通知前端（支持跨进程通信）
+                await redis.publish('thumbnail-generated', JSON.stringify({ path: relativePath }));
+                if (isDevelopment) {
+                    logger.debug(`[THUMB] 已发布缩略图生成事件: ${relativePath}`);
+                }
+
+                // 同时在本进程内也触发事件，以防有其他监听器
                 eventBus.emit('thumbnail-generated', { path: relativePath });
                 await redis.del(failureKey).catch(err => logger.warn(`清理Redis永久失败标记时出错: ${err.message}`));
                 try { await redis.incr('metrics:thumb:success'); } catch {}
 
+                // 缩略图生成完成后，失效相关页面的缓存
                 try {
-                    const srcMtime = await fs.stat(task.filePath).then(s => s.mtimeMs).catch(() => Date.now());
-                    queueThumbStatusUpdate(relativePath, srcMtime, 'exists');
+                    const { invalidateTags } = require('./cache.service');
+                    const dirname = path.dirname(relativePath);
+                    const tags = [
+                        `thumbnail:${relativePath}`,  // 缩略图自身缓存
+                        `album:${dirname}`,           // 所属相册缓存
+                        `album:/`                     // 根相册缓存
+                    ];
+
+                    await invalidateTags(tags);
+                    if (isDevelopment) {
+                        logger.debug(`[THUMB] 缓存失效完成，标签: ${tags.join(', ')}`);
+                    }
+                } catch (cacheError) {
+                    logger.warn(`[CACHE] 失效缩略图缓存失败（已忽略）: ${cacheError.message}`);
+                }
+
+                try {
+                    // 使用缩略图文件的mtime作为版本参数，而不是源文件的mtime
+                    const isVideo = task.type === 'video';
+                    const extension = isVideo ? '.jpg' : '.webp';
+                    const thumbRelPath = task.relativePath.replace(/\.[^.]+$/, extension);
+                    const thumbAbsPath = path.join(THUMBS_DIR, thumbRelPath);
+                    const thumbMtime = await fs.stat(thumbAbsPath).then(s => s.mtimeMs).catch(() => Date.now());
+                    queueThumbStatusUpdate(task.relativePath, thumbMtime, 'exists');
+                    logger.debug(`[THUMB] 更新缩略图状态: ${task.relativePath}, mtime: ${thumbMtime}`);
                 } catch (dbErr) {
                     logger.warn(`写入 thumb_status 入队失败（成功分支，已忽略）：${dbErr && dbErr.message}`);
                 }
@@ -218,6 +303,8 @@ function setupThumbnailWorkerListeners() {
 
                 const currentFailures = (failureCounts.get(relativePath) || 0) + 1;
                 failureCounts.set(relativePath, currentFailures);
+                failureTimestamps.set(relativePath, Date.now()); // 记录时间戳用于清理
+                updateTaskTimestamp(relativePath);
                 logger.error(`${workerLogId} 处理任务失败: ${relativePath} (第 ${currentFailures} 次)。错误: ${error}`);
                 try { await redis.incr('metrics:thumb:fail'); } catch {}
 
@@ -316,6 +403,7 @@ function dispatchThumbnailTask() {
 
         // 标记任务为活动状态，发送给工作线程处理
         activeTasks.add(task.relativePath);
+        updateTaskTimestamp(task.relativePath);
         global.__thumbActiveCount = (global.__thumbActiveCount || 0) + 1;
         worker.postMessage({ ...task, thumbsDir: THUMBS_DIR });
     }
@@ -422,4 +510,5 @@ module.exports = {
     ensureThumbnailExists,            // 确保缩略图存在
     startIdleThumbnailGeneration,     // 启动后台生成任务
     lowPriorityThumbnailQueue,        // 低优先级队列（供外部访问）
+    queueThumbStatusUpdate,           // 队列缩略图状态更新（供队列工作进程使用）
 };

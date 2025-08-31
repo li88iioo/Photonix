@@ -15,18 +15,23 @@ const logger = require('../config/logger');
 function isPathSafe(requestedPath) {
     // 获取安全基础目录的绝对路径
     const safeBaseDir = path.resolve(PHOTOS_DIR);
+
     // 解析请求路径相对于安全目录的绝对路径
     const resolvedPath = path.resolve(safeBaseDir, requestedPath);
-    
+
+    // 统一使用正斜杠进行比较，避免 Windows 路径分隔符导致的绕过
+    const normalizedSafe = safeBaseDir.replace(/\\/g, '/');
+    const normalizedResolved = resolvedPath.replace(/\\/g, '/');
+
     // 检查解析后的路径是否在安全目录范围内
-    // 使用路径分隔符确保精确匹配，避免绕过检查
-    const isSafe = resolvedPath.startsWith(safeBaseDir + path.sep) || resolvedPath === safeBaseDir;
-    
+    const isSafe = normalizedResolved.startsWith(normalizedSafe + '/') ||
+                   normalizedResolved === normalizedSafe;
+
     // 如果路径不安全，记录警告日志
     if (!isSafe) {
         logger.warn(`检测到不安全的路径访问尝试: 请求的路径 "${requestedPath}" 解析到了安全目录之外的 "${resolvedPath}"`);
     }
-    
+
     return isSafe;
 }
 

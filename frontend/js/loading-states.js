@@ -31,9 +31,9 @@ class LoadingStateManager {
         }
 
         // 隐藏无限滚动加载器
-        if (elements.infiniteScrollLoader) {
-            elements.infiniteScrollLoader.classList.add('hidden');
-        }
+        // 【优化】隐藏无限滚动加载器 - 避免重排抖动
+        const loaderContainer = document.getElementById('infinite-scroll-loader-container');
+        if (loaderContainer) loaderContainer.classList.remove('visible');
 
         // 确保移除虚拟滚动与瀑布流模式，避免空状态被重排
         if (elements.contentGrid) {
@@ -110,9 +110,9 @@ class LoadingStateManager {
         }
 
         // 隐藏无限滚动加载器
-        if (elements.infiniteScrollLoader) {
-            elements.infiniteScrollLoader.classList.add('hidden');
-        }
+        // 【优化】隐藏无限滚动加载器 - 避免重排抖动
+        const loaderContainer = document.getElementById('infinite-scroll-loader-container');
+        if (loaderContainer) loaderContainer.classList.remove('visible');
 
         // 确保移除虚拟滚动与瀑布流模式，避免空状态被重排
         if (elements.contentGrid) {
@@ -233,19 +233,12 @@ export function showSkeletonGrid(preferredCount) {
             const style = document.createElement('style');
             style.id = 'skeleton-style';
             style.textContent = `
-                /* 骨架网格：两侧与容器齐平，随屏宽自适应列数 */
+                /* 骨架网格：使用内联样式确保立即生效，不依赖外部CSS */
                 #skeleton-grid.skeleton-grid {
-                    --gap: 16px;
-                    --min-col: 210px;
-                    display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(var(--min-col), 1fr));
-                    gap: var(--gap);
+                    display: grid !important;
+                    width: 100% !important;
                     justify-content: start;
                     align-content: start;
-                }
-                /* 小屏列宽更窄，便于移动端适配 */
-                @media (max-width: 640px) {
-                    #skeleton-grid.skeleton-grid { --min-col: 160px; --gap: 12px; }
                 }
                 #skeleton-grid .skeleton-card {
                     position: relative;
@@ -255,7 +248,6 @@ export function showSkeletonGrid(preferredCount) {
                     overflow: hidden;
                     background: #1f2937; /* bg-gray-800 */
                     box-shadow: 0 10px 15px -3px rgba(0,0,0,.3), 0 4px 6px -4px rgba(0,0,0,.3);
-                    overflow: hidden;
                     transform: translateY(6px);
                     opacity: 0;
                     animation: skeleton-enter 260ms ease-out forwards, skeleton-pulse 1600ms ease-in-out infinite;
@@ -313,10 +305,22 @@ export function showSkeletonGrid(preferredCount) {
         const rows = Math.max(3, Math.ceil((availableHeight + gap) / (cardHeight + gap)));
 
         const count = preferredCount || (columns * rows);
+        
+        // 计算响应式网格样式
+        const gridStyle = `
+            display: grid !important;
+            grid-template-columns: repeat(${columns}, 1fr) !important;
+            gap: ${gap}px !important;
+            width: 100% !important;
+            justify-content: start;
+            align-content: start;
+        `;
+        
         const skeletons = new Array(count).fill(0).map(() => (
             '<div class="skeleton-card"></div>'
         )).join('');
-        grid.innerHTML = `<div id="skeleton-grid" class="skeleton-grid">${skeletons}</div>`;
+        
+        grid.innerHTML = `<div id="skeleton-grid" class="skeleton-grid" style="${gridStyle}">${skeletons}</div>`;
 
         // 计算骨架栅格的总高度，并覆盖 content-grid 的最小高度，避免出现额外留白可滚动区域
         const totalSkeletonHeight = rows * cardHeight + Math.max(0, rows - 1) * gap;
@@ -341,10 +345,8 @@ export function showSkeletonGrid(preferredCount) {
  * 显示空搜索结果状态
  */
 export function showEmptySearchResults(query) {
-    // 隐藏无限滚动加载器
-    if (elements.infiniteScrollLoader) {
-        elements.infiniteScrollLoader.classList.add('hidden');
-    }
+    // 【优化】隐藏无限滚动加载器 - 避免重排抖动
+    if (elements.infiniteScrollLoader) elements.infiniteScrollLoader.classList.remove('visible');
 
     loadingStateManager.showEmptyState(
         `没有找到与"${query}"相关的相册或图片。请尝试其他关键词。`,
@@ -363,10 +365,8 @@ export function showEmptySearchResults(query) {
  * 显示空相册状态
  */
 export function showEmptyAlbum() {
-    // 隐藏无限滚动加载器
-    if (elements.infiniteScrollLoader) {
-        elements.infiniteScrollLoader.classList.add('hidden');
-    }
+    // 【优化】隐藏无限滚动加载器 - 避免重排抖动
+    if (elements.infiniteScrollLoader) elements.infiniteScrollLoader.classList.remove('visible');
 
     loadingStateManager.showEmptyState(
         '这个相册还没有任何图片或视频',
@@ -390,10 +390,8 @@ export function showEmptyAlbum() {
 * 显示搜索索引构建中错误状态
 */
 export function showIndexBuildingError() {
-    // 隐藏无限滚动加载器
-    if (elements.infiniteScrollLoader) {
-        elements.infiniteScrollLoader.classList.add('hidden');
-    }
+    // 【优化】隐藏无限滚动加载器 - 避免重排抖动
+    if (elements.infiniteScrollLoader) elements.infiniteScrollLoader.classList.remove('visible');
 
     loadingStateManager.showErrorState(
         '搜索功能暂时不可用，索引正在后台构建中，请稍后再试',
