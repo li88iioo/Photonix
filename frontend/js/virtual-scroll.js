@@ -1,6 +1,7 @@
 // frontend/js/virtual-scroll.js
 
 import { elements } from './ui.js';
+import { calculateMasonryLayout } from './masonry.js';
 
 /**
  * 高性能虚拟滚动系统
@@ -395,9 +396,6 @@ class VirtualScroller {
      */
     async applyMasonryLayoutToElements(elements) {
         try {
-            // 导入瀑布流布局计算函数
-            const { calculateMasonryLayout } = await import('./masonry.js');
-            
             // 提取元素数组
             const elementArray = elements.map(e => e.element);
             

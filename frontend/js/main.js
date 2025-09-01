@@ -7,6 +7,8 @@ import { showSkeletonGrid } from './loading-states.js';
 import { showNotification } from './utils.js';
 import { initializeSSE } from './sse.js';
 import { handleError, ErrorTypes, ErrorSeverity } from './error-handler.js';
+import { setupEventListeners } from './listeners.js';
+import { initializeRouter } from './router.js';
 
 let appStarted = false;
 
@@ -98,7 +100,6 @@ async function initializeApp() {
     // 1. 初始化基础组件和事件监听
     state.update('userId', initializeAuth());
     try {
-        const { setupEventListeners } = await import('./listeners.js');
         setupEventListeners();
     } catch (e) {
         console.error('事件监听器加载失败:', e);
@@ -148,9 +149,11 @@ function startMainApp() {
     showSkeletonGrid();
     initializeSSE();
 
-    import('./router.js').then(m => m.initializeRouter()).catch(e => {
+    try {
+        initializeRouter();
+    } catch (e) {
         console.error('路由器加载失败:', e);
-    });
+    }
     loadAppSettings();
 
     // 设置全局事件监听

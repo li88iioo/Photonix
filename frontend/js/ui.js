@@ -1,6 +1,8 @@
 // frontend/js/ui.js
 
 import { elements, state } from './state.js';
+import { importWithRetry } from './utils.js';
+import * as api from './api.js';
 import { getAllViewed } from './indexeddb-helper.js';
 import { applyMasonryLayout, triggerMasonryUpdate } from './masonry.js';
 
@@ -523,7 +525,6 @@ export function adjustScrollOptimization(path) {
  */
 export async function checkIfHasMediaFiles(path) {
 	try {
-		const api = await import('./api.js');
 		const data = await api.fetchBrowseResults(path, 1, new AbortController().signal);
 		if (!data || !data.items) return false;
 		return data.items.some(item => item.type === 'photo' || item.type === 'video');

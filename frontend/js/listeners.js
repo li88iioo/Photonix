@@ -8,6 +8,7 @@ import { fetchBrowseResults, fetchSearchResults } from './api.js';
 import { renderBrowseGrid, renderSearchGrid } from './ui.js';
 import { AbortBus } from './abort-bus.js';
 import { setupLazyLoading } from './lazyload.js';
+import { showSettingsModal } from './settings.js';
 
 /**
  * 事件监听器管理模块
@@ -218,6 +219,7 @@ export function setupEventListeners() {
         }
 
         // 根据上下文层的显隐动态调整顶部内边距，避免遮挡
+        let lastTopbarOffset = 0;
         function updateTopbarOffset() {
             const appContainer = document.getElementById('app-container');
             if (!appContainer) return;
@@ -226,7 +228,12 @@ export function setupEventListeners() {
             const contextEl = document.getElementById('topbar-context');
             const contextHeight = (contextEl && !topbar.classList.contains('topbar--condensed')) ? contextEl.offsetHeight : 0;
             const total = persistentHeight + contextHeight + 16; // 额外留白 16px
-            appContainer.style.setProperty('--topbar-offset', `${total}px`);
+            
+            // 只在值真正变化时才更新样式，避免触发不必要的重排
+            if (Math.abs(total - lastTopbarOffset) >= 1) {
+                lastTopbarOffset = total;
+                appContainer.style.setProperty('--topbar-offset', `${total}px`);
+            }
         }
 
         // 首次与每次滚动后都更新一次（更稳健：load/resize/scroll + 观察尺寸变化）
@@ -250,9 +257,15 @@ export function setupEventListeners() {
             }
         }, { passive: true });
         
-        // 监听尺寸变化
+        // 监听尺寸变化 - 添加防抖避免循环
         if (window.ResizeObserver) {
-            const ro = new ResizeObserver(() => updateTopbarOffset());
+            let topbarResizeTimeout;
+            const ro = new ResizeObserver(() => {
+                clearTimeout(topbarResizeTimeout);
+                topbarResizeTimeout = setTimeout(() => {
+                    updateTopbarOffset();
+                }, 16); // 一帧的时间
+            });
             ro.observe(topbar);
             if (contextEl) ro.observe(contextEl);
         }
@@ -352,6 +365,9 @@ export function setupEventListeners() {
         let searchHistoryModule = null;
         import('./search-history.js').then(module => {
             searchHistoryModule = module;
+        }).catch(error => {
+            console.warn('搜索历史模块加载失败，将在需要时重试:', error);
+            // 搜索历史是非关键功能，失败时静默处理
         });
         
         elements.searchInput.addEventListener('input', (e) => {
@@ -599,10 +615,20 @@ export function setupEventListeners() {
     // 监听主容器 Resize，处理浏览器 UI 缩放或滚动条出现/消失带来的布局宽度变化
     if (window.ResizeObserver) {
         let ticking = false;
-        const ro = new ResizeObserver(() => {
+        let lastWidth = 0;
+        const ro = new ResizeObserver((entries) => {
             if (ticking) return;
+            
+            // 只在宽度真正变化时才触发重排
+            const currentWidth = entries[0]?.contentRect?.width || 0;
+            if (Math.abs(currentWidth - lastWidth) < 1) return;
+            
+            lastWidth = currentWidth;
             ticking = true;
-            requestAnimationFrame(() => { reflowIfNeeded(); ticking = false; });
+            requestAnimationFrame(() => { 
+                reflowIfNeeded(); 
+                ticking = false; 
+            });
         });
         const grid = document.getElementById('content-grid');
         if (grid) ro.observe(grid);
@@ -633,16 +659,9 @@ export function setupEventListeners() {
     if(settingsBtn) {
         settingsBtn.addEventListener('click', async () => {
             try {
-                const settingsModule = await import('./settings.js');
-                settingsModule.showSettingsModal();
+                showSettingsModal();
             } catch (error) {
                 console.error('加载设置模块失败:', error);
-                // 重试一次，处理 SW 或 404 fallback 导致的瞬时问题
-                try {
-                    const settingsModule = await import('./settings.js?retry=1');
-                    settingsModule.showSettingsModal();
-                    return;
-                } catch {}
                 alert('加载设置页面失败，请刷新页面重试');
             }
         });
