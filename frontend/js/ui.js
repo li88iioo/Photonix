@@ -589,6 +589,8 @@ export function applyLayoutMode() {
 			item.style.top = '';
 		});
 		grid.style.height = '';
+		// 清理瀑布流写入的高度，避免影响网格模式布局
+		Array.from(grid.children).forEach(item => { item.style.height = ''; });
 		// 统一网格卡片纵横比（可按需改为 1/1 或 16/9）
 		grid.style.setProperty('--grid-aspect', '1/1');
 	} else {

@@ -77,7 +77,8 @@ export function applyMasonryLayoutIncremental(newItems) {
                 item.style.top = `${masonryColumnHeights[minColumnIndex]}px`;
                 
                 // 更新列高度
-                const actualItemHeight = item.offsetHeight;
+                const actualItemHeight = getExpectedItemHeight(item, itemWidth);
+                item.style.height = `${actualItemHeight}px`;
                 masonryColumnHeights[minColumnIndex] += actualItemHeight + columnGap;
             });
         } else {
@@ -93,7 +94,8 @@ export function applyMasonryLayoutIncremental(newItems) {
                 item.style.top = `${masonryColumnHeights[minColumnIndex]}px`;
                 
                 // 更新列高度
-                const actualItemHeight = item.offsetHeight;
+                const actualItemHeight = getExpectedItemHeight(item, itemWidth);
+                item.style.height = `${actualItemHeight}px`;
                 masonryColumnHeights[minColumnIndex] += actualItemHeight + columnGap;
             });
         }
@@ -134,6 +136,7 @@ export function applyMasonryLayout() {
             item.style.top = `${masonryColumnHeights[minColumnIndex]}px`;
 
             const actualItemHeight = getExpectedItemHeight(item, itemWidth);
+            item.style.height = `${actualItemHeight}px`;
             masonryColumnHeights[minColumnIndex] += actualItemHeight + columnGap;
         });
 
