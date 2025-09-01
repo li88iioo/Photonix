@@ -104,7 +104,7 @@ function handleImageError(event) {
 async function requestLazyImage(img) {
     const thumbnailUrl = img.dataset.src;
     if (!thumbnailUrl || thumbnailUrl.includes('undefined') || thumbnailUrl.includes('null')) {
-        console.error('Lazy load failed: Invalid image URL:', thumbnailUrl);
+        console.error('懒加载失败: 无效的图片URL:', thumbnailUrl);
         img.dispatchEvent(new Event('error'));
         return;
     }
@@ -144,7 +144,7 @@ async function requestLazyImage(img) {
         }
     } catch (error) {
         if (error.name !== 'AbortError') {
-            console.error('Failed to fetch lazy-load image:', thumbnailUrl, error);
+            console.error('获取懒加载图片失败:', thumbnailUrl, error);
             img.dispatchEvent(new Event('error'));
         }
     }

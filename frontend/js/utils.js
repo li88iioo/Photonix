@@ -11,7 +11,7 @@ export async function importWithRetry(modulePath, maxRetries = 3) {
 		try {
 			return await import(modulePath);
 		} catch (error) {
-			console.warn(`动态导入失败 (尝试 ${i + 1}/${maxRetries}):`, modulePath, error);
+			console.warn(`动态导入失败 (尝试 ${i + 1}/${maxRetries}): ${modulePath}`, error);
 			
 			// 如果是 PWA 环境且出现扩展相关错误，尝试使用绝对路径
 			if (error.message && error.message.includes('chrome-extension')) {

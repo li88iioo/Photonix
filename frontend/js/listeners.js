@@ -169,7 +169,7 @@ async function handleScrollCore(type) {
             const newItems = Array.from(elements.contentGrid.children).slice(prevCount);
             applyMasonryLayoutIncremental(newItems);
         } catch (error) {
-            if (error.name !== 'AbortError') console.error("Failed to fetch more items:", error);
+            if (error.name !== 'AbortError') console.error("获取更多项目失败:", error);
         } finally {
              if (type === 'browse') state.isBrowseLoading = false;
              else state.isSearchLoading = false;

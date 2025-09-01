@@ -114,7 +114,7 @@ class StateManager {
         
         // 数据验证
         if (options.validator && !options.validator(value, oldValue)) {
-            console.warn(`State update rejected for key "${key}": validation failed`);
+            console.warn(`状态更新被拒绝，键 "${key}": 验证失败`);
             return false;
         }
         
@@ -127,7 +127,7 @@ class StateManager {
         
         // 记录状态变更历史（调试模式）
         if (options.debug || this.debugMode) {
-            console.log(`State update: ${key}`, { from: oldValue, to: value });
+            console.log(`状态更新: ${key}`, { from: oldValue, to: value });
         }
         
         this.state[key] = value;

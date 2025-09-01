@@ -38,9 +38,9 @@ async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
                             }
                         }
                     }
-                    console.warn(`429 Too Many Requests. Retrying in ${retryDelay}ms...`);
+                    console.warn(`429 请求过于频繁。将在 ${retryDelay}ms 后重试...`);
                 } else {
-                    console.warn(`Server error (${response.status}). Retrying in ${retryDelay}ms...`);
+                    console.warn(`服务器错误 (${response.status})。将在 ${retryDelay}ms 后重试...`);
                 }
                 await new Promise(res => setTimeout(res, Math.max(retryDelay, 0)));
                 continue;
@@ -48,7 +48,7 @@ async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
             return response;
         } catch (error) {
             if (i < retries - 1) {
-                console.warn(`Fetch failed (network error). Retrying in ${delay * (i + 1)}ms...`);
+                console.warn(`请求失败 (网络错误)。将在 ${delay * (i + 1)}ms 后重试...`);
                 await new Promise(res => setTimeout(res, delay * (i + 1)));
                 continue;
             }

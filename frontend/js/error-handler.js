@@ -164,7 +164,7 @@ class ErrorHandler {
                 break;
             case ErrorSeverity.LOW:
                 // 低级别错误仅记录，不打扰用户
-                console.warn('Low severity error:', message);
+                console.warn('低级别错误:', message);
                 break;
         }
 
@@ -332,7 +332,7 @@ class ErrorHandler {
             */
         } catch (error) {
             // 静默处理日志发送失败
-            console.warn('Failed to send error log:', error);
+            console.warn('发送错误日志失败:', error);
         }
     }
 

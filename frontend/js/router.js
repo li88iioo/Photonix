@@ -184,7 +184,7 @@ export async function streamPath(path, signal) {
 
     } catch (error) {
         if (error.name !== 'AbortError') {
-            console.error("Failed to stream path:", error);
+            console.error("流式加载路径失败:", error);
             showNetworkError();
             return;
         }
@@ -272,7 +272,7 @@ async function executeSearch(query, signal) {
 
     } catch (error) {
         if (error.name !== 'AbortError') {
-            console.error("Failed to execute search:", error);
+            console.error("执行搜索失败:", error);
             if (error.message && error.message.includes('搜索索引正在构建中')) {
                 showIndexBuildingError();
             } else {

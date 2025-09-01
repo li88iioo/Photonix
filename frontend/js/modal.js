@@ -141,7 +141,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
         const onError = () => {
             if (myToken !== activeVideoToken) return cleanup();
             removeSpinnerAndUnbind();
-            console.error('HLS or video playback error.');
+            console.error('HLS 或视频播放错误');
         };
 
         const onCanPlay = () => {
@@ -191,16 +191,16 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
             hls.attachMedia(modalVideo);
             hls.on(Hls.Events.MANIFEST_PARSED, () => {
                 if (myToken !== activeVideoToken) return cleanup();
-                modalVideo.play().catch(e => console.warn('Autoplay was prevented', e));
+                modalVideo.play().catch(e => console.warn('自动播放被阻止', e));
             });
             hls.on(Hls.Events.ERROR, (event, data) => {
                 if (data.fatal) {
                     switch(data.type) {
                         case Hls.ErrorTypes.NETWORK_ERROR:
-                            console.error('HLS network error', data);
+                            console.error('HLS 网络错误', data);
                             // Fallback to direct playback on fatal network error
                             if (myToken === activeVideoToken) {
-                                console.warn('HLS failed, falling back to direct playback.');
+                                console.warn('HLS 失败，回退到直接播放');
                                 // 仅销毁 HLS 实例，保留 playing/error 监听，用于移除加载圈
                                 if (state.hlsInstance) {
                                     try { state.hlsInstance.destroy(); } catch {}
@@ -218,15 +218,15 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
                                 modalVideo.addEventListener('canplay', onCanPlay, { once: true });
                                 modalVideo.addEventListener('loadeddata', onLoadedData, { once: true });
                                 modalVideo.addEventListener('timeupdate', onTimeUpdate, { once: true });
-                                modalVideo.play().catch(e => console.warn('Fallback autoplay was prevented', e));
+                                modalVideo.play().catch(e => console.warn('回退自动播放被阻止', e));
                             }
                             break;
                         case Hls.ErrorTypes.MEDIA_ERROR:
-                            console.error('HLS media error', data);
+                            console.error('HLS 媒体错误', data);
                             hls.recoverMediaError();
                             break;
                         default:
-                            console.error('HLS fatal error, destroying.', data);
+                            console.error('HLS 致命错误，正在销毁', data);
                             // 致命且无法恢复：销毁实例并移除加载圈，避免转圈悬挂
                             if (state.hlsInstance) {
                                 try { state.hlsInstance.destroy(); } catch {}
@@ -242,7 +242,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
             modalVideo.src = hlsUrl;
         } else {
             // Fallback to direct playback
-            console.warn('HLS not supported, falling back to direct playback.');
+            console.warn('HLS 不支持，回退到直接播放');
             modalVideo.src = mediaSrc;
         }
 
@@ -257,7 +257,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
         _onResizeRef = onResize;
         modalVideo.play().catch(e => {
             if (myToken !== activeVideoToken) return cleanup();
-            console.warn('Autoplay was likely prevented by the browser.', e);
+            console.warn('自动播放可能被浏览器阻止', e);
         });
 
         if(elements.captionBubble) elements.captionBubble.classList.remove('show');
@@ -485,7 +485,7 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
                                     try { controller.close(); } catch {}
                                     return;
                                 }
-                                console.error('Stream reading error:', error);
+                                console.error('流读取错误:', error);
                                 try { controller.error(error); } catch {}
                             })
                         }
@@ -538,7 +538,7 @@ export function _openModal(mediaSrc, index = 0, isObjectURL = false, originalPat
     
     // 验证媒体源
     if (!mediaSrc || typeof mediaSrc !== 'string' || mediaSrc.trim() === '') {
-        console.error('Failed to open modal: Invalid media source:', mediaSrc);
+        console.error('打开模态框失败: 无效的媒体源:', mediaSrc);
         return;
     }
 
