@@ -322,6 +322,58 @@
 
 ## 3) 场景化配置片段
 
+微型配置（1H/1G）
+```
+PORT=13001
+NODE_ENV=production
+LOG_LEVEL=info
+PHOTOS_DIR=/app/photos
+DATA_DIR=/app/data
+REDIS_URL=redis://redis:6379
+JWT_SECRET=<32+ 强随机>
+ADMIN_SECRET=<强口令>
+
+# 内存优化（1G环境关键）
+WORKER_MEMORY_MB=256
+UV_THREADPOOL_SIZE=2
+FFMPEG_THREADS=1
+SHARP_CONCURRENCY=1
+
+# 数据库优化（低配环境）
+SQLITE_BUSY_TIMEOUT=30000
+SQLITE_QUERY_TIMEOUT=45000
+SETTINGS_REDIS_CACHE=true
+
+# 限流收紧（保护低配环境）
+RATE_LIMIT_WINDOW_MINUTES=15
+RATE_LIMIT_MAX_REQUESTS=50
+REFRESH_RATE_WINDOW_MS=60000
+REFRESH_RATE_MAX=30
+
+# 性能模式（低配优化）
+PERFORMANCE_MODE=low
+DETECTED_CPU_COUNT=1
+DETECTED_MEMORY_GB=1
+
+# Sharp内存限制（1G环境必需）
+SHARP_CACHE_MEMORY_MB=16
+SHARP_CACHE_ITEMS=50
+SHARP_MAX_PIXELS=268435456
+
+# AI限制（可选，低配环境建议限制）
+AI_DAILY_LIMIT=50
+AI_PER_IMAGE_COOLDOWN_SEC=120
+
+# 缩略图优化
+THUMB_ONDEMAND_RESERVE=1
+
+# NFS/网络盘建议（如果使用）
+# DISABLE_WATCH=true
+# WATCH_USE_POLLING=true
+# WATCH_POLL_INTERVAL=3000
+# WATCH_POLL_BINARY_INTERVAL=5000
+```
+
 小型家庭（2C/4G，NAS/本地盘）
 ```
 PORT=13001
@@ -406,6 +458,7 @@ $env:PORT="13001"; $env:NODE_ENV="production"; node backend/server.js
 
 ## 5) 上线检查清单
 
+通用检查：
 - [ ] JWT_SECRET 为强随机 32+ 字符；ADMIN_SECRET 为强口令
 - [ ] REDIS_URL 指向生产 Redis；网络/权限正确
 - [ ] PHOTOS_DIR / DATA_DIR 均已持久化挂载
@@ -419,6 +472,7 @@ $env:PORT="13001"; $env:NODE_ENV="production"; node backend/server.js
 
 ## 6) 故障排查
 
+通用问题：
 - 401/无法登录：检查 JWT_SECRET/ADMIN_SECRET 注入
 - Redis 连接失败：确认 REDIS_URL 与容器网络/密码
 - 访问慢/超时：增大 SQLITE_* 超时，降低 SHARP_CONCURRENCY/FFMPEG_THREADS

@@ -9,9 +9,12 @@
 
 ### 🎭 AI 智能交互
 - **AI 画中密语**：AI 扮演照片人物，沉浸式对话体验
+- **多模型支持**：兼容 OpenAI、Claude、Gemini 等主流视觉模型
 - **自定义提示词**：支持多种AI角色设定，从温馨对话到私密互动
-- **异步任务处理**：AI内容生成采用队列机制，避免阻塞
-- **智能缓存**：AI生成内容持久化缓存，降低成本
+- **异步任务处理**：AI内容生成采用 BullMQ 队列机制，避免阻塞用户界面
+- **智能缓存**：AI生成内容 Redis 持久化缓存，降低 API 成本
+- **任务去重**：相同图片自动复用已有结果，优化性能
+- **提示词模板**：内置多种对话风格模板，可参考 `AIPROMPT.md`
 
 ### 🖼️ 图片管理
 - **流式图片加载**：大相册极速响应，懒加载优化
@@ -70,8 +73,9 @@ cd Photonix
 #### 详细配置
 - 📖 **完整配置指南**：查看 [ENV_GUIDE.md](./ENV_GUIDE.md)（精注释版）与 [ENV_GUIDE_MIN.md](./ENV_GUIDE_MIN.md)（简版速查）
 - 🔧 **核心配置**：`PORT`、`PHOTOS_DIR`、`DATA_DIR`、`JWT_SECRET`
-- ⚡ **性能优化**：根据服务器规模调整并发与缓存（更多见 ENV_GUIDE.md）
+- ⚡ **性能优化**：硬件自适应配置，支持 `DETECTED_CPU_COUNT` 和 `DETECTED_MEMORY_GB`
 - 🔒 **安全设置**：生产环境务必修改 `JWT_SECRET` 和 `ADMIN_SECRET`
+- 🤖 **AI 集成**：支持自定义 AI 服务配置和提示词模板
 
 
 ### 4. 准备照片目录
@@ -112,7 +116,11 @@ Photonix/
 ├── README.md                            # 项目说明
 ├── AIPROMPT.md                          # AI 提示词示例
 ├── ENV_GUIDE.md                         # 环境变量详细指南
+├── ENV_GUIDE_MIN.md                     # 环境变量简明指南
 ├── .gitignore                           # 忽略配置
+├── env.development                      # 开发环境配置
+├── env.example                          # 配置模板
+└── env.production                       # 生产环境配置
 ├── backend/
 │   ├── app.js                           # Express 应用：中间件、/api、静态资源与 SPA 路由
 │   ├── server.js                        # 启动流程：多库初始化、Workers、索引/监控、健康检查
@@ -137,6 +145,7 @@ Photonix/
 │   │   ├── migrate-to-multi-db.js       # 单库→多库迁移脚本
 │   │   ├── migrations.js                # 多库初始化与核心表兜底
 │   │   ├── multi-db.js                  # SQLite 连接管理与通用查询
+│   │   ├── sqlite-retry.js              # SQLite 重试机制
 │   │   └── README.md                    # 多库说明
 │   ├── middleware/
 │   │   ├── ai-rate-guard.js             # AI 配额/冷却/去重（Redis）
@@ -158,6 +167,7 @@ Photonix/
 │   │   ├── settings.routes.js           # /api/settings：客户端可读设置
 │   │   └── thumbnail.routes.js          # /api/thumbnail：缩略图获取
 │   ├── services/
+│   │   ├── adaptive.service.js          # 自适应性能模式管理
 │   │   ├── cache.service.js             # 缓存标签管理/失效
 │   │   ├── event.service.js             # 事件总线（SSE）
 │   │   ├── file.service.js              # 文件与封面相关逻辑
@@ -167,6 +177,7 @@ Photonix/
 │   │   ├── thumbnail.service.js         # 缩略图高/低优队列与重试
 │   │   └── worker.manager.js            # Worker 管理（缩略图/索引/视频）
 │   ├── utils/
+│   │   ├── hls.utils.js                 # HLS 视频处理工具
 │   │   ├── media.utils.js               # 媒体判定/尺寸计算等
 │   │   ├── path.utils.js                # 路径清理/安全校验
 │   │   └── search.utils.js              # 搜索辅助
@@ -193,6 +204,7 @@ Photonix/
         ├── abort-bus.js                  # 统一中止控制
         ├── api.js                        # API 封装（认证/设置/搜索等）
         ├── auth.js                       # 登录/Token 本地管理
+        ├── error-handler.js              # 全局错误处理
         ├── indexeddb-helper.js           # IndexedDB 搜索历史/浏览记录
         ├── lazyload.js                   # 懒加载与占位/状态处理
         ├── listeners.js                  # 滚动/交互事件
@@ -221,8 +233,8 @@ Photonix/
 | `PORT`                   | `13001`                                            | 服务监听端口。                                           |
 | `NODE_ENV`               | `production`                                       | Node.js 运行环境模式。                                       |
 | `LOG_LEVEL`              | `info`                                             | 日志输出级别。                                               |
-| `RATE_LIMIT_WINDOW_MINUTES` | `15`                                            | API 速率限制的时间窗口（分钟）。                             |
-| `RATE_LIMIT_MAX_REQUESTS`    | `100`                                          | 在一个时间窗口内，单个 IP 允许的最大请求数。                 |
+| `RATE_LIMIT_WINDOW_MINUTES` | `1`                                             | API 速率限制的时间窗口（分钟，代码默认 1 分钟）。            |
+| `RATE_LIMIT_MAX_REQUESTS`    | `800`                                          | 在一个时间窗口内的最大请求数（代码默认 800，可按需下调）。   |
 | `JWT_SECRET`             | `your-own-very-long-and-random-secret-string-123450` | 用于签发和验证登录 Token 的密钥，请修改为复杂随机字符串。    |
 | `ADMIN_SECRET`           | `（默认admin，请手动设置）`                          | 超级管理员密钥，启用/修改/禁用访问密码等敏感操作时必需。      |
 
@@ -248,12 +260,57 @@ Photonix/
 
 项目采用多数据库架构，提高并发性能：
 
-- **主数据库** (`gallery.db`)：存储图片和视频索引信息
-- **设置数据库** (`settings.db`)：存储应用配置设置
-- **历史记录数据库** (`history.db`)：存储用户浏览历史
-- **索引数据库** (`index.db`)：存储索引处理状态和队列
+- **主数据库** (`gallery.db`)：存储图片和视频元数据、路径信息
+- **设置数据库** (`settings.db`)：存储应用配置、AI设置、用户偏好
+- **历史记录数据库** (`history.db`)：存储用户浏览历史和搜索记录
+- **索引数据库** (`index.db`)：存储搜索索引状态、队列任务、处理进度
+
+#### 数据库特性
+- **并发优化**：多库设计减少锁竞争，提升并发性能
+- **数据隔离**：不同类型数据分离，便于备份和维护
+- **自动迁移**：启动时自动检测和执行数据库结构升级
+- **连接池**：每个数据库独立连接，避免相互影响
 
 更多细节请参考多库说明文档：[backend/db/README.md](./backend/db/README.md)。
+
+## 📋 API 接口
+
+Photonix 提供完整的 RESTful API，支持前后端分离开发。
+
+### 核心接口
+
+#### 认证接口 (`/api/auth`)
+- `POST /api/auth/login` - 用户登录
+- `POST /api/auth/refresh` - 刷新访问令牌
+- `GET /api/auth/status` - 获取登录状态
+
+#### 浏览接口 (`/api/browse`)
+- `GET /api/browse` - 获取相册/图片列表
+- `GET /api/browse/:path` - 获取指定路径的内容
+
+#### 搜索接口 (`/api/search`)
+- `GET /api/search` - 执行全文搜索
+- `GET /api/search/history` - 获取搜索历史
+
+#### AI 接口 (`/api/ai`)
+- `POST /api/ai/generate` - 生成 AI 描述
+- `GET /api/ai/status/:jobId` - 查询任务状态
+
+#### 设置接口 (`/api/settings`)
+- `GET /api/settings` - 获取应用设置
+- `PUT /api/settings` - 更新应用设置
+
+#### 缩略图接口 (`/api/thumbnail`)
+- `GET /api/thumbnail/:path` - 获取缩略图
+
+### 实时功能
+- **SSE 事件流** (`/api/events`)：实时推送处理状态和通知
+- **WebSocket 支持**：计划中的实时协作功能
+
+### 开发文档
+完整的 API 文档和开发指南请参考项目源码中的路由文件：
+- 后端路由：`backend/routes/`
+- 前端 API 封装：`frontend/js/api.js`
 
 ## 🛠️ 本地开发
 
@@ -319,7 +376,15 @@ server {
 - `RATE_LIMIT_WINDOW_MINUTES`（默认 15）
 - `RATE_LIMIT_MAX_REQUESTS`（默认 100）
 
+行为说明：
+- 全局限流对 GET /api/thumbnail 在存在 Authorization 头时跳过，以避免登录后缩略图并发触发 429（与 backend/middleware/rateLimiter.js 一致）。
+- 限流键基于 Redis 存储，适配多实例/多进程一致性。
+
 说明：Redis Store 通过现有的 ioredis 客户端进行 `sendCommand`，无需额外配置。
+
+认证端点限流说明：
+- /api/auth/refresh：使用 Redis 限流（express-rate-limit + RedisStore），默认 REFRESH_RATE_WINDOW_MS=60000、REFRESH_RATE_MAX=60，并启用 skipSuccessfulRequests，正常续期不计入配额。
+- /api/auth/login：不使用 express-rate-limit，全权依赖控制器内基于 Redis 的防爆破机制（逐次加锁/冷却）；密码正确会清理失败计数与锁定状态。
 
 ### 前端开发
 ```bash
@@ -362,7 +427,7 @@ node backend/db/migrate-to-multi-db.js
   - 建议统一 HTTPS，同源部署前后端，降低 CSP/COOP 噪音。
 - Redis 高可用
   - 生产建议使用外部 Redis（主从或哨兵/集群）。
-  - 仅需配置 `REDIS_URL`，express-rate-limit 与 BullMQ 共用连接。
+  - 仅需配置 `REDIS_URL`；express-rate-limit 使用 ioredis 客户端，BullMQ 使用独立连接（共享同一 Redis 服务）。
 - 资源与并发
   - `NUM_WORKERS` 控制缩略图并行度，内存紧张时适当下调。
   - 大相册首次索引耗时较长，建议在业务低峰进行全量重建。
@@ -376,8 +441,8 @@ node backend/db/migrate-to-multi-db.js
 
 ### 健康检查
 - **端点**：`/health`
-- **检查项**：数据库连接、Redis 连接、文件系统权限
-- **响应**：200 表示健康，其他状态码表示异常
+- **检查项**：SQLite 可用性（查询 items 与 items_fts 的 COUNT），异常视为不健康
+- **响应**：成功返回 200 和计数；异常返回 503（包含错误信息）
 
 ### 性能指标
 - **缓存命中率**：`/api/metrics/cache`
@@ -397,10 +462,35 @@ node backend/db/migrate-to-multi-db.js
 ## 🎯 功能详解
 
 ### AI 画中密语
-- 支持多种AI角色设定，从温馨对话到私密互动
-- 异步队列处理，避免阻塞用户界面
-- Redis缓存机制，相同图片不重复生成
-- 自定义提示词支持，可参考 `AIPROMPT.md`
+Photonix 的核心特色功能，通过 AI 让照片中的人物"开口说话"。
+
+#### 功能特性
+- **多模型兼容**：支持 OpenAI GPT-4V、Claude-3、Gemini 等视觉模型
+- **自定义角色**：可设置不同的人设和对话风格
+- **异步处理**：BullMQ 队列确保流畅的用户体验
+- **智能缓存**：Redis 缓存避免重复生成，降低 API 成本
+- **任务去重**：相同图片自动复用已有结果
+
+#### 使用方法
+1. **配置 AI 服务**：
+   - 在设置面板中启用 AI 功能
+   - 配置 API 地址、密钥和模型名称
+   - 设置自定义提示词
+
+2. **生成对话**：
+   - 在图片预览模式下点击"画中密语"按钮
+   - AI 将分析图片内容并生成角色对话
+   - 支持多种对话风格，从温馨到私密
+
+3. **提示词模板**：
+   - 内置多种对话风格模板
+   - 支持完全自定义提示词
+   - 参考 `AIPROMPT.md` 获取更多示例
+
+#### 技术实现
+- **队列系统**：使用 Redis + BullMQ 处理并发任务
+- **缓存策略**：7天缓存期，智能过期管理
+- **错误处理**：自动重试机制，确保生成成功
 
 ### 智能索引系统
 - SQLite FTS5全文搜索，支持中文分词
@@ -486,16 +576,23 @@ docker compose logs -f
 - **内存配置**：建议 4GB+ 内存，大相册需要更多
 - **存储优化**：使用 SSD 存储，提升 I/O 性能
 - **网络优化**：千兆网络环境，避免网络瓶颈
+- **CPU 配置**：建议 2核+ CPU，支持硬件自适应调整
 
 ### 应用级优化
-- **工作线程**：根据 CPU 核心数调整 `NUM_WORKERS`
-- **缓存策略**：合理配置 Redis 内存，避免内存不足
+- **工作线程**：系统自动检测 CPU 核心数，动态调整 `NUM_WORKERS`
+- **缓存策略**：合理配置 Redis 内存，支持标签化缓存清理
 - **索引优化**：大相册首次索引耗时较长，建议在业务低峰进行
+- **队列配置**：BullMQ 支持任务优先级和并发控制
 
-### 部署优化
-- **反向代理**：使用 Nginx 等反向代理，提升并发能力
-- **负载均衡**：多实例部署，提升可用性
-- **CDN 加速**：静态资源使用 CDN 加速
+### Docker 优化
+- **资源限制**：根据硬件配置设置容器资源限制
+- **卷挂载**：使用宿主机目录提升 I/O 性能
+- **网络配置**：使用 host 网络模式减少网络开销（可选）
+
+### 监控指标
+- **缓存命中率**：`/api/metrics/cache` 查看缓存效果
+- **队列状态**：`/api/metrics/queue` 监控任务处理
+- **系统资源**：通过容器日志监控 CPU、内存使用
 
 ## 🐛 常见问题
 
@@ -513,11 +610,13 @@ docker compose logs -f
 - **内存占用高**：减少并发工作线程数量
 
 ### 功能问题
-- **搜索'500'或无结果**：等待索引重建完成
-- **AI功能异常**：检查API密钥和模型配置
-- **PWA安装失败**：确保HTTPS或localhost环境
-- **移动端手势不工作**：检查触摸事件支持
-- **视频播放异常**：检查 FFmpeg 依赖和视频格式
+- **搜索无结果**：等待索引重建完成，或检查搜索关键词
+- **AI功能异常**：检查API密钥、模型配置和网络连接
+- **PWA安装失败**：确保HTTPS环境或localhost访问
+- **移动端手势不工作**：检查浏览器触摸事件支持
+- **视频播放异常**：检查 FFmpeg 依赖、视频格式和 HLS 配置
+- **缩略图不显示**：检查 Sharp 依赖和磁盘权限
+- **缓存不生效**：检查 Redis 连接和内存配置
 
 ### 网络问题
 - **SSE 连接断开**：检查反向代理配置，确保长连接支持

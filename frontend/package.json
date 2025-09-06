@@ -12,7 +12,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "hls.js": "^1.6.11"
+    "hls.js": "^1.6.11",
+    "nanostores": "^1.0.1"
   },
   "devDependencies": {
     "@tailwindcss/aspect-ratio": "^0.4.2",

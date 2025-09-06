@@ -1,394 +1,235 @@
 // frontend/js/state.js
 
-/**
- * 改进的状态管理系统
- * 支持精细化的发布/订阅机制，减少不必要的重渲染
- */
+import { map } from 'nanostores';
 
 /**
- * 缩略图同步状态管理类
- * 用于管理缩略图补全操作的状态，解决作用域问题并提供集中的状态管理
+ * ----------------------------------------------------------------
+ * 主应用状态
+ * ----------------------------------------------------------------
+ * 使用 nanostores 的 map store 来管理整个应用的响应式状态。
+ * 替代了原有的手动实现的 StateManager。
  */
-export class ThumbnailSyncState {
-    constructor() {
-        this.isSilent = false;
-        this.isMonitoring = false;
-        this.monitoringType = null;
-        this.monitoringIntervalId = null;
-        this.monitoringTimeoutId = null;
-    }
+const appStateStore = map({
+    // 应用状态和API配置
+    userId: null,
+    API_BASE: '',
+    currentPhotos: [],
+    currentPhotoIndex: 0,
+    isModalNavigating: false,
+    isBlurredMode: false,
+    captionDebounceTimer: null,
+    currentAbortController: null,
+    currentObjectURL: null,
+    scrollPositions: new Map(),
+    scrollPositionBeforeModal: null,
+    activeThumbnail: null,
+    preSearchHash: '#/',
+    searchDebounceTimer: null,
+    hasShownNavigationHint: false,
+    lastWheelTime: 0,
+    uiVisibilityTimer: null,
+    activeBackdrop: 'one',
+    isInitialLoad: true,
+    aiEnabled: false,
+    passwordEnabled: false,
 
-    /**
-     * 设置静默模式
-     * @param {boolean} silent - 是否启用静默模式
-     */
+    // 缩略图请求队列
+    thumbnailRequestQueue: [],
+    activeThumbnailRequests: 0,
+    MAX_CONCURRENT_THUMBNAIL_REQUESTS: Math.min(12, (navigator.hardwareConcurrency || 4) < 6 ? 8 : 12),
+
+    // 搜索和浏览状态
+    isSearchLoading: false,
+    currentSearchPage: 1,
+    totalSearchPages: 1,
+    currentSearchQuery: '',
+    isBrowseLoading: false,
+    currentBrowsePage: 1,
+    totalBrowsePages: 1,
+    currentBrowsePath: null,
+    currentSort: 'smart',
+    entrySort: 'smart',
+    currentColumnCount: 0,
+    currentLayoutWidth: 0,
+    pageCache: new Map(),
+
+    // 预览布局模式
+    layoutMode: (typeof localStorage !== 'undefined' && localStorage.getItem('sg_layout_mode')) || 'grid',
+});
+
+/**
+ * ----------------------------------------------------------------
+ * 同步任务状态
+ * ----------------------------------------------------------------
+ * 用于管理缩略图、索引等后台任务的状态。
+ */
+const syncStateStore = map({
+    isSilent: false,
+    isMonitoring: false,
+    monitoringType: null,
+    monitoringIntervalId: null,
+    monitoringTimeoutId: null,
+});
+
+// syncStateStore 的辅助函数，模拟旧的类方法
+const syncStateProxy = {
+    get isSilent() { return syncStateStore.get().isSilent; },
+    get isMonitoring() { return syncStateStore.get().isMonitoring; },
+    get monitoringType() { return syncStateStore.get().monitoringType; },
+    get monitoringIntervalId() { return syncStateStore.get().monitoringIntervalId; },
+    get monitoringTimeoutId() { return syncStateStore.get().monitoringTimeoutId; },
+    
     setSilentMode(silent) {
-        this.isSilent = Boolean(silent);
-    }
-
-    /**
-     * 开始监控
-     * @param {string} type - 监控类型 (thumbnail, index, hls)
-     */
+        syncStateStore.setKey('isSilent', Boolean(silent));
+    },
     startMonitoring(type) {
-        this.isMonitoring = true;
-        this.monitoringType = type;
-    }
-
-    /**
-     * 停止监控
-     */
+        syncStateStore.setKey('isMonitoring', true);
+        syncStateStore.setKey('monitoringType', type);
+    },
     stopMonitoring() {
-        if (this.monitoringIntervalId) {
-            clearInterval(this.monitoringIntervalId);
-            this.monitoringIntervalId = null;
-        }
-        if (this.monitoringTimeoutId) {
-            clearTimeout(this.monitoringTimeoutId);
-            this.monitoringTimeoutId = null;
-        }
-        this.isMonitoring = false;
-        this.monitoringType = null;
-    }
-
-    /**
-     * 设置监控定时器ID
-     * @param {number} intervalId - setInterval 返回的ID
-     * @param {number} timeoutId - setTimeout 返回的ID
-     */
+        const { monitoringIntervalId, monitoringTimeoutId } = syncStateStore.get();
+        if (monitoringIntervalId) clearInterval(monitoringIntervalId);
+        if (monitoringTimeoutId) clearTimeout(monitoringTimeoutId);
+        syncStateStore.set({
+            ...syncStateStore.get(),
+            isMonitoring: false,
+            monitoringType: null,
+            monitoringIntervalId: null,
+            monitoringTimeoutId: null,
+        });
+    },
     setMonitoringTimers(intervalId, timeoutId) {
-        this.monitoringIntervalId = intervalId;
-        this.monitoringTimeoutId = timeoutId;
-    }
-
-    /**
-     * 重置状态
-     */
+        syncStateStore.setKey('monitoringIntervalId', intervalId);
+        syncStateStore.setKey('monitoringTimeoutId', timeoutId);
+    },
     reset() {
         this.stopMonitoring();
-        this.isSilent = false;
+        this.setSilentMode(false);
     }
-}
+};
+// 旧文件导出了一个实例，所以我们导出代理对象。
+export const syncState = syncStateProxy;
 
-class StateManager {
-    constructor() {
-        this.state = {
-            // 应用状态和API配置
-            userId: null,                                    // 用户ID
-            API_BASE: '',                                   // API基础URL
-            currentPhotos: [],                              // 当前照片数组
-            currentPhotoIndex: 0,                           // 当前照片索引
-            isModalNavigating: false,                       // 模态框导航状态
-            isBlurredMode: false,                           // 模糊模式状态
-            captionDebounceTimer: null,                     // 标题防抖定时器
-            currentAbortController: null,                   // 当前中止控制器
-            currentObjectURL: null,                         // 当前对象URL
-            scrollPositions: new Map(),                     // 滚动位置缓存
-            scrollPositionBeforeModal: null,                // 模态框打开前的滚动位置
-            activeThumbnail: null,                          // 活动缩略图
-            preSearchHash: '#/',                            // 搜索前的哈希值
-            searchDebounceTimer: null,                      // 搜索防抖定时器
-            hasShownNavigationHint: false,                  // 是否已显示导航提示
-            lastWheelTime: 0,                               // 最后滚轮事件时间
-            uiVisibilityTimer: null,                        // UI可见性定时器
-            activeBackdrop: 'one',                          // 活动背景
-            isInitialLoad: true,                            // 是否初始加载
-            aiEnabled: false,                               // 全局AI开关状态
-            passwordEnabled: false,                         // 全局密码开关状态
-
-            // 缩略图请求队列
-            thumbnailRequestQueue: [],                      // 缩略图请求队列
-            activeThumbnailRequests: 0,                     // 活跃的缩略图请求数量
-            // 智能并发：移动端/低端机 6-8，桌面 10-12
-            MAX_CONCURRENT_THUMBNAIL_REQUESTS: Math.min(12, (navigator.hardwareConcurrency || 4) < 6 ? 8 : 12),
-
-            // 搜索和浏览状态
-            isSearchLoading: false,                         // 搜索加载状态
-            currentSearchPage: 1,                           // 当前搜索页码
-            totalSearchPages: 1,                            // 搜索总页数
-            currentSearchQuery: '',                         // 当前搜索查询
-            isBrowseLoading: false,                         // 浏览加载状态
-            currentBrowsePage: 1,                           // 当前浏览页码
-            totalBrowsePages: 1,                            // 浏览总页数
-            currentBrowsePath: null,                        // 当前浏览路径
-            currentSort: 'smart',                           // 当前排序方式
-            entrySort: 'smart',                             // 进入页面时的排序方式
-            currentColumnCount: 0,                          // 当前列数
-            currentLayoutWidth: 0,                          // 当前内容容器宽度（用于监听尺寸变化触发布局重排）
-            pageCache: new Map(),                           // 页面缓存
+/**
+ * ----------------------------------------------------------------
+ * 兼容层 (StateManager 兼容层)
+ * ----------------------------------------------------------------
+ */
+const stateManagerInstance = {
+    _store: appStateStore,
     
-            // 预览布局模式：'masonry' | 'grid' 瀑布流（默认）
-            // layoutMode: (typeof localStorage !== 'undefined' && localStorage.getItem('sg_layout_mode')) || 'masonry',
-            // 预览布局模式：'masonry' | 'grid' 网格（默认改为 grid）
-            layoutMode: (typeof localStorage !== 'undefined' && localStorage.getItem('sg_layout_mode')) || 'grid',
-        };
-        
-        // 按状态键分组的订阅者
-        this.subscribers = new Map();
-        
-        // 批量更新队列
-        this.batchUpdates = new Set();
-        this.batchTimeout = null;
-        
-        // 调试模式
-        this.debugMode = false;
-        
-        // 状态变更历史（开发模式）
-        this.history = [];
-        this.maxHistorySize = 50;
-    }
-    
-    /**
-     * 订阅特定状态的变化
-     * @param {string|Array} keys - 要订阅的状态键
-     * @param {Function} callback - 回调函数
-     * @returns {Function} 取消订阅的函数
-     */
+    get state() {
+        return this._store.get();
+    },
+
     subscribe(keys, callback) {
         const keyArray = Array.isArray(keys) ? keys : [keys];
         
-        keyArray.forEach(key => {
-            if (!this.subscribers.has(key)) {
-                this.subscribers.set(key, new Set());
+        let lastKnownValues = {};
+        keyArray.forEach(k => lastKnownValues[k] = this.state[k]);
+
+        const unsubscribe = this._store.listen(currentState => {
+            const changedKeys = [];
+            for (const key of keyArray) {
+                if (lastKnownValues[key] !== currentState[key]) {
+                    changedKeys.push(key);
+                    lastKnownValues[key] = currentState[key];
+                }
             }
-            this.subscribers.get(key).add(callback);
+            if (changedKeys.length > 0) {
+                callback(changedKeys, currentState);
+            }
         });
-        
-        // 返回取消订阅的函数
-        return () => {
-            keyArray.forEach(key => {
-                const subscribers = this.subscribers.get(key);
-                if (subscribers) {
-                    subscribers.delete(callback);
-                    if (subscribers.size === 0) {
-                        this.subscribers.delete(key);
-                    }
-                }
-            });
-        };
-    }
-    
-    /**
-     * 更新状态 - 增强数据流控制
-     * @param {string} key - 状态键
-     * @param {any} value - 新值
-     * @param {Object} options - 更新选项
-     */
-    update(key, value, options = {}) {
-        const oldValue = this.state[key];
-        
-        // 数据验证
-        if (options.validator && !options.validator(value, oldValue)) {
-            console.warn(`状态更新被拒绝，键 "${key}": 验证失败`);
-            return false;
+        return unsubscribe;
+    },
+
+    update(key, value) {
+        if (this.state[key] !== value) {
+            this._store.setKey(key, value);
         }
-        
-        // 深度比较选项
-        const hasChanged = options.deepCompare 
-            ? !this.deepEqual(oldValue, value)
-            : oldValue !== value;
-        
-        if (!hasChanged) return false;
-        
-        // 记录状态变更历史（仅开发模式）
-        if ((options.debug || this.debugMode) && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
-            console.debug(`状态更新: ${key}`, { from: oldValue, to: value });
-        }
-        
-        this.state[key] = value;
-        
-        // 添加到批量更新队列
-        this.batchUpdates.add(key);
-        
-        // 延迟执行批量更新
-        if (!this.batchTimeout) {
-            this.batchTimeout = setTimeout(() => {
-                this.executeBatchUpdates();
-            }, 0);
-        }
-        
-        return true;
-    }
-    
-    /**
-     * 深度比较两个值
-     */
-    deepEqual(a, b) {
-        if (a === b) return true;
-        if (a == null || b == null) return false;
-        if (typeof a !== typeof b) return false;
-        
-        if (typeof a === 'object') {
-            const keysA = Object.keys(a);
-            const keysB = Object.keys(b);
-            if (keysA.length !== keysB.length) return false;
-            
-            for (const key of keysA) {
-                if (!keysB.includes(key) || !this.deepEqual(a[key], b[key])) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        
-        return false;
-    }
-    
-    /**
-     * 批量更新状态
-     * @param {Object} updates - 要更新的状态对象
-     */
+    },
+
     batchUpdate(updates) {
-        Object.entries(updates).forEach(([key, value]) => {
-            this.update(key, value);
-        });
-    }
-    
-    /**
-     * 执行批量更新
-     */
-    executeBatchUpdates() {
-        this.batchTimeout = null;
-        
-        // 按订阅者分组执行回调
-        const callbackGroups = new Map();
-        
-        for (const key of this.batchUpdates) {
-            const subscribers = this.subscribers.get(key);
-            if (subscribers) {
-                subscribers.forEach(callback => {
-                    if (!callbackGroups.has(callback)) {
-                        callbackGroups.set(callback, new Set());
-                    }
-                    callbackGroups.get(callback).add(key);
-                });
-            }
-        }
-        
-        // 执行回调
-        callbackGroups.forEach((keys, callback) => {
-            try {
-                callback(Array.from(keys), this.state);
-            } catch (error) {
-                console.error('状态更新回调执行失败:', error);
-            }
-        });
-        
-        this.batchUpdates.clear();
-    }
-    
-    /**
-     * 获取状态值
-     * @param {string} key - 状态键
-     * @returns {any} 状态值
-     */
+        this._store.set({ ...this.state, ...updates });
+    },
+
     get(key) {
         return this.state[key];
-    }
-    
-    /**
-     * 获取多个状态值
-     * @param {Array} keys - 状态键数组
-     * @returns {Object} 状态值对象
-     */
+    },
+
     getMultiple(keys) {
         const result = {};
+        const currentState = this.state;
         keys.forEach(key => {
-            result[key] = this.state[key];
+            result[key] = currentState[key];
         });
         return result;
-    }
-    
-    /**
-     * 获取所有状态
-     * @returns {Object} 完整状态对象
-     */
+    },
+
     getAll() {
         return { ...this.state };
     }
-}
+};
 
-// 创建全局状态管理器实例
-const stateManagerInstance = new StateManager();
+// 导出管理器实例，供直接使用它的代码使用
+export const stateManager = stateManagerInstance;
 
-// 导出状态管理器（使用Proxy实现动态状态访问）
+// 导出代理对象，这是访问状态的主要方式
 export const state = new Proxy(stateManagerInstance, {
     get(target, prop) {
-        // 如果是状态管理器的方法，直接返回
         if (typeof target[prop] === 'function') {
             return target[prop].bind(target);
         }
-        // 如果是状态属性，从state对象中获取
         if (prop in target.state) {
             return target.state[prop];
         }
-        // 其他属性直接从target获取
         return target[prop];
     },
     set(target, prop, value) {
-        // 如果是状态属性，使用update方法更新
         if (prop in target.state) {
             target.update(prop, value);
             return true;
         }
-        // 其他属性直接设置
         target[prop] = value;
         return true;
     }
 });
-export const stateManager = stateManagerInstance;
+
 
 /**
  * 模态框背景元素
- * 用于模态框的背景切换效果
  */
 export const backdrops = {
-    one: document.getElementById('modal-backdrop-one'),    // 背景一
-    two: document.getElementById('modal-backdrop-two')     // 背景二
+    one: document.getElementById('modal-backdrop-one'),
+    two: document.getElementById('modal-backdrop-two')
 };
 
 /**
  * DOM元素选择器
- * 集中管理所有需要操作的DOM元素引用
  */
 export const elements = {
-    // 主要视图元素
-    galleryView: document.getElementById('gallery-view'),           // 画廊视图
-    contentGrid: document.getElementById('content-grid'),           // 内容网格
-    loadingIndicator: document.getElementById('loading'),           // 加载指示器
-    breadcrumbNav: document.getElementById('breadcrumb-nav'),       // 面包屑导航
-
-    // 模态框相关元素
-    modal: document.getElementById('modal'),                        // 模态框容器
-    modalContent: document.getElementById('modal-content'),         // 模态框内容
-    modalImg: document.getElementById('modal-img'),                 // 模态框图片
-    modalVideo: document.getElementById('modal-video'),             // 模态框视频
-    modalClose: document.getElementById('modal-close'),             // 模态框关闭按钮
-
-    // AI控制容器
-    aiControlsContainer: document.getElementById('ai-controls-container'),  // AI控制容器
-
-    // 标题相关元素
-    captionContainer: document.getElementById('caption-container'),         // 标题容器
-    captionContainerMobile: document.getElementById('caption-container-mobile'), // 移动端标题容器
-    captionBubble: document.getElementById('caption-bubble'),               // 标题气泡
-    captionBubbleWrapper: document.getElementById('caption-bubble-wrapper'), // 标题气泡包装器
-    toggleCaptionBtn: document.getElementById('toggle-caption-btn'),        // 切换标题按钮
-
-    // 其他UI元素
-    navigationHint: document.getElementById('navigation-hint'),             // 导航提示
-    mediaPanel: document.getElementById('media-panel'),                     // 媒体面板
-    searchInput: document.getElementById('search-input'),                   // 搜索输入框
-    infiniteScrollLoader: document.getElementById('infinite-scroll-loader-container'), // 无限滚动加载器容器
-
+    galleryView: document.getElementById('gallery-view'),
+    contentGrid: document.getElementById('content-grid'),
+    loadingIndicator: document.getElementById('loading'),
+    breadcrumbNav: document.getElementById('breadcrumb-nav'),
+    modal: document.getElementById('modal'),
+    modalContent: document.getElementById('modal-content'),
+    modalImg: document.getElementById('modal-img'),
+    modalVideo: document.getElementById('modal-video'),
+    modalClose: document.getElementById('modal-close'),
+    aiControlsContainer: document.getElementById('ai-controls-container'),
+    captionContainer: document.getElementById('caption-container'),
+    captionContainerMobile: document.getElementById('caption-container-mobile'),
+    captionBubble: document.getElementById('caption-bubble'),
+    captionBubbleWrapper: document.getElementById('caption-bubble-wrapper'),
+    toggleCaptionBtn: document.getElementById('toggle-caption-btn'),
+    navigationHint: document.getElementById('navigation-hint'),
+    mediaPanel: document.getElementById('media-panel'),
+    searchInput: document.getElementById('search-input'),
+    infiniteScrollLoader: document.getElementById('infinite-scroll-loader-container'),
 };
 
-// 创建缩略图同步状态管理实例
-export const syncState = new ThumbnailSyncState();
-
-// 添加状态验证函数
 export function validateSyncState() {
-    // 减少状态验证日志输出，只在开发模式下输出
     if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
         console.debug('[状态验证] 当前同步状态:', {
             isSilent: syncState.isSilent,
@@ -400,15 +241,10 @@ export function validateSyncState() {
     }
 }
 
-/**
- * 清理同步状态
- * 在页面卸载或重新初始化时调用，确保清理所有定时器和状态
- */
 export function cleanupSyncState() {
     syncState.reset();
 }
 
-// 页面卸载时清理状态
 if (typeof window !== 'undefined') {
     window.addEventListener('beforeunload', cleanupSyncState);
 }

@@ -10,6 +10,7 @@ import { handleError, ErrorTypes, ErrorSeverity } from './error-handler.js';
 import { setupEventListeners } from './listeners.js';
 import { initializeRouter } from './router.js';
 import { blobUrlManager, savePageLazyState, restorePageLazyState, clearRestoreProtection } from './lazyload.js';
+import { initializeUI } from './ui.js';
 
 // 将懒加载状态管理函数暴露到全局
 window.savePageLazyState = savePageLazyState;
@@ -154,6 +155,7 @@ function startMainApp() {
 
     showSkeletonGrid();
     initializeSSE();
+    initializeUI();
 
     try {
         initializeRouter();

@@ -50,7 +50,9 @@ export async function handleHashChange() {
 
     if (typeof state.currentBrowsePath === 'string') {
         const key = state.currentBrowsePath;
-        state.scrollPositions.set(key, window.scrollY);
+        const newScrollPositions = new Map(state.scrollPositions);
+        newScrollPositions.set(key, window.scrollY);
+        state.scrollPositions = newScrollPositions;
     }
 
     AbortBus.abortMany(['page','scroll']);
@@ -361,10 +363,13 @@ function finalizeNewContent(pathKey) {
     sortAlbumsByViewed();
     state.update('currentColumnCount', getMasonryColumns());
 
-    const scrollY = state.get('scrollPositions').get(pathKey);
+    const scrollPositions = state.get('scrollPositions');
+    const scrollY = scrollPositions.get(pathKey);
     if (scrollY) {
         window.scrollTo({ top: scrollY, behavior: 'instant' });
-        state.get('scrollPositions').delete(pathKey);
+        const newScrollPositions = new Map(scrollPositions);
+        newScrollPositions.delete(pathKey);
+        state.scrollPositions = newScrollPositions;
     } else if (state.get('isInitialLoad')) {
         window.scrollTo({ top: 0, behavior: 'instant' });
     }
@@ -376,7 +381,9 @@ function finalizeNewContent(pathKey) {
 function saveCurrentScrollPosition() {
     const key = state.currentBrowsePath;
     if (typeof key === 'string' && key.length > 0) {
-        state.scrollPositions.set(key, window.scrollY);
+        const newScrollPositions = new Map(state.scrollPositions);
+        newScrollPositions.set(key, window.scrollY);
+        state.scrollPositions = newScrollPositions;
         try {
             const obj = Object.fromEntries(state.scrollPositions);
             const entries = Object.entries(obj);
