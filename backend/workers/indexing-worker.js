@@ -14,6 +14,7 @@ try {
 } catch {}
 const { initializeConnections, getDB, dbRun, dbGet, runPreparedBatch, adaptDbTimeouts } = require('../db/multi-db');
 const { redis } = require('../config/redis');
+const { runPreparedBatchWithRetry } = require('../db/sqlite-retry');
 const { createNgrams } = require('../utils/search.utils');
 const { getVideoDimensions } = require('../utils/media.utils.js');
 const { invalidateTags } = require('../services/cache.service.js');
@@ -121,7 +122,7 @@ const { invalidateTags } = require('../services/cache.service.js');
                 info.height,
                 info.mtime
             ]);
-            await runPreparedBatch('main', upsertSql, rows, { chunkSize: 800 });
+            await runPreparedBatchWithRetry(runPreparedBatch, 'main', upsertSql, rows, { chunkSize: 800 }, redis);
 
             const dt = ((Date.now() - t0) / 1000).toFixed(1);
             logger.info(`[INDEXING-WORKER] album_covers 重建完成，用时 ${dt}s，生成 ${coverMap.size} 条。`);
@@ -453,11 +454,11 @@ const { invalidateTags } = require('../services/cache.service.js');
                 }
                 if (upsertRows.length > 0) {
                     try {
-                        await runPreparedBatch('main', upsertSql, upsertRows, { manageTransaction: false, chunkSize: 800 });
+                        await runPreparedBatchWithRetry(runPreparedBatch, 'main', upsertSql, upsertRows, { manageTransaction: false, chunkSize: 800 }, redis);
                     } catch (err) {
                         if (/no such table: .*album_covers/i.test(err && err.message)) {
                             await ensureAlbumCoversTable();
-                            await runPreparedBatch('main', upsertSql, upsertRows, { manageTransaction: false, chunkSize: 800 });
+                            await runPreparedBatchWithRetry(runPreparedBatch, 'main', upsertSql, upsertRows, { manageTransaction: false, chunkSize: 800 }, redis);
                         } else {
                             throw err;
                         }
@@ -514,7 +515,7 @@ const { invalidateTags } = require('../services/cache.service.js');
                         .filter(r => r && r.width && r.height)
                         .map(r => [r.width, r.height, r.path]);
                     if (updates.length > 0) {
-                        await runPreparedBatch('main',
+                        await runPreparedBatchWithRetry(runPreparedBatch, 'main',
                             `UPDATE items SET width = ?, height = ? WHERE path = ?`,
                             updates,
                             { chunkSize: 800 }
@@ -562,7 +563,7 @@ const { invalidateTags } = require('../services/cache.service.js');
                         }
                     }
                     if (updates.length > 0) {
-                        await runPreparedBatch('main',
+                        await runPreparedBatchWithRetry(runPreparedBatch, 'main',
                             `UPDATE items SET mtime = ? WHERE path = ?`,
                             updates,
                             { chunkSize: 800 }

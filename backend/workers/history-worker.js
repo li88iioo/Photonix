@@ -3,6 +3,7 @@ const path = require('path');
 const winston = require('winston');
 const { initializeConnections, getDB, runPreparedBatch } = require('../db/multi-db');
 const { redis } = require('../config/redis');
+const { runPreparedBatchWithRetry } = require('../db/sqlite-retry');
 
 (async () => {
     await initializeConnections();
@@ -39,7 +40,7 @@ const { redis } = require('../config/redis');
                 // 批量执行所有更新（交由通用批处理托管事务）
                 const sql = "INSERT OR REPLACE INTO view_history (user_id, item_path, viewed_at) VALUES (?, ?, CURRENT_TIMESTAMP)";
                 const rows = pathsToUpdate.map(p => [userId, p]);
-                await runPreparedBatch('history', sql, rows, { chunkSize: 800 });
+                await runPreparedBatchWithRetry(runPreparedBatch, 'history', sql, rows, { chunkSize: 800 }, redis);
                 
                 logger.debug(`[HISTORY-WORKER] 批量更新了 ${pathsToUpdate.length} 个路径的查看时间 for user ${userId}`);
 

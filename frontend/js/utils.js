@@ -144,7 +144,10 @@ export function detectTunnelEnvironment() {
                      (hostname !== 'localhost' && hostname !== '127.0.0.1' && port !== '12080');
     
     if (isTunnel) {
-        console.log('检测到内网穿透环境，应用优化策略');
+        // 减少内网穿透检测日志输出，只在开发模式下输出
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            console.debug('检测到内网穿透环境，应用优化策略');
+        }
         
         // 调整请求超时时间
         window.TUNNEL_TIMEOUT = 10000; // 10秒
@@ -180,7 +183,7 @@ export function getTunnelOptimizedConfig() {
  * @param {any} data - 调试数据
  */
 export function debugTunnelRequest(message, data = null) {
-    if (window.IS_TUNNEL_ENVIRONMENT) {
+    if (window.IS_TUNNEL_ENVIRONMENT && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
         console.debug(`[Tunnel Debug] ${message}`, data);
     }
 }
@@ -198,7 +201,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (message.includes('Failed to execute \'put\' on \'Cache\'') ||
                     message.includes('net::ERR_ABORTED') ||
                     message.includes('503')) {
-                    console.debug('Suppressed tunnel error:', message);
+                    // 减少抑制错误日志输出，只在开发模式下输出
+                    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                        console.debug('Suppressed tunnel error:', message);
+                    }
                     event.preventDefault();
                 }
             }

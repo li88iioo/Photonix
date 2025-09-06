@@ -1,27 +1,22 @@
 /**
- * 缩略图服务模块
- * 管理缩略图的生成、队列调度和工作线程协调，支持优先级队列和失败重试机制
+ * 缩略图服务模块 - 简化版
+ * 纯按需生成缩略图，移除复杂的队列调度机制
  */
 const crypto = require('crypto');
 const path = require('path');
 const { promises: fs } = require('fs');
 const logger = require('../config/logger');
 const { redis } = require('../config/redis');
-const { THUMBS_DIR, MAX_THUMBNAIL_RETRIES, INITIAL_RETRY_DELAY } = require('../config');
+const { THUMBS_DIR, MAX_THUMBNAIL_RETRIES, INITIAL_RETRY_DELAY, NUM_WORKERS } = require('../config');
 const { idleThumbnailWorkers } = require('./worker.manager');
-const { Queue } = require('bullmq');
-const { bullConnection } = require('../config/redis');
-const { QUEUE_MODE, THUMBNAIL_QUEUE_NAME } = require('../config');
-const { getThumbMaxConcurrency } = require('./adaptive.service');
-const { indexingWorker } = require('./worker.manager');
+const { writeThumbStatusWithRetry: writeThumbStatusWithRetryNew, runPreparedBatchWithRetry } = require('../db/sqlite-retry');
+const { dbRun } = require('../db/multi-db');
 const eventBus = require('./event.service');
 
 // 环境检测：开发环境显示详细日志
 const isDevelopment = process.env.NODE_ENV !== 'production';
 
-// 缩略图任务队列管理
-const highPriorityThumbnailQueue = [];  // 高优先级队列（浏览器直接请求）
-const lowPriorityThumbnailQueue = [];   // 低优先级队列（后台批量生成）
+// 简化的任务管理
 const activeTasks = new Set();          // 正在处理的任务集合
 const failureCounts = new Map();        // 任务失败次数统计
 const failureTimestamps = new Map();    // 失败记录的时间戳
@@ -78,7 +73,6 @@ function updateTaskTimestamp(path) {
 
 // 缩略图状态批处理相关变量
 const thumbStatusPending = new Map();
-let thumbStatusFlushing = false;
 let thumbStatusFlushScheduled = false;
 
 // 添加锁机制防止竞态条件
@@ -138,24 +132,51 @@ async function flushThumbStatusBatch() {
                                    mtime=excluded.mtime,
                                    status=excluded.status,
                                    last_checked=excluded.last_checked`;
-            await runPreparedBatch('main', upsertSql, rows, { chunkSize: 800 });
+            await runPreparedBatchWithRetry(runPreparedBatch, 'main', upsertSql, rows, { chunkSize: 200 }, redis);
+            logger.debug(`[THUMB] 批量写入缩略图状态成功: ${rows.length} 条记录`);
         } catch (e) {
-            logger.warn('批量写入缩略图状态失败，回退为逐条重试:', e.message);
+            logger.warn(`批量写入缩略图状态失败，回退为逐条重试: ${e.message}`);
+            
             // 失败时回退为逐条重试（避免数据丢失）
-            try {
-                const { dbRun } = require('../db/multi-db');
-                for (const [pathRel, mtime, status] of rows) {
-                    try { 
-                        await writeThumbStatusWithRetry(dbRun, { path: pathRel, mtime, status }); 
-                    } catch (retryError) {
-                        logger.error(`重试写入缩略图状态失败: ${pathRel}`, retryError.message);
+            let successCount = 0;
+            let failureCount = 0;
+            
+            for (const [pathRel, mtime, status] of rows) {
+                try { 
+                    // 清理路径并验证参数
+                    const cleanPath = String(pathRel || '').replace(/\\/g, '/').trim();
+                    if (!cleanPath) {
+                        logger.warn(`跳过空路径的缩略图状态更新`);
+                        failureCount++;
+                        continue;
                     }
+                    
+                    await writeThumbStatusWithRetryNew(dbRun, { 
+                        path: cleanPath, 
+                        mtime: Number(mtime) || Date.now(), 
+                        status: String(status || 'pending') 
+                    }, redis);
+                    successCount++;
+                } catch (retryError) {
+                    failureCount++;
+                    const displayPath = String(pathRel || '').length > 50 ? 
+                        String(pathRel).substring(0, 50) + '...' : pathRel;
+                    logger.error(`缩略图状态写入失败: ${displayPath}`, {
+                        error: retryError.message,
+                        code: retryError.code,
+                        path: pathRel,
+                        mtime,
+                        status
+                    });
                 }
-            } catch (fallbackError) {
-                logger.error('回退重试机制也失败:', fallbackError.message);
+            }
+            
+            if (successCount > 0 || failureCount > 0) {
+                logger.debug(`[THUMB] 逐条重试完成: 成功 ${successCount}, 失败 ${failureCount}`);
             }
         }
     } finally {
+        thumbStatusFlushScheduled = false;
         thumbStatusLock.release();
         
         // 如果还有待处理的数据，继续处理
@@ -167,46 +188,25 @@ async function flushThumbStatusBatch() {
 }
 
 /**
- * 以指数退避重试方式写入 thumb_status，自动绕过短暂的 SQLITE_BUSY
- * 并在索引进行中时适度延后以减少写-写冲突
- */
-async function writeThumbStatusWithRetry(dbRun, { path: relPath, mtime, status }) {
-    const maxRetries = 8;
-    const baseDelay = 50; // ms
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-            // 索引进行中则小幅让路
-            if (attempt === 0) {
-                try {
-                    const indexing = await redis.get('indexing_in_progress');
-                    if (indexing) {
-                        const delay = 150 + Math.floor(Math.random() * 150);
-                        await new Promise(r => setTimeout(r, delay));
-                    }
-                } catch {}
-            }
-            await dbRun('main', `INSERT INTO thumb_status(path, mtime, status, last_checked)
-                                  VALUES(?, ?, ?, strftime('%s','now')*1000)
-                                  ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, status=excluded.status, last_checked=excluded.last_checked`,
-                [relPath, mtime, status]);
-            return; // success
-        } catch (e) {
-            const msg = e && e.message ? String(e.message) : '';
-            if (!/SQLITE_BUSY|database is locked/i.test(msg) || attempt === maxRetries) {
-                throw e;
-            }
-            const backoff = baseDelay * Math.pow(2, attempt) + Math.floor(Math.random() * 40);
-            await new Promise(r => setTimeout(r, backoff));
-        }
-    }
-}
-
-/**
  * 设置缩略图工作线程监听器
  * 为每个空闲工作线程添加消息处理和错误监听
  */
 function setupThumbnailWorkerListeners() {
-    idleThumbnailWorkers.forEach((worker, index) => {
+    // 确保工作线程池已创建
+    const { thumbnailWorkers } = require('./worker.manager');
+    
+    if (!thumbnailWorkers || thumbnailWorkers.length === 0) {
+        logger.warn('缩略图工作线程池未初始化，跳过监听器设置');
+        return;
+    }
+
+    // 使用所有工作线程而不是只使用空闲的
+    thumbnailWorkers.forEach((worker, index) => {
+        // 避免重复绑定监听器
+        if (worker.__thumbnailListenersAttached) {
+            return;
+        }
+        worker.__thumbnailListenersAttached = true;
         // 监听工作线程完成消息
         worker.on('message', async (result) => {
             const { success, error, task, workerId, skipped, message } = result;
@@ -220,38 +220,40 @@ function setupThumbnailWorkerListeners() {
                 failureCounts.delete(relativePath);
 
                 if (skipped) {
-                    logger.debug(`${workerLogId} 跳过（已存在）: ${relativePath}`);
+                    // 跳过时不发布事件，不失效缓存，仅清理失败标记和更新指标
+                    await redis.del(failureKey).catch(err => logger.warn(`清理Redis永久失败标记时出错: ${err.message}`));
+                    try { await redis.incr('metrics:thumb:skip'); } catch {}
                 } else {
-                    logger.info(`${workerLogId} 生成完成: ${relativePath}`);
-                }
-
-                // 通过Redis发布订阅发送SSE事件通知前端（支持跨进程通信）
-                await redis.publish('thumbnail-generated', JSON.stringify({ path: relativePath }));
-                if (isDevelopment) {
-                    logger.debug(`[THUMB] 已发布缩略图生成事件: ${relativePath}`);
-                }
-
-                // 同时在本进程内也触发事件，以防有其他监听器
-                eventBus.emit('thumbnail-generated', { path: relativePath });
-                await redis.del(failureKey).catch(err => logger.warn(`清理Redis永久失败标记时出错: ${err.message}`));
-                try { await redis.incr('metrics:thumb:success'); } catch {}
-
-                // 缩略图生成完成后，失效相关页面的缓存
-                try {
-                    const { invalidateTags } = require('./cache.service');
-                    const dirname = path.dirname(relativePath);
-                    const tags = [
-                        `thumbnail:${relativePath}`,  // 缩略图自身缓存
-                        `album:${dirname}`,           // 所属相册缓存
-                        `album:/`                     // 根相册缓存
-                    ];
-
-                    await invalidateTags(tags);
+                    logger.debug(`${workerLogId} 生成完成: ${relativePath}`);
+                    
+                    // 通过Redis发布订阅发送SSE事件通知前端（支持跨进程通信）
+                    await redis.publish('thumbnail-generated', JSON.stringify({ path: relativePath }));
                     if (isDevelopment) {
-                        logger.debug(`[THUMB] 缓存失效完成，标签: ${tags.join(', ')}`);
+                        logger.debug(`[THUMB] 已发布缩略图生成事件: ${relativePath}`);
                     }
-                } catch (cacheError) {
-                    logger.warn(`[CACHE] 失效缩略图缓存失败（已忽略）: ${cacheError.message}`);
+
+                    // 同时在本进程内也触发事件，以防有其他监听器
+                    eventBus.emit('thumbnail-generated', { path: relativePath });
+                    await redis.del(failureKey).catch(err => logger.warn(`清理Redis永久失败标记时出错: ${err.message}`));
+                    try { await redis.incr('metrics:thumb:success'); } catch {}
+
+                    // 缩略图生成完成后，失效相关页面的缓存
+                    try {
+                        const { invalidateTags } = require('./cache.service');
+                        const dirname = path.dirname(relativePath);
+                        const tags = [
+                            `thumbnail:${relativePath}`,  // 缩略图自身缓存
+                            `album:${dirname}`,           // 所属相册缓存
+                            `album:/`                     // 根相册缓存
+                        ];
+
+                        await invalidateTags(tags);
+                        if (isDevelopment) {
+                            logger.debug(`[THUMB] 缓存失效完成，标签: ${tags.join(', ')}`);
+                        }
+                    } catch (cacheError) {
+                        logger.warn(`[CACHE] 失效缩略图缓存失败（已忽略）: ${cacheError.message}`);
+                    }
                 }
 
                 try {
@@ -262,12 +264,14 @@ function setupThumbnailWorkerListeners() {
                     const thumbAbsPath = path.join(THUMBS_DIR, thumbRelPath);
                     const thumbMtime = await fs.stat(thumbAbsPath).then(s => s.mtimeMs).catch(() => Date.now());
                     queueThumbStatusUpdate(task.relativePath, thumbMtime, 'exists');
-                    logger.debug(`[THUMB] 更新缩略图状态: ${task.relativePath}, mtime: ${thumbMtime}`);
+                    if (!skipped) {
+                        logger.debug(`[THUMB] 更新缩略图状态: ${task.relativePath}, mtime: ${thumbMtime}`);
+                    }
                 } catch (dbErr) {
                     logger.warn(`写入 thumb_status 入队失败（成功分支，已忽略）：${dbErr && dbErr.message}`);
                 }
             } else {
-                // 针对“文件损坏/格式异常无法解析”的失败，进行专门的计数与阈值删除
+                // 针对"文件损坏/格式异常无法解析"的失败，进行专门的计数与阈值删除
                 let deletedByCorruptionRule = false;
                 try {
                     const CORRUPT_PARSE_SNIPPET = '损坏或格式异常，无法解析';
@@ -286,7 +290,7 @@ function setupThumbnailWorkerListeners() {
                             try {
                                 // 达到阈值：直接删除原始文件，避免反复重试
                                 await fs.unlink(task.filePath).catch(() => {});
-                                logger.error(`${workerLogId} [CORRUPTED_IMAGE_DELETED] 已因出现 ${corruptCount} 次“${CORRUPT_PARSE_SNIPPET}”而删除源文件: ${task.filePath} (relative=${relativePath})`);
+                                logger.error(`${workerLogId} [CORRUPTED_IMAGE_DELETED] 已因出现 ${corruptCount} 次"${CORRUPT_PARSE_SNIPPET}"而删除源文件: ${task.filePath} (relative=${relativePath})`);
                                 // 清理状态与计数，避免后续重复处理
                                 activeTasks.delete(relativePath);
                                 failureCounts.delete(relativePath);
@@ -309,7 +313,7 @@ function setupThumbnailWorkerListeners() {
                 try { await redis.incr('metrics:thumb:fail'); } catch {}
 
                 if (deletedByCorruptionRule) {
-                    // 已按“损坏阈值”策略处理（删除/跳过），不再入队重试
+                    // 已按"损坏阈值"策略处理（删除/跳过），不再入队重试
                 } else if (currentFailures < MAX_THUMBNAIL_RETRIES) {
                     // 任务失败但可重试，暂时不从 activeTasks 移除，避免竞态条件
                     const retryDelay = INITIAL_RETRY_DELAY * Math.pow(2, currentFailures - 1);
@@ -317,8 +321,11 @@ function setupThumbnailWorkerListeners() {
                     setTimeout(() => {
                         // 在真正重新入队前再从 activeTasks 移除，避免竞态且不阻塞重试派发
                         activeTasks.delete(relativePath);
-                        highPriorityThumbnailQueue.unshift(task);
-                        dispatchThumbnailTask();
+                        dispatchThumbnailTask({
+                            filePath: task.filePath,
+                            relativePath: task.relativePath,
+                            type: task.type
+                        });
                     }, retryDelay);
                 } else {
                     // 达到最大重试次数，标记为永久失败，并从 activeTasks 移除
@@ -338,14 +345,10 @@ function setupThumbnailWorkerListeners() {
 
             // 将工作线程放回空闲队列，继续处理下一个任务
             idleThumbnailWorkers.push(worker);
+            // 通知有工人变为空闲，便于批量派发继续推进
+            try { eventBus.emit('thumb-worker-idle'); } catch {}
             // 维护活动计数
-            try {
-                if (result && result.task && result.task.relativePath && activeTasks.has(result.task.relativePath)) {
-                    // 已在上面 activeTasks.delete 过，这里仅做兜底
-                }
-            } catch {}
             global.__thumbActiveCount = Math.max(0, (global.__thumbActiveCount || 0) - 1);
-            dispatchThumbnailTask();
         });
 
         // 监听工作线程错误和退出事件
@@ -354,76 +357,50 @@ function setupThumbnailWorkerListeners() {
             if (code !== 0) logger.warn(`缩略图工人 ${index + 1} 退出，代码: ${code}`);
         });
     });
+    
+    logger.debug(`缩略图工作线程监听器已设置完成，共 ${thumbnailWorkers.length} 个工作线程`);
+    logger.debug(`当前空闲工作线程数量: ${idleThumbnailWorkers.length}`);
 }
 
 /**
  * 调度缩略图任务
- * 从队列中取出任务分配给空闲的工作线程
+ * 直接分配给空闲的工作线程处理
  */
-function dispatchThumbnailTask() {
-    // 自适应限制同时占用的空闲工人数量，避免低负载模式下打满
-    const maxConcurrent = Math.max(1, Number(getThumbMaxConcurrency() || 1));
-    while (idleThumbnailWorkers.length > 0) {
-        let task = null;
-        
-        // 优先处理高优先级队列中的任务
-        if (highPriorityThumbnailQueue.length > 0) {
-            task = highPriorityThumbnailQueue.shift();
-        } else if (lowPriorityThumbnailQueue.length > 0) {
-            // 不占用最后一个空闲工人，预留以便随时响应用户操作（高优先级）
-            if (idleThumbnailWorkers.length > 1) {
-                task = lowPriorityThumbnailQueue.shift();
-            } else {
-                break;
-            }
-        } else {
-            break; // 没有任务可处理
-        }
-
-        // 额外防御：若拿到非媒体任务（历史脏数据或外部注入），直接丢弃并继续
-        if (!task || !/\.(jpe?g|png|webp|gif|mp4|webm|mov)$/i.test(task.filePath || task.relativePath || '')) {
-            continue;
-        }
-
-        // 限制最大同时派发量
-        if ((global.__thumbActiveCount || 0) >= maxConcurrent) {
-            // 达到并发上限，放回队首便于下轮继续尝试
-            if (task) {
-                if (task.type === 'video') highPriorityThumbnailQueue.unshift(task); else lowPriorityThumbnailQueue.unshift(task);
-            }
-            break;
-        }
-        const worker = idleThumbnailWorkers.shift();
-        
-        // 检查任务是否已在处理中，避免重复处理
-        if (activeTasks.has(task.relativePath)) {
-            idleThumbnailWorkers.push(worker); // 将工作线程放回空闲队列
-            continue;
-        }
-
-        // 标记任务为活动状态，发送给工作线程处理
-        activeTasks.add(task.relativePath);
-        updateTaskTimestamp(task.relativePath);
-        global.__thumbActiveCount = (global.__thumbActiveCount || 0) + 1;
-        worker.postMessage({ ...task, thumbsDir: THUMBS_DIR });
+function dispatchThumbnailTask(task, context = 'ondemand') {
+    if (!task || !idleThumbnailWorkers.length) {
+        return false;
     }
+
+    // 额外防御：若拿到非媒体任务，直接丢弃
+    if (!/\.(jpe?g|png|webp|gif|mp4|webm|mov)$/i.test(task.filePath || task.relativePath || '')) {
+        return false;
+    }
+
+    // 检查任务是否已在处理中，避免重复处理
+    if (activeTasks.has(task.relativePath)) {
+        return false;
+    }
+
+    const worker = idleThumbnailWorkers.shift();
+    if (!worker) {
+        return false;
+    }
+
+    // 标记任务为活动状态，发送给工作线程处理
+    activeTasks.add(task.relativePath);
+    updateTaskTimestamp(task.relativePath);
+    global.__thumbActiveCount = (global.__thumbActiveCount || 0) + 1;
+    worker.postMessage({ ...task, thumbsDir: THUMBS_DIR });
+    
+    // 根据调用上下文显示不同的日志
+    const logPrefix = context === 'batch' ? '[批量补全]' : '[按需生成]';
+    logger.debug(`${logPrefix} 缩略图任务已派发: ${task.relativePath}`);
+    return true;
 }
 
 /**
- * 检查任务是否已在队列或正在处理中
- * @param {string} relativePath - 相对路径
- * @returns {boolean} 如果任务已排队或正在处理返回true
- */
-function isTaskQueuedOrActive(relativePath) {
-    if (activeTasks.has(relativePath)) return true;
-    if (highPriorityThumbnailQueue.some(t => t.relativePath === relativePath)) return true;
-    if (lowPriorityThumbnailQueue.some(t => t.relativePath === relativePath)) return true;
-    return false;
-}
-
-/**
- * 确保缩略图存在
- * 检查缩略图是否存在，不存在则创建生成任务
+ * 确保缩略图存在 - 按需生成版本
+ * 检查缩略图是否存在，不存在则立即创建生成任务
  * @param {string} sourceAbsPath - 源文件绝对路径
  * @param {string} sourceRelPath - 源文件相对路径
  * @returns {Promise<Object>} 缩略图状态信息
@@ -454,35 +431,16 @@ async function ensureThumbnailExists(sourceAbsPath, sourceRelPath) {
             return { status: 'failed' };
         }
 
-        // 入队：队列模式 or 本地模式
-        if (QUEUE_MODE) {
-            try {
-                const queue = new Queue(THUMBNAIL_QUEUE_NAME, { connection: bullConnection });
-                await queue.add('thumb', { filePath: sourceAbsPath, relativePath: sourceRelPath, type: isVideo ? 'video' : 'photo' }, {
-                    priority: 1,
-                    attempts: 3,
-                    removeOnComplete: 1000,
-                    removeOnFail: 200,
-                });
-                logger.info(`[队列] 已入队缩略图任务: ${sourceRelPath}`);
-            } catch (e) {
-                logger.warn(`[队列] 入队缩略图任务失败，回退本地队列: ${e && e.message}`);
-                highPriorityThumbnailQueue.unshift({ filePath: sourceAbsPath, relativePath: sourceRelPath, type: isVideo ? 'video' : 'photo' });
-                dispatchThumbnailTask();
-            }
-        } else {
-            // 本地队列
-            if (!isTaskQueuedOrActive(sourceRelPath)) {
-                logger.info(`[高优先级] 浏览器请求缩略图 ${sourceRelPath}，任务插入VIP队列。`);
-                highPriorityThumbnailQueue.unshift({
-                    filePath: sourceAbsPath,
-                    relativePath: sourceRelPath,
-                    type: isVideo ? 'video' : 'photo'
-                });
-                dispatchThumbnailTask();
-            } else {
-                logger.debug(`缩略图 ${sourceRelPath} 已在队列或正在处理中，等待完成。`);
-            }
+        // 按需生成：立即派发任务
+        const task = {
+            filePath: sourceAbsPath,
+            relativePath: sourceRelPath,
+            type: isVideo ? 'video' : 'photo'
+        };
+
+        const dispatched = dispatchThumbnailTask(task);
+        if (!dispatched) {
+            logger.warn(`[按需生成] 任务派发失败: ${sourceRelPath} (工作线程繁忙或重复任务)`);
         }
 
         return { status: 'processing' };
@@ -490,25 +448,193 @@ async function ensureThumbnailExists(sourceAbsPath, sourceRelPath) {
 }
 
 /**
- * 启动空闲缩略图生成任务
- * 向索引工作线程请求所有媒体文件，用于后台批量生成缩略图
+ * 批量补全缺失的缩略图
+ * 扫描数据库中状态为 missing 或 failed 的文件，批量生成缩略图
+ * @param {number} limit - 批量处理的数量限制，默认1000
+ * @returns {Promise<Object>} 补全结果统计
  */
-async function startIdleThumbnailGeneration() {
-    if (QUEUE_MODE) {
-        logger.info('[队列] 略过本地批量后台生成，由维护任务批量入队。');
-        return;
+async function batchGenerateMissingThumbnails(limit = 1000) {
+    try {
+        const { dbAll } = require('../db/multi-db');
+        
+        // 查询需要补全的缩略图
+        // 注意：不排除'processing'状态，因为可能有任务处理失败后需要重新处理
+        const missingThumbs = await dbAll('main', `
+            SELECT path FROM thumb_status 
+            WHERE status IN ('missing', 'failed', 'pending') 
+            ORDER BY last_checked ASC 
+            LIMIT ?
+        `, [limit]);
+
+        logger.debug(`[批量补全] 数据库查询结果: 找到 ${missingThumbs?.length || 0} 个需要补全的缩略图`);
+        
+        // 添加更详细的调试信息
+        if (missingThumbs && missingThumbs.length > 0) {
+            // 查询各状态的总数，用于调试
+            const statusCounts = await dbAll('main', `
+                SELECT status, COUNT(*) as count 
+                FROM thumb_status 
+                WHERE status IN ('missing', 'failed', 'pending', 'processing') 
+                GROUP BY status
+            `);
+            logger.debug(`[批量补全] 当前状态统计: ${statusCounts.map(s => `${s.status}:${s.count}`).join(', ')}`);
+        }
+        
+        // 调试：显示前5个需要补全的文件
+        if (missingThumbs && missingThumbs.length > 0) {
+            const samplePaths = missingThumbs.slice(0, 5).map(row => row.path);
+            logger.debug(`[批量补全] 示例文件: ${samplePaths.join(', ')}`);
+        }
+
+        if (!missingThumbs || missingThumbs.length === 0) {
+            return { 
+                success: true, 
+                message: '没有发现需要补全的缩略图',
+                processed: 0,
+                queued: 0,
+                skipped: 0,
+                foundMissing: 0  // 关键：没有找到缺失的缩略图
+            };
+        }
+
+        let queued = 0;
+        let skipped = 0;
+
+        // 辅助：等待任意工人空闲（最多10秒防止卡死）
+        function waitForIdle(timeoutMs = 10000) {
+            return new Promise((resolve) => {
+                let done = false;
+                const handler = () => { if (!done) { done = true; eventBus.off('thumb-worker-idle', handler); resolve(); } };
+                eventBus.once('thumb-worker-idle', handler);
+                setTimeout(() => { if (!done) { done = true; eventBus.off('thumb-worker-idle', handler); resolve(); } }, timeoutMs);
+            });
+        }
+
+        // 按可用工人持续派发，直到本批全部入队
+        const { idleThumbnailWorkers } = require('./worker.manager');
+        const { NUM_WORKERS } = require('../config');
+        // 优化：批量补全时减少预留按需工人数量（默认为0，最大并发）
+        let RESERVED_ONDEMAND = Math.max(0, Math.floor(Number(process.env.THUMB_ONDEMAND_RESERVE || 0)));
+        RESERVED_ONDEMAND = Math.max(0, Math.min(RESERVED_ONDEMAND, Math.max(0, NUM_WORKERS - 2))); // 确保至少留2个工人用于批量补全
+        logger.debug(`[批量补全] 预留按需工人数: ${RESERVED_ONDEMAND}/${NUM_WORKERS} (可用工人: ${idleThumbnailWorkers.length})`);
+
+        // 智能负载控制：确保不影响按需生成和系统运行
+        const cpuCount = require('os').cpus().length;
+        const totalMemoryGB = Math.floor(require('os').totalmem() / (1024 * 1024 * 1024));
+        const currentLoad = require('os').loadavg()[0]; // 1分钟平均负载
+        const isHighLoad = currentLoad > cpuCount * 0.8; // 负载超过80%认为高负载
+
+        // 动态调整预留策略，确保按需生成不受影响
+        if (isHighLoad) {
+            RESERVED_ONDEMAND = Math.max(2, Math.floor(NUM_WORKERS * 0.4)); // 高负载时预留更多工人
+            logger.warn(`[批量补全] 检测到高负载状态 (${currentLoad.toFixed(1)}/${cpuCount})，增加预留工人到${RESERVED_ONDEMAND}`);
+        }
+
+        // 并发控制：根据系统负载动态调整
+        let MAX_CONCURRENT_WAITS;
+        if (isHighLoad) {
+            MAX_CONCURRENT_WAITS = Math.min(3, NUM_WORKERS); // 高负载时降低并发
+        } else {
+            MAX_CONCURRENT_WAITS = Math.min(8, NUM_WORKERS);
+        }
+
+        logger.debug(`[批量补全] 负载控制: CPU负载${currentLoad.toFixed(1)}/${cpuCount}, 预留${RESERVED_ONDEMAND}/${NUM_WORKERS}, 并发上限${MAX_CONCURRENT_WAITS}`);
+
+        let currentWaits = 0;
+        let i = 0;
+        while (i < missingThumbs.length) {
+            const available = idleThumbnailWorkers.length - RESERVED_ONDEMAND;
+            if (available <= 0) {
+                // 无可用工人（考虑预留），等待一个工人释放
+                if (currentWaits >= MAX_CONCURRENT_WAITS) {
+                    // 避免过多并发等待，短暂延迟后重试
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    continue;
+                }
+                currentWaits++;
+                await waitForIdle(10000);
+                currentWaits--;
+                continue;
+            }
+
+            const relativePath = missingThumbs[i].path;
+            const sourceAbsPath = path.join(require('../config').PHOTOS_DIR, relativePath);
+
+            // 源文件检查
+            try {
+                await fs.access(sourceAbsPath);
+            } catch {
+                skipped++;
+                i++;
+                continue;
+            }
+
+            // 去重：已在处理则跳过
+            if (activeTasks.has(relativePath)) {
+                skipped++;
+                i++;
+                continue;
+            }
+
+            const isVideo = /\.(mp4|webm|mov)$/i.test(relativePath);
+            const task = { filePath: sourceAbsPath, relativePath, type: isVideo ? 'video' : 'photo' };
+
+            const dispatched = dispatchThumbnailTask(task, 'batch');
+            if (dispatched) {
+                queued++;
+                
+                // 立即更新数据库状态为processing，避免下一轮重复查询
+                // 注意：不更新last_checked，保持原有的排序逻辑
+                try {
+                    const { runAsync } = require('../db/multi-db');
+                    await runAsync('main', 
+                        'UPDATE thumb_status SET status = ? WHERE path = ?',
+                        ['processing', relativePath]
+                    );
+                } catch (e) {
+                    logger.warn(`[批量补全] 更新任务状态失败: ${relativePath}, ${e.message}`);
+                }
+                
+                i++;
+
+                // 智能延迟控制：根据负载状态添加延迟，避免系统过载
+                const shouldAddDelay = i > 0 && (
+                    // 高负载时每处理几个任务就延迟
+                    (isHighLoad && i % Math.floor(available * 1) === 0) ||
+                    // 低端配置时每处理几个任务就延迟
+                    ((cpuCount <= 4 || totalMemoryGB <= 4) && i % Math.floor(available * 2) === 0)
+                );
+
+                if (shouldAddDelay) {
+                    const delayMs = isHighLoad ? 500 : 100; // 高负载时延迟更长
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                }
+            } else {
+                // 理论上此时应仅发生于瞬时并发，等待下一次空闲
+                await waitForIdle(5000);
+            }
+        }
+
+        logger.debug(`[手动补全] 缩略图批量补全完成: 已排队 ${queued} 个任务，跳过 ${skipped} 个文件`);
+        
+        return {
+            success: true,
+            message: `批量补全任务已启动`,
+            processed: missingThumbs.length,  // 返回本批次处理的总数量
+            queued: queued,                   // 返回实际排队的任务数量
+            skipped: skipped,
+            foundMissing: missingThumbs.length  // 新增：本批次找到的缺失数量
+        };
+    } catch (error) {
+        logger.error('批量补全缩略图失败:', error);
+        throw error;
     }
-    logger.info('[Main-Thread] 准备启动智能缩略图后台生成任务...');
-    indexingWorker.postMessage({ type: 'get_all_media_items' });
 }
 
 // 导出缩略图服务函数
 module.exports = {
     setupThumbnailWorkerListeners,    // 设置工作线程监听器
-    dispatchThumbnailTask,            // 调度缩略图任务
-    isTaskQueuedOrActive,             // 检查任务状态
-    ensureThumbnailExists,            // 确保缩略图存在
-    startIdleThumbnailGeneration,     // 启动后台生成任务
-    lowPriorityThumbnailQueue,        // 低优先级队列（供外部访问）
-    queueThumbStatusUpdate,           // 队列缩略图状态更新（供队列工作进程使用）
+    ensureThumbnailExists,            // 确保缩略图存在（按需生成）
+    batchGenerateMissingThumbnails,   // 批量补全缺失的缩略图
+    queueThumbStatusUpdate,           // 队列缩略图状态更新
 };

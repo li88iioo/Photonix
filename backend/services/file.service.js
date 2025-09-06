@@ -47,6 +47,73 @@ const limitDimensionProbe = createConcurrencyLimiter(DIMENSION_PROBE_CONCURRENCY
 const CACHE_DURATION = 604800; // 7天缓存
 // 外部化缓存：移除进程内大 LRU，统一使用 Redis 作为封面缓存后端
 
+// 批量日志统计器
+class BatchLogStats {
+    constructor() {
+        this.reset();
+        this.flushInterval = 5000; // 5秒刷新一次统计
+        this.lastFlush = Date.now();
+    }
+    
+    reset() {
+        this.dbHitCount = 0;
+        this.dbMissCount = 0;
+        this.currentDir = '';
+        this.processedDirs = new Set();
+    }
+    
+    recordDbHit(filePath) {
+        this.dbHitCount++;
+        const dir = path.dirname(filePath);
+        if (dir !== this.currentDir) {
+            this.currentDir = dir;
+            this.processedDirs.add(dir);
+        }
+        this.checkFlush();
+    }
+    
+    recordDbMiss(filePath) {
+        this.dbMissCount++;
+        const dir = path.dirname(filePath);
+        if (dir !== this.currentDir) {
+            this.currentDir = dir;
+            this.processedDirs.add(dir);
+        }
+        this.checkFlush();
+    }
+    
+    checkFlush() {
+        const now = Date.now();
+        if (now - this.lastFlush > this.flushInterval && (this.dbHitCount > 0 || this.dbMissCount > 0)) {
+            this.flush();
+        }
+    }
+    
+    flush() {
+        if (this.dbHitCount > 0 || this.dbMissCount > 0) {
+            const dirCount = this.processedDirs.size;
+            const totalFiles = this.dbHitCount + this.dbMissCount;
+            
+            if (this.dbHitCount > 0) {
+                logger.debug(`批量使用数据库预存储尺寸: ${this.dbHitCount} 个文件 (${dirCount} 个目录)`);
+            }
+            if (this.dbMissCount > 0) {
+                logger.debug(`动态获取尺寸: ${this.dbMissCount} 个文件 (${dirCount} 个目录)`);
+            }
+            
+            this.reset();
+            this.lastFlush = Date.now();
+        }
+    }
+}
+
+const batchLogStats = new BatchLogStats();
+
+// 进程退出时刷新剩余统计
+process.on('exit', () => batchLogStats.flush());
+process.on('SIGINT', () => { batchLogStats.flush(); process.exit(); });
+process.on('SIGTERM', () => { batchLogStats.flush(); process.exit(); });
+
 
 // 确保用于浏览/封面的关键索引，仅执行一次
 let browseIndexesEnsured = false;
@@ -553,12 +620,12 @@ async function getMediaDimensions(entryRelativePath, fullAbsPath, isVideo, mtime
 
     // 如果数据库中有有效的尺寸信息，直接使用
     if (dimensions.width && dimensions.height && dimensions.width > 0 && dimensions.height > 0) {
-        logger.debug(`使用数据库预存储的 ${entryRelativePath} 尺寸: ${dimensions.width}x${dimensions.height}`);
+        batchLogStats.recordDbHit(entryRelativePath);
         return dimensions;
     }
 
     // 如果数据库中没有宽高信息或数据无效，则动态获取
-    logger.debug(`数据库中没有尺寸信息，开始动态获取 ${entryRelativePath}`);
+    batchLogStats.recordDbMiss(entryRelativePath);
     const cacheKey = `dim:${entryRelativePath}:${mtime}`;
     let cachedDimensions = null;
 

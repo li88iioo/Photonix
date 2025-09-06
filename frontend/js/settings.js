@@ -1,13 +1,872 @@
 // frontend/js/settings.js
 
-import { state } from './state.js';
+import { state, syncState, validateSyncState, cleanupSyncState } from './state.js';
 import { fetchSettings, saveSettings, waitForSettingsUpdate } from './api.js';
 import { showNotification } from './utils.js';
+import { getAuthToken } from './auth.js';
+
 
 /**
- * 设置管理模块
- * 负责处理应用程序的设置界面、数据存储和用户交互
+ * 获取状态表数据
  */
+async function fetchStatusTables() {
+    try {
+        const token = getAuthToken();
+        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+
+        const response = await fetch('/api/settings/status-tables', {
+            method: 'GET',
+            headers
+        });
+
+        if (!response.ok) {
+            throw new Error(`获取状态表失败: ${response.status}`);
+        }
+
+        const data = await response.json();
+        return data.data;
+    } catch (error) {
+        console.error('获取状态表数据失败:', error);
+        throw error;
+    }
+}
+
+/**
+ * 触发补全操作
+ */
+async function triggerSync(type, options = {}) {
+    try {
+        // 使用状态管理类设置静默模式
+        syncState.setSilentMode(options.silent);
+        const isSilentMode = syncState.isSilent;
+
+        // 验证状态设置
+        validateSyncState();
+
+        // 非静默模式显示加载状态
+        if (!isSilentMode) {
+            showPodLoading(type, true);
+            showProgressUpdate(type, true);
+        }
+
+        // 开始实时监控（静默模式也需要监控进度）
+        startRealtimeMonitoring(type);
+
+        const token = getAuthToken();
+        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+
+        const response = await fetch(`/api/settings/sync/${type}`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                loop: options.loop || false,
+                silent: syncState.isSilent || false
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.message || `补全失败: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // 非静默模式显示成功通知
+        if (!syncState.isSilent) {
+            showNotification(`补全${type === 'index' ? '索引' : type === 'thumbnail' ? '缩略图' : 'HLS'}成功`, 'success');
+        } else if (type === 'thumbnail') {
+            // 静默模式下只显示简短的后台补全开始提示
+            showNotification('缩略图后台补全已启动，将自动补全所有缺失文件', 'info');
+        }
+
+        // 刷新状态数据
+        await loadStatusTables();
+
+        return data;
+    } catch (error) {
+        console.error(`触发${type}补全失败:`, error);
+        // 静默模式下仍然显示错误通知，确保用户知道失败了
+        showNotification(`补全失败: ${error.message}`, 'error');
+        throw error;
+    } finally {
+        // 非静默模式隐藏加载状态
+        if (!syncState.isSilent) {
+            showPodLoading(type, false);
+            // 注意：进度更新已在startRealtimeMonitoring中处理，这里不再重复
+        }
+    }
+}
+
+/**
+ * 触发同步操作（删除冗余文件）
+ */
+async function triggerCleanup(type) {
+    try {
+        // 显示加载状态
+        showPodLoading(type, true);
+        showProgressUpdate(type, true);
+
+        const token = getAuthToken();
+        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+
+        const response = await fetch(`/api/settings/cleanup/${type}`, {
+            method: 'POST',
+            headers
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.message || `同步失败: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // 检查是否已经同步
+        if (data.data && data.data.skipped) {
+            showNotification(data.data.message, 'info');
+        } else {
+            // 显示成功通知
+            showNotification(`同步${type === 'thumbnail' ? '缩略图' : 'HLS'}成功`, 'success');
+        }
+
+        // 刷新状态数据
+        await loadStatusTables();
+
+        return data;
+    } catch (error) {
+        console.error(`触发${type}同步失败:`, error);
+        showNotification(`同步失败: ${error.message}`, 'error');
+        throw error;
+    } finally {
+        // 隐藏加载状态
+        showPodLoading(type, false);
+        setTimeout(() => showProgressUpdate(type, false), 2000); // 延迟2秒隐藏进度更新指示器
+    }
+}
+
+/**
+ * 触发缩略图批量补全（支持循环模式）
+ */
+async function triggerThumbnailBatchSync(options = {}) {
+    try {
+        // 静默模式下不输出启动日志
+        // 注释掉批量补全日志以减少控制台噪音
+        // if (!options.silent) {
+        //     console.debug('[批量补全] 启动缩略图批量补全，启用循环模式');
+        // }
+        // console.debug('[批量补全] 接收到的参数:', options);
+
+        // 验证状态设置
+        validateSyncState();
+
+        // 发送批量补全请求到正确的API端点
+        const token = getAuthToken();
+        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+        headers['Content-Type'] = 'application/json';
+
+        const requestBody = {
+            limit: 1000,
+            loop: options.loop || false,
+            silent: options.silent || false
+        };
+        
+        // console.debug('[批量补全] 发送的请求体:', requestBody);
+
+        const response = await fetch('/api/thumbnail/batch', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(requestBody)
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.message || `批量补全失败: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // 显示详细的通知信息
+        const processedCount = data.data?.processed || 0;
+        if (processedCount > 0) {
+            showNotification(`缩略图补全已启动，正在处理 ${processedCount} 个文件`, 'success');
+        } else {
+            showNotification('缩略图补全已启动，正在扫描文件...', 'info');
+        }
+
+        // 启动实时监控（即使在静默模式下也需要监控进度）
+        startRealtimeMonitoring('thumbnail');
+
+        return data;
+    } catch (error) {
+        console.error('触发缩略图批量补全失败:', error);
+        showNotification(`批量补全失败: ${error.message}`, 'error');
+        throw error;
+    }
+}
+
+/**
+ * 重新同步缩略图状态
+ */
+async function resyncThumbnails() {
+    try {
+        // 显示加载状态
+        showPodLoading('thumbnail', true);
+        showProgressUpdate('thumbnail', true);
+
+        const token = getAuthToken();
+        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+
+        const response = await fetch('/api/settings/resync/thumbnails', {
+            method: 'POST',
+            headers
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.message || `重同步失败: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // 显示成功通知
+        showNotification(data.message || '缩略图状态重同步完成', 'success');
+
+        // 刷新状态数据
+        await loadStatusTables();
+
+        return data;
+    } catch (error) {
+        console.error('缩略图状态重同步失败:', error);
+        showNotification(`重同步失败: ${error.message}`, 'error');
+        throw error;
+    } finally {
+        // 隐藏加载状态
+        showPodLoading('thumbnail', false);
+        setTimeout(() => showProgressUpdate('thumbnail', false), 2000);
+    }
+}
+
+/**
+ * 显示/隐藏信息环加载状态
+ */
+function showPodLoading(type, show) {
+    const loadingElement = document.getElementById(`${type}-loading`);
+    if (loadingElement) {
+        loadingElement.classList.toggle('active', show);
+    }
+}
+
+/**
+ * 显示/隐藏进度更新指示器
+ */
+function showProgressUpdate(type, show) {
+    const updateElement = document.getElementById(`${type}-progress-update`);
+    if (updateElement) {
+        updateElement.classList.toggle('active', show);
+    }
+}
+
+/**
+ * 实时更新状态数据
+ */
+function updateStatusRealtime(type, data) {
+    const prefix = type;
+
+    // 更新百分比
+    const percentElement = document.getElementById(`${prefix}-percent`);
+    if (percentElement && data.percent !== undefined) {
+        percentElement.textContent = `${data.percent}%`;
+
+        // 更新进度环
+        const progressCircle = document.querySelector(`[data-type="${type}"] .status-chart-progress-front`);
+        if (progressCircle) {
+            const progressOffset = 329 - (329 * data.percent / 100);
+            progressCircle.style.strokeDashoffset = progressOffset;
+        }
+    }
+
+    // 更新状态信息
+    if (data.status) {
+        const statusElement = document.getElementById(`${prefix}-status`);
+        if (statusElement) {
+            const statusClass = getStatusClass(data.status);
+            statusElement.className = `status-detail-value ${statusClass}`;
+            statusElement.textContent = getStatusDisplayName(data.status);
+        }
+    }
+
+    // 更新数值
+    const fields = ['processed', 'fts', 'total', 'files', 'unprocessed', 'sourceTotal'];
+    fields.forEach(field => {
+        if (data[field] !== undefined) {
+            const element = document.getElementById(`${prefix}-${field}`);
+            if (element) {
+                element.textContent = data[field];
+
+                // 为processed和unprocessed添加状态颜色
+                if (field === 'processed') {
+                    element.className = 'status-detail-value status-success';
+                } else if (field === 'unprocessed') {
+                    element.className = 'status-detail-value status-warning';
+                }
+            }
+        }
+    });
+
+    // 更新缩略图状态统计
+    if (data.stats && Array.isArray(data.stats)) {
+        data.stats.forEach(stat => {
+            const element = document.getElementById(`${prefix}-${stat.status}`);
+            if (element) {
+                const statusClass = getStatusClass(stat.status);
+                element.className = `status-detail-value ${statusClass}`;
+                element.textContent = stat.count;
+            }
+        });
+    }
+
+    // 更新时间戳
+    if (data.lastUpdated) {
+        const timeElement = document.getElementById(`${prefix}-last-updated`);
+        if (timeElement) {
+            timeElement.textContent = new Date(data.lastUpdated).toLocaleString();
+        }
+    }
+
+    if (data.lastSync) {
+        const syncElement = document.getElementById(`${prefix}-last-sync`);
+        if (syncElement) {
+            syncElement.textContent = new Date(data.lastSync).toLocaleString();
+        }
+    }
+}
+
+/**
+ * 开始实时进度监控
+ */
+function startRealtimeMonitoring(type) {
+    // 使用状态管理类开始监控
+    syncState.startMonitoring(type);
+
+    // 验证监控开始状态
+    // console.debug('[监控开始] 实时监控已启动，类型:', type);
+    validateSyncState();
+    
+    // 设置定期更新
+    const intervalId = setInterval(async () => {
+        try {
+            const token = getAuthToken();
+            const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+
+            const response = await fetch('/api/settings/status-tables', {
+                headers
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                let statusData = null;
+
+                // 根据类型获取对应的状态数据
+                switch (type) {
+                    case 'index':
+                        statusData = data.index;
+                        break;
+                    case 'thumbnail':
+                        statusData = data.thumbnail;
+                        break;
+                    case 'hls':
+                        statusData = data.hls;
+                        break;
+                }
+
+                if (statusData) {
+                    // 计算实时百分比
+                    let percent = 0;
+                    if (type === 'index') {
+                        const totalItems = statusData.itemsStats?.reduce((sum, stat) => sum + stat.count, 0) || 0;
+                        percent = totalItems > 0 ? Math.round((statusData.processedFiles / totalItems) * 100) : 0;
+                    } else if (type === 'thumbnail') {
+                        // 使用源文件总数进行准确的进度计算
+                        const sourceTotal = statusData.sourceTotal || statusData.total || 0;
+
+                        // 计算成功生成的缩略图数量
+                        const successStates = ['exists', 'complete'];
+                        const successCount = statusData.stats?.reduce((sum, stat) => {
+                            return successStates.includes(stat.status) ? sum + stat.count : sum;
+                        }, 0) || 0;
+
+                        // fallback到旧的查找方式
+                        const existsCount = statusData.stats?.find(s => s.status === 'exists')?.count || 0;
+                        const actualSuccessCount = successCount > 0 ? successCount : existsCount;
+
+                        percent = sourceTotal > 0 ? Math.round((actualSuccessCount / sourceTotal) * 100) : 0;
+                    } else if (type === 'hls') {
+                        const totalVideos = statusData.totalVideos || 0;
+                        const processedVideos = statusData.processedVideos || 0;
+                        percent = totalVideos > 0 ? Math.round((processedVideos / totalVideos) * 100) : 0;
+                    }
+
+                    // 更新实时数据
+                    updateStatusRealtime(type, {
+                        ...statusData,
+                        percent
+                    });
+                }
+            }
+        } catch (error) {
+            console.error('实时监控更新失败:', error);
+        }
+    }, 2000); // 每2秒更新一次
+
+    // 30秒后停止监控
+    const timeoutId = setTimeout(() => {
+        console.debug('[监控结束] 30秒监控时间到，停止监控');
+        // 使用状态管理类停止监控
+        syncState.stopMonitoring();
+
+        // 验证监控停止状态
+        validateSyncState();
+
+        // 根据静默模式决定是否隐藏进度更新
+        if (!syncState.isSilent) {
+            showProgressUpdate(type, false);
+        }
+    }, 30000);
+    
+    // 将定时器ID保存到状态管理类中
+    syncState.setMonitoringTimers(intervalId, timeoutId);
+}
+
+/**
+ * 获取图标SVG
+ */
+function getIconSVG(iconName) {
+    const icons = {
+        'magicSync': `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 3.5C10.5 2.5 8 2.5 6 3.5L4.5 4.5"/><path d="M3.5 12.5C5.5 13.5 8 13.5 10 12.5L11.5 11.5"/><path d="M11.5 4.5A5 5 0 0 1 11.5 11.5"/><path d="M4.5 11.5A5 5 0 0 0 4.5 4.5"/><path d="M8 5.5V4M10.5 6L11.5 5.5M12 8H13.5M10.5 10L11.5 10.5"/></svg>`,
+        'vortexSync': `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 2.5A5.5 5.5 0 0 1 8 8.03A5.5 5.5 0 0 1 2.5 2.5"/><path d="M2.5 13.5A5.5 5.5 0 0 1 8 7.97A5.5 5.5 0 0 1 13.5 13.5"/><path d="M11.5 2.5h2v2"/><path d="M4.5 13.5h-2v-2"/></svg>`,
+        'sweepClean': `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 5.5C5.5 4.5 8.5 4.5 11.5 5.5"/><path d="M2.5 8C5.5 7 8.5 7 11.5 8"/><path d="M2.5 10.5C5.5 9.5 8.5 9.5 11.5 10.5"/><circle cx="13.5" cy="8" r="0.5" fill="currentColor"/><circle cx="13" cy="10.5" r="0.5" fill="currentColor"/></svg>`
+    };
+    return icons[iconName] || '';
+}
+
+
+/**
+ * 渲染索引状态
+ */
+function renderIndexStatus(statusData) {
+    const container = document.getElementById('index-status');
+    if (!container) return;
+
+    const statusClass = getStatusClass(statusData.status);
+    const totalItems = statusData.itemsStats?.reduce((sum, stat) => sum + stat.count, 0) || 0;
+    const processedPercent = totalItems > 0 ? Math.round((statusData.processedFiles / totalItems) * 100) : 0;
+
+    let html = `
+        <div class="status-card-new">
+            <div class="status-pod-loading" id="index-loading">
+                <div class="spinner"></div>
+            </div>
+            <div class="card-header-new">
+                <h3 class="card-title-new">索引详细信息</h3>
+                <span class="status-badge-new ${statusClass}" id="index-percent">${processedPercent}%</span>
+            </div>
+            <div class="linear-progress">
+                <div class="linear-progress-bar" id="index-progress-bar" style="width: ${processedPercent}%;"></div>
+            </div>
+            <div class="details-grid-new">
+                <div class="detail-item-new">
+                    <span class="detail-label-new">状态</span>
+                    <span class="detail-value-new ${statusClass}" id="index-status">${getStatusDisplayName(statusData.status)}</span>
+                </div>
+                <div class="detail-item-new">
+                    <span class="detail-label-new">已处理</span>
+                    <span class="detail-value-new status-success" id="index-processed">${statusData.processedFiles || 0}</span>
+                </div>
+                <div class="detail-item-new">
+                    <span class="detail-label-new">FTS索引</span>
+                    <span class="detail-value-new status-success" id="index-fts">${statusData.ftsCount || 0}</span>
+                </div>
+                <div class="detail-item-new">
+                    <span class="detail-label-new">总文件</span>
+                    <span class="detail-value-new" id="index-total">${totalItems}</span>
+                </div>
+            </div>
+            <div class="card-footer-new">
+                <span class="timestamp-new" id="index-last-updated">最后更新: ${statusData.lastUpdated ? new Date(statusData.lastUpdated).toLocaleString() : '从未'}</span>
+            </div>
+        </div>
+    `;
+
+    container.innerHTML = html;
+}
+
+/**
+ * 渲染缩略图状态
+ */
+function renderThumbnailStatus(statusData) {
+    const container = document.getElementById('thumbnail-status');
+    if (!container) return;
+
+    // 调试：输出接收到的数据（开发模式下）
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        console.debug('renderThumbnailStatus received:', statusData);
+    }
+
+    // 获取源媒体文件总数
+    const sourceTotal = statusData.sourceTotal || 0;
+
+    // 获取缩略图状态统计
+    const total = statusData.total || 0;
+    const stats = statusData.stats || [];
+
+    // 计算成功生成的缩略图数量
+    const successStates = ['exists', 'complete'];
+    let actualSuccessCount = 0;
+
+    if (stats.length > 0) {
+        actualSuccessCount = stats.reduce((sum, stat) => {
+            return successStates.includes(stat.status) ? sum + stat.count : sum;
+        }, 0);
+    } else if (statusData.fileSystemStats?.actualFiles) {
+        // 使用文件系统统计作为fallback
+        actualSuccessCount = statusData.fileSystemStats.actualFiles;
+        console.debug('使用文件系统统计作为fallback:', actualSuccessCount);
+    }
+
+    // 计算完成百分比，确保不会出现除零错误
+    const completedPercent = sourceTotal > 0 ? Math.round((actualSuccessCount / sourceTotal) * 100) : 0;
+
+    // 状态指示器
+    let statusIndicator = '';
+    if (statusData.autoFixed) {
+        statusIndicator = '<span class="status-indicator status-success">已自动修复</span>';
+    } else if (statusData.usedFallback) {
+        statusIndicator = '<span class="status-indicator status-warning">使用文件系统数据</span>';
+    } else if (statusData.error) {
+        statusIndicator = '<span class="status-indicator status-error">数据获取失败</span>';
+    }
+
+    // 计算缺失数量
+    const missingCount = stats.find(stat => stat.status === 'missing')?.count || 0;
+    const statusClass = missingCount > 0 ? getStatusClass('pending') : getStatusClass('complete');
+
+    let html = `
+        <div class="status-card-new">
+            <div class="status-pod-loading" id="thumbnail-loading">
+                <div class="spinner"></div>
+            </div>
+            <div class="card-header-new">
+                <h3 class="card-title-new">缩略图详细信息 ${statusIndicator}</h3>
+                <span class="status-badge-new ${statusClass}" id="thumbnail-percent">${completedPercent}%</span>
+            </div>
+            <div class="linear-progress">
+                <div class="linear-progress-bar" id="thumbnail-progress-bar" style="width: ${completedPercent}%;"></div>
+            </div>
+            <div class="details-grid-new">
+                ${stats.length > 0 ? stats.map(stat => {
+                    const statusClass = getStatusClass(stat.status);
+                    const displayName = getStatusDisplayName(stat.status);
+                    return `
+                        <div class="detail-item-new">
+                            <span class="detail-label-new">${displayName}</span>
+                            <span class="detail-value-new ${statusClass}" id="thumbnail-${stat.status}">${stat.count}</span>
+                        </div>
+                    `;
+                }).join('') : `
+                    <div class="detail-item-new">
+                        <span class="detail-label-new">已生成</span>
+                        <span class="detail-value-new status-success" id="thumbnail-exists">${actualSuccessCount}</span>
+                    </div>
+                `}
+                <div class="detail-item-new">
+                    <span class="detail-label-new">源文件总数</span>
+                    <span class="detail-value-new" id="thumbnail-source-total">${sourceTotal}</span>
+                </div>
+                <div class="detail-item-new">
+                    <span class="detail-label-new">数据库记录</span>
+                    <span class="detail-value-new" id="thumbnail-total">${total}</span>
+                </div>
+                ${statusData.fileSystemStats ? `
+                    <div class="detail-item-new">
+                        <span class="detail-label-new">实际文件</span>
+                        <span class="detail-value-new">${statusData.fileSystemStats.actualFiles}</span>
+                    </div>
+                ` : ''}
+            </div>
+            <div class="card-footer-new">
+                <span class="timestamp-new" id="thumbnail-last-sync">最后同步: ${statusData.lastSync ? new Date(statusData.lastSync).toLocaleString() : '从未'}</span>
+                <div class="actions-new">
+                    <button class="sync-btn" data-action="sync" data-type="thumbnail">
+                        ${getIconSVG('magicSync')}
+                        <span>补全</span>
+                    </button>
+                    <button class="sync-btn" data-action="resync" data-type="thumbnails">
+                        ${getIconSVG('vortexSync')}
+                        <span>重同步</span>
+                    </button>
+                    <button class="sync-btn" data-action="cleanup" data-type="thumbnail">
+                        ${getIconSVG('sweepClean')}
+                        <span>清理</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    container.innerHTML = html;
+}
+
+/**
+ * 渲染HLS状态
+ */
+function renderHlsStatus(statusData) {
+    const container = document.getElementById('hls-status');
+    if (!container) return;
+
+    const totalVideos = statusData.totalVideos || 0;
+    const processedVideos = statusData.processedVideos || 0;
+    const completedPercent = totalVideos > 0 ? Math.round((processedVideos / totalVideos) * 100) : 100;
+    const statusClass = getStatusClass(statusData.status || 'complete');
+
+    let html = `
+        <div class="status-card-new">
+            <div class="status-pod-loading" id="hls-loading">
+                <div class="spinner"></div>
+            </div>
+            <div class="card-header-new">
+                <h3 class="card-title-new">HLS详细信息</h3>
+                <span class="status-badge-new ${statusClass}" id="hls-percent">${completedPercent}%</span>
+            </div>
+            <div class="linear-progress">
+                <div class="linear-progress-bar" id="hls-progress-bar" style="width: ${completedPercent}%;"></div>
+            </div>
+            <div class="details-grid-new">
+                <div class="detail-item-new">
+                    <span class="detail-label-new">状态</span>
+                    <span class="detail-value-new ${statusClass}">${getStatusDisplayName(statusData.status || 'complete')}</span>
+                </div>
+                <div class="detail-item-new">
+                    <span class="detail-label-new">已处理</span>
+                    <span class="detail-value-new status-success">${processedVideos}</span>
+                </div>
+                <div class="detail-item-new">
+                    <span class="detail-label-new">总视频</span>
+                    <span class="detail-value-new">${totalVideos}</span>
+                </div>
+            </div>
+            <div class="card-footer-new">
+                <span class="timestamp-new" id="hls-last-sync">最后同步: ${statusData.lastSync ? new Date(statusData.lastSync).toLocaleString('zh-CN') : '从未'}</span>
+                <div class="actions-new">
+                    <button class="sync-btn" data-action="sync" data-type="hls">
+                        ${getIconSVG('magicSync')}
+                        <span>补全</span>
+                    </button>
+                    <button class="sync-btn" data-action="cleanup" data-type="hls">
+                        ${getIconSVG('sweepClean')}
+                        <span>同步</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    container.innerHTML = html;
+}
+
+/**
+ * 获取状态对应的CSS类名
+ */
+function getStatusClass(status) {
+    switch (status) {
+        case 'complete':
+        case 'exists':
+            return 'status-success';
+        case 'building':
+        case 'processing':
+        case 'pending':
+            return 'status-warning';
+        case 'error':
+        case 'failed':
+            return 'status-error';
+        case 'no-videos':
+        case 'unknown':
+            return 'status-info';
+        default:
+            return 'status-info';
+    }
+}
+
+/**
+ * 获取状态的显示名称
+ */
+function getStatusDisplayName(status) {
+    const names = {
+        'exists': '已生成',
+        'pending': '待处理',
+        'processing': '处理中',
+        'failed': '失败',
+        'complete': '完成',
+        'building': '构建中',
+        'error': '错误',
+        'unknown': '未知',
+        'no-videos': '无视频',
+        'missing': '缺失',
+        'idle': '空闲',
+        'running': '运行中',
+        'stopped': '已停止',
+        'ready': '就绪'
+    };
+    return names[status] || status;
+}
+
+/**
+ * 加载状态表数据
+ */
+async function loadStatusTables() {
+    const containers = ['index-status', 'thumbnail-status', 'hls-status'];
+
+    // 只在容器为空时显示加载状态，避免重复显示
+    containers.forEach(id => {
+        const container = document.getElementById(id);
+        if (container && !container.innerHTML.trim()) {
+            container.innerHTML = '<div class="status-loading"><div class="spinner"></div></div>';
+        }
+    });
+
+    try {
+        const statusData = await fetchStatusTables();
+
+        renderIndexStatus(statusData.index);
+
+        // 调试缩略图数据（开发模式下）
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            console.debug('Frontend thumbnail data:', statusData.thumbnail);
+        }
+
+        renderThumbnailStatus(statusData.thumbnail);
+        renderHlsStatus(statusData.hls);
+
+        showNotification('状态表数据已更新', 'success');
+    } catch (error) {
+        // 显示错误状态
+        containers.forEach(id => {
+            const container = document.getElementById(id);
+            if (container) {
+                container.innerHTML = `<div class="status-loading" style="color: var(--red-400);">加载失败: ${error.message}</div>`;
+            }
+        });
+        showNotification('加载状态表失败', 'error');
+    }
+}
+
+/**
+ * 设置补全按钮事件监听器
+ */
+function setupSyncButtonListeners() {
+    // 使用事件委托处理所有状态操作按钮
+    const settingsCard = document.getElementById('settings-card');
+    if (!settingsCard) return;
+
+    // 移除之前的监听器（如果存在）
+    settingsCard.removeEventListener('click', handleStatusButtonClick);
+    
+    // 添加事件委托监听器
+    settingsCard.addEventListener('click', handleStatusButtonClick);
+}
+
+/**
+ * 处理状态按钮点击事件
+ */
+async function handleStatusButtonClick(event) {
+    const button = event.target.closest('.sync-btn[data-action]');
+    if (!button) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const action = button.dataset.action;
+    const type = button.dataset.type;
+
+    if (!action || !type) return;
+
+    try {
+        switch (action) {
+            case 'sync':
+                // 缩略图补全默认启用循环模式，自动补全所有缺失文件
+                const isThumbnailSync = type === 'thumbnail';
+                // console.debug('[状态按钮] 点击事件:', { action, type, isThumbnailSync });
+
+                // 显示视觉反馈
+                showPodLoading(type, true);
+                showProgressUpdate(type, true);
+
+                // 禁用按钮防止重复点击
+                const originalHTML = button.innerHTML;
+                button.disabled = true;
+                button.innerHTML = '<span>处理中...</span>';
+
+                try {
+                    if (isThumbnailSync) {
+                        // 缩略图补全使用专门的批量补全API，支持循环模式
+                        // console.debug('[状态按钮] 调用缩略图批量补全，参数: {loop: true, silent: false}');
+                        await triggerThumbnailBatchSync({
+                            loop: true,
+                            silent: false  // 改为非静默模式，显示通知
+                        });
+                    } else {
+                        await triggerSync(type, {
+                            loop: false,
+                            silent: false
+                        });
+                    }
+                } finally {
+                    // 隐藏视觉反馈
+                    showPodLoading(type, false);
+                    setTimeout(() => showProgressUpdate(type, false), 2000);
+
+                    // 恢复按钮状态
+                    button.disabled = false;
+                    button.innerHTML = originalHTML;
+                }
+                break;
+            case 'cleanup':
+                // 禁用按钮防止重复点击
+                const cleanupOriginalHTML = button.innerHTML;
+                button.disabled = true;
+                button.innerHTML = '<span>清理中...</span>';
+
+                try {
+                    await triggerCleanup(type);
+                } finally {
+                    // 恢复按钮状态
+                    button.disabled = false;
+                    button.innerHTML = cleanupOriginalHTML;
+                }
+                break;
+            case 'resync':
+                if (type === 'thumbnails') {
+                    // 禁用按钮防止重复点击
+                    const resyncOriginalHTML = button.innerHTML;
+                    button.disabled = true;
+                    button.innerHTML = '<span>重同步中...</span>';
+
+                    try {
+                        await resyncThumbnails();
+                    } finally {
+                        // 恢复按钮状态
+                        button.disabled = false;
+                        button.innerHTML = resyncOriginalHTML;
+                    }
+                }
+                break;
+            default:
+                console.warn('未知的操作类型:', action);
+        }
+    } catch (error) {
+        console.error('状态操作失败:', error);
+        showNotification(`操作失败: ${error.message}`, 'error');
+    }
+}
 
 // --- DOM元素 ---
 const modal = document.getElementById('settings-modal');           // 设置模态框
@@ -60,6 +919,9 @@ const DEFAULT_AI_PROMPT = `请你扮演这张照片中的人物，以第一人�
  * 加载设置数据并初始化设置界面
  */
 export async function showSettingsModal() {
+    // 隐藏页面滚动条
+    document.body.classList.add('settings-open');
+    
     // 显示加载状态
     card.innerHTML = `<div style="display:flex;justify-content:center;align-items:center;height:100%;"><div class="spinner" style="width:3rem;height:3rem;"></div></div>`;
     modal.classList.add('visible');
@@ -82,6 +944,9 @@ export async function showSettingsModal() {
         requestAnimationFrame(() => {
             populateForm(settings);
             setupListeners();
+            setupSyncButtonListeners();
+            // 默认加载状态表数据
+            loadStatusTables();
         });
     } catch (error) {
         // 显示错误信息
@@ -96,6 +961,8 @@ export async function showSettingsModal() {
  */
 function closeSettingsModal() {
     modal.classList.remove('visible');
+    // 恢复页面滚动条
+    document.body.classList.remove('settings-open');
     modal.addEventListener('transitionend', () => {
         card.innerHTML = '';
     }, { once: true });
@@ -388,6 +1255,31 @@ function setupListeners() {
         panels.forEach(p => p.classList.remove('active'));
         btn.classList.add('active');
         card.querySelector(`#${btn.dataset.tab}-settings-content`).classList.add('active');
+
+        // 当切换到状态标签页时，重新加载状态表数据并隐藏footer
+        if (btn.dataset.tab === 'status') {
+            // 立即显示加载状态，避免空白
+            const containers = ['index-status', 'thumbnail-status', 'hls-status'];
+            containers.forEach(id => {
+                const container = document.getElementById(id);
+                if (container && !container.innerHTML.trim()) {
+                    container.innerHTML = '<div class="status-loading"><div class="spinner"></div></div>';
+                }
+            });
+            
+            loadStatusTables();
+            // 隐藏footer
+            const footer = card.querySelector('.settings-footer');
+            if (footer) {
+                footer.style.display = 'none';
+            }
+        } else {
+            // 切换到其他标签页时显示footer
+            const footer = card.querySelector('.settings-footer');
+            if (footer) {
+                footer.style.display = '';
+            }
+        }
     });
 
     // 关闭与取消按钮
@@ -577,3 +1469,7 @@ function showPasswordPrompt({ onConfirm, onCancel, useAdminSecret = false }) {
 
 // --- 导出 ---
 export { getLocalAISettings, setLocalAISettings };
+
+// 将关键函数暴露到全局作用域供HTML onclick使用
+window.triggerSync = triggerSync;
+window.showPodLoading = showPodLoading;

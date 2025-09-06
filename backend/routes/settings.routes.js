@@ -34,5 +34,11 @@ const updateSettingsSchema = Joi.object({
 router.post('/', validate(updateSettingsSchema), asyncHandler(settingsController.updateSettings));          // 更新系统设置
 router.get('/status', asyncHandler(settingsController.getSettingsUpdateStatus)); // 获取设置更新状态
 
+// 状态表相关接口
+router.get('/status-tables', asyncHandler(settingsController.getStatusTables));          // 获取状态表信息
+router.post('/sync/:type', asyncHandler(settingsController.triggerSync));                // 触发补全操作
+router.post('/cleanup/:type', asyncHandler(settingsController.triggerCleanup));           // 触发同步操作（删除冗余文件）
+router.post('/resync/thumbnails', asyncHandler(settingsController.resyncThumbnails));    // 重新同步缩略图状态
+
 // 导出设置路由模块
 module.exports = router;

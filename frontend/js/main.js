@@ -9,6 +9,12 @@ import { initializeSSE } from './sse.js';
 import { handleError, ErrorTypes, ErrorSeverity } from './error-handler.js';
 import { setupEventListeners } from './listeners.js';
 import { initializeRouter } from './router.js';
+import { blobUrlManager, savePageLazyState, restorePageLazyState, clearRestoreProtection } from './lazyload.js';
+
+// 将懒加载状态管理函数暴露到全局
+window.savePageLazyState = savePageLazyState;
+window.restorePageLazyState = restorePageLazyState;
+window.clearRestoreProtection = clearRestoreProtection;
 
 let appStarted = false;
 
@@ -194,6 +200,72 @@ if ('serviceWorker' in navigator) {
             .catch(err => console.log('ServiceWorker 注册失败: ', err));
     });
 }
+
+// 智能缓存清理策略
+let pageHiddenTime = 0;
+let isPageReallyHidden = false;
+
+// 初始化页面会话ID
+const sessionId = Date.now().toString();
+sessionStorage.setItem('pageSessionId', sessionId);
+// 减少会话ID日志输出，只在开发模式下输出
+if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    console.debug(`[会话管理] 初始化会话ID: ${sessionId}`);
+}
+
+// blob URL清理逻辑 - 只在真正离开时清理
+window.addEventListener('beforeunload', () => {
+    // 真正离开页面时才清理所有缓存
+    blobUrlManager.cleanupAll();
+    // 清理页面状态缓存
+    if (window.savePageLazyState) {
+        window.savePageLazyState(window.location.hash);
+    }
+});
+
+// 页面隐藏时的智能处理
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+        pageHiddenTime = Date.now();
+        isPageReallyHidden = false;
+
+        // 延迟清理，给临时切换标签页预留时间
+        setTimeout(() => {
+            if (document.visibilityState === 'hidden' && !isPageReallyHidden) {
+                isPageReallyHidden = true;
+                // 减少缓存清理日志输出，只在开发模式下输出
+                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                    console.debug('[缓存清理] 页面长时间隐藏，开始清理部分缓存');
+                }
+
+                // 只清理过期缓存，不清理所有缓存
+                blobUrlManager.cleanupExpired();
+
+                // 保存当前页面状态以便恢复
+                if (window.savePageLazyState && window.location.hash) {
+                    window.savePageLazyState(window.location.hash);
+                }
+            }
+        }, 10000); // 10秒后开始清理（比原来短）
+    } else {
+        // 页面重新可见
+        isPageReallyHidden = false;
+        const hiddenDuration = Date.now() - pageHiddenTime;
+
+        if (hiddenDuration < 30000) {
+            // 减少短暂隐藏日志输出，只在开发模式下输出
+            if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                console.debug('[缓存恢复] 页面短暂隐藏，保持缓存');
+            }
+        } else {
+            // 减少长时间隐藏日志输出，只在开发模式下输出
+            if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                console.debug('[缓存恢复] 页面长时间隐藏后重新可见');
+            }
+            // 可以在这里添加缓存预热逻辑
+        }
+    }
+});
 
 // 应用启动入口
 document.addEventListener('DOMContentLoaded', initializeApp);

@@ -110,7 +110,7 @@ function startAdaptiveScheduler() {
     const mode = resolveMode();
     currentMode = mode;
     const profile = deriveProfile(mode);
-    logger.info(`[Adaptive] 启动: mode=${mode} thumbMax=${profile.thumbMaxConcurrency} ffmpegThreads=${profile.ffmpegThreads} disableBackfill=${profile.disableHlsBackfill}`);
+    logger.silly(`[Adaptive] 启动: mode=${mode} thumbMax=${profile.thumbMaxConcurrency} ffmpegThreads=${profile.ffmpegThreads} disableBackfill=${profile.disableHlsBackfill}`);
     publishProfile(mode, profile);
 
     if (ticker) return;
@@ -120,7 +120,7 @@ function startAdaptiveScheduler() {
             if (next !== currentMode || Date.now() - lastPublishTs > 30000) {
                 currentMode = next;
                 const prof = deriveProfile(next);
-                logger.debug(`[Adaptive] 更新: mode=${next} thumbMax=${prof.thumbMaxConcurrency} ffmpegThreads=${prof.ffmpegThreads} disableBackfill=${prof.disableHlsBackfill}`);
+                logger.silly(`[Adaptive] 更新: mode=${next} thumbMax=${prof.thumbMaxConcurrency} ffmpegThreads=${prof.ffmpegThreads} disableBackfill=${prof.disableHlsBackfill}`);
                 publishProfile(next, prof);
             }
         } catch (e) {

@@ -28,18 +28,6 @@ fi
 
 echo "🗄️ 正在检查数据库迁移..."
 node /app/backend/db/migrate-to-multi-db.js || echo "数据库迁移脚本执行失败或无需执行，继续启动..."
-
-# 设置定期数据库维护任务（可配置，默认每小时执行一次，并启用目录与缩略图对账）
-echo "⏰ 正在设置维护计划..."
-MAINTENANCE_CRON_EXPR=${MAINTENANCE_CRON:-"0 * * * *"}
-MAINTENANCE_FLAGS=${MAINTENANCE_FLAGS:-"--reconcile-dirs --reconcile-thumbs --enqueue-thumbs --enqueue-hls"}
-mkdir -p /app/data >/dev/null 2>&1 || true
-(crontab -l 2>/dev/null; echo "$MAINTENANCE_CRON_EXPR cd /app/backend && node scripts/maintenance.js $MAINTENANCE_FLAGS >> /app/data/maintenance.log 2>&1") | crontab - || echo "维护计划设置失败，继续启动..."
-
-# 启动 cron 服务
-echo "🕒 正在启动定时任务服务..."
-crond -f &
-
 echo "✅ 环境配置完成，正在启动应用程序..."
 
 # 使用 gosu 切换到 node 用户，并使用 pm2-runtime 启动在 ecosystem.config.js 中定义的所有应用。

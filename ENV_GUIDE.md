@@ -1,805 +1,425 @@
-# Photonix 环境变量完整配置指南
-
-本文档详细说明了 Photonix 项目中所有可用的环境变量配置选项，基于对后端代码的深度审查。
-
-**📊 统计信息**：
-- 总计环境变量：**95+ 个**
-- 核心必需配置：**5 个** (PORT, JWT_SECRET, PHOTOS_DIR, DATA_DIR, REDIS_URL)
-- 性能调优配置：**35+ 个** (Sharp, FFmpeg, 队列, 缓存, Node.js相关)
-- 功能开关配置：**20+ 个** (DISABLE_WATCH, QUEUE_MODE, AI功能等)
-- 高级配置：**35+ 个** (维护任务, 限流, 文件系统, 网络代理等)
-
-**🔍 完整性保证**：本文档基于对整个后端代码库的深度扫描，包括：
-- 所有 `.js` 文件中的 `process.env` 使用
-- Docker 配置文件中的环境变量
-- 启动脚本和维护脚本中的配置
-- 队列工作进程和服务层的参数
-=======
-
-## 🔧 核心服务配置
-
-### PORT
-- **类型**: 数字
-- **默认值**: 13001
-- **使用位置**: `backend/config/index.js`, `backend/server.js`
-- **说明**: 应用服务监听的端口号
-- **示例**: `PORT=3000`
-- **Docker**: 容器内端口，通过 docker-compose.yml 映射到宿主机
-
-### NODE_ENV
-- **类型**: 字符串
-- **默认值**: development
-- **可选值**: development, production, test
-- **使用位置**: `backend/config/logger.js`, `backend/app.js`
-- **说明**: Node.js 运行环境模式，影响日志级别和错误处理
-- **示例**: `NODE_ENV=production`
-
-### LOG_LEVEL
-- **类型**: 字符串
-- **默认值**: info
-- **可选值**: error, warn, info, debug
-- **使用位置**: `backend/config/index.js`, `backend/config/logger.js`, `backend/workers/*.js`
-- **说明**: Winston 日志输出级别
-- **示例**: `LOG_LEVEL=debug`
-
-## 📁 目录配置
-
-### PHOTOS_DIR
-- **类型**: 字符串
-- **默认值**: /app/photos
-- **使用位置**: `backend/config/index.js`, `backend/services/file.service.js`, `backend/workers/indexing-worker.js`
-- **说明**: 照片和视频文件的存储根目录
-- **示例**: `PHOTOS_DIR=/data/photos`
-- **Docker**: 建议挂载到宿主机目录
-
-### DATA_DIR
-- **类型**: 字符串
-- **默认值**: /app/data
-- **使用位置**: `backend/config/index.js`, `backend/db/multi-db.js`
-- **说明**: 数据库文件和缩略图的存储目录
-- **示例**: `DATA_DIR=/data/app`
-- **Docker**: 建议挂载到宿主机目录以持久化数据
-
-## 🔒 安全配置
-
-### JWT_SECRET
-- **类型**: 字符串
-- **默认值**: 无（必须设置）
-- **使用位置**: `backend/middleware/auth.js`, `backend/controllers/auth.controller.js`
-- **说明**: JWT 令牌签名密钥，用于用户认证
-- **示例**: `JWT_SECRET=your-very-secure-32-character-secret`
-- **安全要求**: 建议至少32位随机字符串，生产环境必须修改
-
-### ADMIN_SECRET
-- **类型**: 字符串
-- **默认值**: admin
-- **使用位置**: `backend/controllers/settings.controller.js`
-- **说明**: 超级管理员密码，用于修改关键设置
-- **示例**: `ADMIN_SECRET=your-admin-password`
-- **安全要求**: 生产环境必须修改为强密码
-
-## 🗄️ Redis 配置
-
-### REDIS_URL
-- **类型**: 字符串
-- **默认值**: redis://localhost:6379
-- **使用位置**: `backend/config/index.js`, `backend/config/redis.js`, `backend/middleware/rateLimiter.js`, `backend/workers/*.js`, `backend/queue/*.js`
-- **说明**: Redis 服务器连接地址，用于缓存、队列和限流
-- **示例**: `REDIS_URL=redis://redis:6379`
-- **格式**: redis://[username:password@]host:port[/database]
-
-## 🚀 性能配置
-
-### PERFORMANCE_MODE
-- **类型**: 字符串
-- **默认值**: auto
-- **可选值**: auto, low, medium, high
-- **使用位置**: `backend/services/adaptive.service.js`
-- **说明**: 性能模式，影响并发处理和资源使用
-- **示例**: `PERFORMANCE_MODE=low`
-- **建议**: 首次大批量导入使用 low，稳定后使用 auto
-
-### UV_THREADPOOL_SIZE
-- **类型**: 数字
-- **默认值**: 4
-- **使用位置**: Node.js 内部
-- **说明**: Node.js 线程池大小，影响 Sharp 等 CPU 密集任务
-- **示例**: `UV_THREADPOOL_SIZE=8`
-- **建议**: 设置为 CPU 核心数或稍少
-
-### WORKER_MEMORY_MB
-- **类型**: 数字
-- **默认值**: 512
-- **使用位置**: `backend/services/worker.manager.js`
-- **说明**: 单个 Worker 进程的最大内存限制（MB）
-- **示例**: `WORKER_MEMORY_MB=384`
-
-## 🖼️ 图像处理配置
-
-### SHARP_CACHE_MEMORY_MB
-- **类型**: 数字
-- **默认值**: 32
-- **使用位置**: `backend/services/file.service.js`, `backend/workers/thumbnail-worker.js`, `backend/workers/indexing-worker.js`, `backend/queue/thumb-queue-worker.js`
-- **说明**: Sharp 图像处理库的内存缓存大小（MB）
-- **示例**: `SHARP_CACHE_MEMORY_MB=64`
-
-### SHARP_CACHE_ITEMS
-- **类型**: 数字
-- **默认值**: 100
-- **使用位置**: `backend/workers/thumbnail-worker.js`, `backend/workers/indexing-worker.js`, `backend/queue/thumb-queue-worker.js`
-- **说明**: Sharp 缓存的最大项目数
-- **示例**: `SHARP_CACHE_ITEMS=50`
-
-### SHARP_CACHE_FILES
-- **类型**: 数字
-- **默认值**: 0
-- **使用位置**: `backend/workers/thumbnail-worker.js`, `backend/workers/indexing-worker.js`, `backend/queue/thumb-queue-worker.js`
-- **说明**: Sharp 文件缓存数量，0表示禁用
-- **示例**: `SHARP_CACHE_FILES=20`
-
-### SHARP_CONCURRENCY
-- **类型**: 数字
-- **默认值**: 1
-- **使用位置**: `backend/workers/thumbnail-worker.js`, `backend/workers/indexing-worker.js`, `backend/queue/thumb-queue-worker.js`
-- **说明**: Sharp 并发处理数量
-- **示例**: `SHARP_CONCURRENCY=2`
-
-### SHARP_MAX_PIXELS
-- **类型**: 数字
-- **默认值**: 576000000
-- **使用位置**: `backend/workers/thumbnail-worker.js`, `backend/workers/ai-worker.js`
-- **说明**: Sharp 处理的最大像素数（约24k x 24k）
-- **示例**: `SHARP_MAX_PIXELS=1000000000`
-
-### DIMENSION_PROBE_CONCURRENCY
-- **类型**: 数字
-- **默认值**: 4
-- **使用位置**: `backend/services/file.service.js`
-- **说明**: 尺寸探测并发限制
-- **示例**: `DIMENSION_PROBE_CONCURRENCY=2`
-
-## 🎬 视频处理配置
-
-### VIDEO_BATCH_SIZE
-- **类型**: 数字
-- **默认值**: 2
-- **使用位置**: `backend/config/index.js`
-- **说明**: 视频处理批次大小
-- **示例**: `VIDEO_BATCH_SIZE=1`
-
-### VIDEO_BATCH_DELAY_MS
-- **类型**: 数字
-- **默认值**: 10000
-- **使用位置**: `backend/config/index.js`
-- **说明**: 视频批次间延迟（毫秒）
-- **示例**: `VIDEO_BATCH_DELAY_MS=15000`
-
-### VIDEO_TASK_DELAY_MS
-- **类型**: 数字
-- **默认值**: 3000
-- **使用位置**: `backend/config/index.js`
-- **说明**: 单个视频任务间延迟（毫秒）
-- **示例**: `VIDEO_TASK_DELAY_MS=5000`
-
-### FFMPEG_THREADS
-- **类型**: 数字
-- **默认值**: 1
-- **使用位置**: `backend/services/adaptive.service.js`, `backend/queue/video-queue-worker.js`
-- **说明**: FFmpeg 使用的线程数
-- **示例**: `FFMPEG_THREADS=2`
-
-### FFMPEG_PRESET
-- **类型**: 字符串
-- **默认值**: veryfast
-- **可选值**: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
-- **使用位置**: `backend/services/adaptive.service.js`, `backend/queue/video-queue-worker.js`
-- **说明**: FFmpeg 编码预设，影响速度和质量平衡
-- **示例**: `FFMPEG_PRESET=fast`
-
-## 🔄 队列配置
-
-### QUEUE_MODE
-- **类型**: 布尔值
-- **默认值**: false
-- **使用位置**: `backend/config/index.js`
-- **说明**: 是否启用 Redis 队列模式处理任务
-- **示例**: `QUEUE_MODE=true`
-- **建议**: 大型图库（>10万张）建议启用
-
-### THUMBNAIL_QUEUE_NAME
-- **类型**: 字符串
-- **默认值**: thumb-job-queue
-- **使用位置**: `backend/config/index.js`
-- **说明**: 缩略图处理队列名称
-- **示例**: `THUMBNAIL_QUEUE_NAME=thumbnails`
-
-### VIDEO_QUEUE_NAME
-- **类型**: 字符串
-- **默认值**: video-job-queue
-- **使用位置**: `backend/config/index.js`
-- **说明**: 视频处理队列名称
-- **示例**: `VIDEO_QUEUE_NAME=videos`
-
-### THUMB_QUEUE_CONCURRENCY
-- **类型**: 数字
-- **默认值**: 1
-- **使用位置**: `backend/queue/thumb-queue-worker.js`
-- **说明**: 缩略图队列并发数
-- **示例**: `THUMB_QUEUE_CONCURRENCY=2`
-
-### VIDEO_QUEUE_CONCURRENCY
-- **类型**: 数字
-- **默认值**: 1
-- **使用位置**: `backend/queue/video-queue-worker.js`
-- **说明**: 视频队列并发数
-- **示例**: `VIDEO_QUEUE_CONCURRENCY=1`
-
-## 🗃️ 数据库配置
-
-### SQLITE_BUSY_TIMEOUT
-- **类型**: 数字
-- **默认值**: 20000
-- **使用位置**: `backend/db/multi-db.js`
-- **说明**: SQLite 忙等待超时时间（毫秒）
-- **示例**: `SQLITE_BUSY_TIMEOUT=30000`
-- **建议**: NFS/网络存储环境建议增大
-
-### SQLITE_QUERY_TIMEOUT
-- **类型**: 数字
-- **默认值**: 30000
-- **使用位置**: `backend/db/multi-db.js`
-- **说明**: SQLite 查询超时时间（毫秒）
-- **示例**: `SQLITE_QUERY_TIMEOUT=60000`
-
-### DB_HEALTH_CHECK_INTERVAL
-- **类型**: 数字
-- **默认值**: 60000
-- **使用位置**: `backend/db/multi-db.js`
-- **说明**: 数据库健康检查间隔（毫秒）
-- **示例**: `DB_HEALTH_CHECK_INTERVAL=30000`
-
-### DB_RECONNECT_ATTEMPTS
-- **类型**: 数字
-- **默认值**: 3
-- **使用位置**: `backend/db/multi-db.js`
-- **说明**: 数据库重连尝试次数
-- **示例**: `DB_RECONNECT_ATTEMPTS=5`
-
-## 🚦 限流配置
-
-### RATE_LIMIT_WINDOW_MINUTES
-- **类型**: 数字
-- **默认值**: 15
-- **使用位置**: `backend/middleware/rateLimiter.js`
-- **说明**: API 限流时间窗口（分钟）
-- **示例**: `RATE_LIMIT_WINDOW_MINUTES=1`
-
-### RATE_LIMIT_MAX_REQUESTS
-- **类型**: 数字
-- **默认值**: 100
-- **使用位置**: `backend/middleware/rateLimiter.js`
-- **说明**: 时间窗口内最大请求数
-- **示例**: `RATE_LIMIT_MAX_REQUESTS=500`
-
-### REFRESH_RATE_WINDOW_MS
-- **类型**: 数字
-- **默认值**: 60000
-- **使用位置**: `backend/routes/auth.routes.js`
-- **说明**: 刷新令牌限流窗口（毫秒）
-- **示例**: `REFRESH_RATE_WINDOW_MS=60000`
-
-### REFRESH_RATE_MAX
-- **类型**: 数字
-- **默认值**: 60
-- **使用位置**: `backend/routes/auth.routes.js`
-- **说明**: 刷新令牌最大请求次数
-- **示例**: `REFRESH_RATE_MAX=60`
-
-## 🤖 AI 功能配置
-
-### AI_CACHE_MAX_BYTES
-- **类型**: 数字
-- **默认值**: 268435456 (256MB)
-- **使用位置**: `backend/workers/ai-worker.js`
-- **说明**: AI 缓存最大字节数
-- **示例**: `AI_CACHE_MAX_BYTES=536870912`
-
-### AI_DAILY_LIMIT
-- **类型**: 数字
-- **默认值**: 200
-- **使用位置**: `backend/middleware/ai-rate-guard.js`
-- **说明**: AI 处理每日限制数量
-- **示例**: `AI_DAILY_LIMIT=100`
-
-### AI_PER_IMAGE_COOLDOWN_SEC
-- **类型**: 数字
-- **默认值**: 60
-- **使用位置**: `backend/middleware/ai-rate-guard.js`
-- **说明**: AI 处理单张图片冷却时间（秒）
-- **示例**: `AI_PER_IMAGE_COOLDOWN_SEC=120`
-
-## 📁 文件系统配置
-
-### FS_MODE
-- **类型**: 字符串
-- **默认值**: auto
-- **可选值**: auto, inotify, nfs
-- **使用位置**: `backend/scripts/maintenance.js`
-- **说明**: 文件系统监听模式
-- **示例**: `FS_MODE=nfs`
-- **建议**: NFS/网络存储使用 nfs 模式
-
-### DISABLE_WATCH
-- **类型**: 布尔值
-- **默认值**: false
-- **使用位置**: `backend/config/index.js`
-- **说明**: 是否禁用文件监听，改用维护任务
-- **示例**: `DISABLE_WATCH=true`
-- **建议**: 超大图库建议启用
-
-### ENABLE_NFS_SYNC
-- **类型**: 布尔值
-- **默认值**: false
-- **使用位置**: `backend/scripts/maintenance.js`
-- **说明**: 是否启用 NFS 同步功能
-- **示例**: `ENABLE_NFS_SYNC=true`
-
-### ENABLE_THUMB_RECON
-- **类型**: 布尔值
-- **默认值**: true
-- **使用位置**: `backend/scripts/maintenance.js`
-- **说明**: 是否启用缩略图对账功能
-- **示例**: `ENABLE_THUMB_RECON=false`
-
-### WATCH_USE_POLLING
-- **类型**: 布尔值
-- **默认值**: false
-- **使用位置**: `backend/services/indexer.service.js`
-- **说明**: 文件监听是否使用轮询模式
-- **示例**: `WATCH_USE_POLLING=true`
-- **建议**: NFS 环境可能需要启用
-
-### WATCH_POLL_INTERVAL
-- **类型**: 数字
-- **默认值**: 1000
-- **使用位置**: `backend/services/indexer.service.js`
-- **说明**: 轮询间隔（毫秒）
-- **示例**: `WATCH_POLL_INTERVAL=2000`
-
-### WATCH_POLL_BINARY_INTERVAL
-- **类型**: 数字
-- **默认值**: 1500
-- **使用位置**: `backend/services/indexer.service.js`
-- **说明**: 二进制文件轮询间隔（毫秒）
-- **示例**: `WATCH_POLL_BINARY_INTERVAL=3000`
-
-## 🔧 维护任务配置
-
-### MAINTENANCE_CRON
-- **类型**: 字符串
-- **默认值**: 0 * * * *
-- **使用位置**: `backend/scripts/maintenance.js`
-- **说明**: 维护任务的 Cron 表达式
-- **示例**: `MAINTENANCE_CRON=0 2 * * *`
-- **格式**: 分 时 日 月 周
-
-### MAINTENANCE_FLAGS
-- **类型**: 字符串
-- **默认值**: --reconcile-dirs --reconcile-thumbs --enqueue-thumbs --enqueue-hls
-- **使用位置**: `backend/scripts/maintenance.js`
-- **说明**: 维护任务执行的功能标志
-- **示例**: `MAINTENANCE_FLAGS="--reconcile-dirs --enqueue-thumbs"`
-
-### ENQUEUE_THUMBS_LIMIT
-- **类型**: 数字
-- **默认值**: 5000
-- **使用位置**: `backend/scripts/maintenance.js`
-- **说明**: 单次维护任务入队缩略图的最大数量
-- **示例**: `ENQUEUE_THUMBS_LIMIT=2000`
-
-### ENQUEUE_HLS_LIMIT
-- **类型**: 数字
-- **默认值**: 3000
-- **使用位置**: `backend/scripts/maintenance.js`
-- **说明**: 单次维护任务入队 HLS 的最大数量
-- **示例**: `ENQUEUE_HLS_LIMIT=1000`
-
-### THUMB_RECONCILE_BATCH_SIZE
-- **类型**: 数字
-- **默认值**: 1000
-- **使用位置**: `backend/scripts/maintenance.js`
-- **说明**: 缩略图对账批次大小
-- **示例**: `THUMB_RECONCILE_BATCH_SIZE=500`
-
-## 🎯 HLS 视频配置
-
-### USE_FILE_SYSTEM_HLS_CHECK
-- **类型**: 布尔值
-- **默认值**: true
-- **使用位置**: `backend/config/index.js`
-- **说明**: 是否使用文件系统检查 HLS 状态
-- **示例**: `USE_FILE_SYSTEM_HLS_CHECK=false`
-
-### HLS_CACHE_TTL_MS
-- **类型**: 数字
-- **默认值**: 300000 (5分钟)
-- **使用位置**: `backend/config/index.js`
-- **说明**: HLS 缓存生存时间（毫秒）
-- **示例**: `HLS_CACHE_TTL_MS=600000`
-
-### HLS_CHECK_BATCH_SIZE
-- **类型**: 数字
-- **默认值**: 10
-- **使用位置**: `backend/config/index.js`
-- **说明**: HLS 检查批次大小
-- **示例**: `HLS_CHECK_BATCH_SIZE=20`
-
-### HLS_MIN_CHECK_INTERVAL_MS
-- **类型**: 数字
-- **默认值**: 5000
-- **使用位置**: `backend/config/index.js`
-- **说明**: HLS 最小检查间隔（毫秒）
-- **示例**: `HLS_MIN_CHECK_INTERVAL_MS=10000`
-
-### HLS_BATCH_DELAY_MS
-- **类型**: 数字
-- **默认值**: 200
-- **使用位置**: `backend/config/index.js`
-- **说明**: HLS 批次间延迟（毫秒）
-- **示例**: `HLS_BATCH_DELAY_MS=500`
-
-## 📊 系统监控配置
-
-### SYSTEM_LOAD_THRESHOLD
-- **类型**: 数字
-- **默认值**: 1.0
-- **使用位置**: `backend/config/index.js`
-- **说明**: 系统负载阈值，超过时暂停某些任务
-- **示例**: `SYSTEM_LOAD_THRESHOLD=0.8`
-
-## 🗂️ 缓存配置
-
-### SETTINGS_REDIS_CACHE
-- **类型**: 布尔值
-- **默认值**: false
-- **使用位置**: `backend/services/settings.service.js`
-- **说明**: 是否启用设置的 Redis 缓存
-- **示例**: `SETTINGS_REDIS_CACHE=true`
-- **建议**: 高并发环境建议启用
-
-### COVER_INFO_LRU_SIZE
-- **类型**: 数字
-- **默认值**: 4000
-- **使用位置**: `backend/config/index.js`
-- **说明**: 封面信息 LRU 缓存大小
-- **示例**: `COVER_INFO_LRU_SIZE=8000`
-
-### TAG_INVALIDATION_MAX_TAGS
-- **类型**: 数字
-- **默认值**: 2000
-- **使用位置**: `backend/config/index.js`
-- **说明**: 标签失效的最大数量，超过则降级处理
-- **示例**: `TAG_INVALIDATION_MAX_TAGS=5000`
-
-## 🔄 批处理配置
-
-### INDEX_STABILIZE_DELAY_MS
-- **类型**: 数字
-- **默认值**: 5000
-- **使用位置**: `backend/config/index.js`
-- **说明**: 索引稳定化延迟（毫秒）
-- **示例**: `INDEX_STABILIZE_DELAY_MS=10000`
-
-### THUMB_CHECK_BATCH_SIZE
-- **类型**: 数字
-- **默认值**: 200
-- **使用位置**: `backend/config/index.js`
-- **说明**: 缩略图检查批次大小
-- **示例**: `THUMB_CHECK_BATCH_SIZE=500`
-
-### THUMB_CHECK_BATCH_DELAY_MS
-- **类型**: 数字
-- **默认值**: 100
-- **使用位置**: `backend/config/index.js`
-- **说明**: 缩略图检查批次间延迟（毫秒）
-- **示例**: `THUMB_CHECK_BATCH_DELAY_MS=200`
-
-## 🚀 启动回填配置
-
-### MTIME_BACKFILL_BATCH
-- **类型**: 数字
-- **默认值**: 500
-- **使用位置**: `backend/workers/indexing-worker.js`
-- **说明**: 修改时间回填批次大小
-- **示例**: `MTIME_BACKFILL_BATCH=1000`
-
-### MTIME_BACKFILL_SLEEP_MS
-- **类型**: 数字
-- **默认值**: 200
-- **使用位置**: `backend/workers/indexing-worker.js`
-- **说明**: 修改时间回填批次间休眠（毫秒）
-- **示例**: `MTIME_BACKFILL_SLEEP_MS=500`
-
-### DIM_BACKFILL_BATCH
-- **类型**: 数字
-- **默认值**: 500
-- **使用位置**: `backend/workers/indexing-worker.js`
-- **说明**: 尺寸信息回填批次大小
-- **示例**: `DIM_BACKFILL_BATCH=1000`
-
-### DIM_BACKFILL_SLEEP_MS
-- **类型**: 数字
-- **默认值**: 200
-- **使用位置**: `backend/workers/indexing-worker.js`
-- **说明**: 尺寸信息回填批次间休眠（毫秒）
-- **示例**: `DIM_BACKFILL_SLEEP_MS=500`
-
-## 🎨 其他配置
-
-### ENABLE_APP_CSP
-- **类型**: 布尔值
-- **默认值**: false
-- **使用位置**: `backend/app.js`
-- **说明**: 是否启用应用层内容安全策略
-- **示例**: `ENABLE_APP_CSP=true`
-
-### ROUTE_CACHE_BROWSE_PATTERN
-- **类型**: 字符串
-- **默认值**: route_cache:*:/api/browse*
-- **使用位置**: `backend/config/index.js`
-- **说明**: 路由缓存清理匹配模式
-- **示例**: `ROUTE_CACHE_BROWSE_PATTERN=cache:*:/api/*`
-
-## 🔍 Docker 和部署相关
-
-### DOCKER_ENV
-- **类型**: 布尔值
-- **默认值**: false
-- **使用位置**: 检测是否在Docker环境中运行
-- **说明**: 自动检测Docker环境，影响某些路径和配置
-- **示例**: `DOCKER_ENV=true`
-
-### CONTAINER_NAME
-- **类型**: 字符串
-- **默认值**: 无
-- **使用位置**: Docker容器标识
-- **说明**: 容器名称，用于日志和监控
-- **示例**: `CONTAINER_NAME=photonix-backend`
-
-## 🧪 测试和调试配置
-
-### DEBUG
-- **类型**: 字符串
-- **默认值**: 无
-- **使用位置**: 调试模块控制
-- **说明**: Node.js debug模块的命名空间控制
-- **示例**: `DEBUG=photonix:*`
-
-### TEST_MODE
-- **类型**: 布尔值
-- **默认值**: false
-- **使用位置**: 测试环境标识
-- **说明**: 是否运行在测试模式下
-- **示例**: `TEST_MODE=true`
-
-## 🌐 网络和代理配置
-
-### HTTP_PROXY
-- **类型**: 字符串
-- **默认值**: 无
-- **使用位置**: HTTP代理设置
-- **说明**: HTTP请求代理地址
-- **示例**: `HTTP_PROXY=http://proxy.company.com:8080`
-
-### HTTPS_PROXY
-- **类型**: 字符串
-- **默认值**: 无
-- **使用位置**: HTTPS代理设置
-- **说明**: HTTPS请求代理地址
-- **示例**: `HTTPS_PROXY=https://proxy.company.com:8080`
-
-### NO_PROXY
-- **类型**: 字符串
-- **默认值**: 无
-- **使用位置**: 代理排除列表
-- **说明**: 不使用代理的地址列表
-- **示例**: `NO_PROXY=localhost,127.0.0.1,.local`
-
-## 📱 移动端和PWA配置
-
-### PWA_ENABLED
-- **类型**: 布尔值
-- **默认值**: true
-- **使用位置**: PWA功能开关
-- **说明**: 是否启用渐进式Web应用功能
-- **示例**: `PWA_ENABLED=false`
-
-### MOBILE_OPTIMIZED
-- **类型**: 布尔值
-- **默认值**: true
-- **使用位置**: 移动端优化
-- **说明**: 是否启用移动端优化
-- **示例**: `MOBILE_OPTIMIZED=true`
-
-## 🖥️ 系统级环境变量
-
-### TZ
-- **类型**: 字符串
-- **默认值**: 系统默认
-- **使用位置**: 系统时区设置
-- **说明**: 时区设置，影响日志时间戳和任务调度
-- **示例**: `TZ=Asia/Shanghai`
-
-### TMPDIR / TEMP
-- **类型**: 字符串
-- **默认值**: 系统默认
-- **使用位置**: 临时文件目录
-- **说明**: 临时文件存储位置，影响图像处理缓存
-- **示例**: `TMPDIR=/tmp`
-
-### HOME
-- **类型**: 字符串
-- **默认值**: 系统默认
-- **使用位置**: 用户主目录
-- **说明**: 某些库可能使用的主目录路径
-- **示例**: `HOME=/app`
-
-## 🔧 Node.js 内置环境变量
-
-### UV_THREADPOOL_SIZE
-- **类型**: 数字
-- **默认值**: 4
-- **使用位置**: Node.js 线程池
-- **说明**: libuv 线程池大小，影响文件IO和CPU密集任务
-- **示例**: `UV_THREADPOOL_SIZE=8`
-- **建议**: 设置为CPU核心数或稍多
-
-### NODE_OPTIONS
-- **类型**: 字符串
-- **默认值**: 无
-- **使用位置**: Node.js 启动选项
-- **说明**: Node.js 运行时选项
-- **示例**: `NODE_OPTIONS="--max-old-space-size=4096"`
+# Photonix 环境变量配置指南（上线精注释版）
+
+本指南与后端代码严格对齐，按“必需/推荐/可选”分级列出变量，并为每个变量提供：
+- 作用：变量做什么
+- 默认值：代码中的缺省行为
+- 取值/格式：允许范围或类型
+- 推荐修改场景：何时需要调整
+- 风险：错误设置的影响
+- 代码引用：生效位置，便于排查
+- 示例：建议写法
+
+装载方式（重要）：
+- 后端未引入 dotenv
+  - Docker Compose：使用 env_file: .env 注入（根目录放置 .env）
+  - 本机/PM2：以进程环境注入（PowerShell/Bash；或 PM2 ecosystem.config.js 的 env 字段）
+更新日期：2025-09-06
 
 ---
 
-## 📋 推荐配置场景
+## 1) 快速开始
 
-### 🏠 小型家庭部署 (2C-4G)
-```env
-# 核心配置
+生产
+1) 复制 env.production 为 .env
+2) 修改 JWT_SECRET（32+ 随机）与 ADMIN_SECRET（强口令），REDIS_URL 按部署网络
+3) docker compose up -d
+
+开发
+- 复制 env.development 为 .env（或导出为进程环境），启动后端
+
+---
+
+## 2) 变量分级清单（详细注释）
+
+以下默认值即代码默认行为；若需不同策略，请在 .env 覆盖。
+
+### A. 必需（必须设置或确认）
+
+1) PORT
+- 作用：服务监听端口
+- 默认值：13001
+- 取值/格式：整数端口号
+- 推荐修改场景：宿主机端口冲突或反代约定端口不同
+- 风险：与反代/compose 端口映射不一致将导致访问失败
+- 代码引用：backend/config/index.js（PORT）
+- 示例：PORT=13001
+
+2) NODE_ENV
+- 作用：运行模式，影响日志与错误信息详略
+- 默认值：development
+- 取值/格式：development | production | test
+- 推荐修改场景：上线必须设为 production
+- 风险：production 若误设 development，可能在错误时泄露细节
+- 代码引用：backend/app.js、controllers/*、workers/*（日志级别判断）
+- 示例：NODE_ENV=production
+
+3) LOG_LEVEL
+- 作用：Winston 日志级别
+- 默认值：info
+- 取值/格式：error | warn | info | debug
+- 推荐修改场景：排障期临时提升到 debug
+- 风险：debug 产生日志量大，影响 IO/成本
+- 代码引用：backend/config/index.js、config/logger.js、workers/*
+- 示例：LOG_LEVEL=info
+
+4) PHOTOS_DIR
+- 作用：媒体库根目录（图片/视频）
+- 默认值：/app/photos
+- 取值/格式：绝对路径（容器内）
+- 推荐修改场景：挂载到宿主机（NAS/NFS/本地盘）
+- 风险：挂载错误则扫描不到数据；网络盘需配合 WATCH_* 参数
+- 代码引用：backend/config/index.js、services/file.service.js、workers/indexing-worker.js
+- 示例：PHOTOS_DIR=/app/photos
+
+5) DATA_DIR
+- 作用：应用数据目录（数据库/缩略图/HLS 等）
+- 默认值：/app/data
+- 取值/格式：绝对路径（容器内）
+- 推荐修改场景：持久化数据到宿主机卷
+- 风险：未持久化会在容器重建后丢数据
+- 代码引用：backend/config/index.js、db/*
+- 示例：DATA_DIR=/app/data
+
+6) REDIS_URL
+- 作用：Redis 连接（缓存/限流/队列/PubSub）
+- 默认值：redis://localhost:6379（开发）/ 生产推荐 redis://redis:6379
+- 取值/格式：redis://[user:pass@]host:port[/db]
+- 推荐修改场景：容器网络或外部 Redis，含密码/ACL
+- 风险：错误地址导致限流/缓存/队列/事件全部不可用
+- 代码引用：backend/config/index.js、config/redis.js、middleware/rateLimiter.js、services/*、workers/*
+- 示例：REDIS_URL=redis://redis:6379
+
+7) JWT_SECRET
+- 作用：JWT 签名密钥
+- 默认值：无（必须提供）
+- 取值/格式：32+ 随机字符串
+- 推荐修改场景：生产必须设置强随机
+- 风险：弱密钥可被伪造 Token，存在严重安全隐患
+- 代码引用：backend/middleware/auth.js、controllers/auth.controller.js
+- 示例：JWT_SECRET=g3A4...32plusRandom
+
+8) ADMIN_SECRET
+- 作用：后台敏感操作校验密钥
+- 默认值：admin（必须修改）
+- 取值/格式：强口令
+- 推荐修改场景：生产必须自定义强口令
+- 风险：默认值将导致敏感操作被滥用
+- 代码引用：backend/controllers/settings.controller.js
+- 示例：ADMIN_SECRET=ChangeMe_Strong_Admin
+
+---
+
+### B. 推荐（生产环境建议显式）
+
+1) WORKER_MEMORY_MB
+- 作用：worker_threads 最大老生代内存（MB）
+- 默认值：512（建议值）
+- 取值/格式：整数（如 384/512/768）
+- 推荐修改场景：内存受限或批量图像处理密集
+- 风险：过低易 OOM/任务失败；过高可能超过容器限制
+- 代码引用：backend/services/worker.manager.js（resourceLimits）
+- 示例：WORKER_MEMORY_MB=512
+
+2) UV_THREADPOOL_SIZE
+- 作用：libuv 线程池大小（影响 Sharp/IO）
+- 默认值：4
+- 取值/格式：1..CPU 核心数（或略少/略多）
+- 推荐修改场景：CPU 充足且有大量 Sharp/IO 时可上调
+- 风险：盲目上调可能增加切换开销
+- 代码引用：Node.js 运行时
+- 示例：UV_THREADPOOL_SIZE=4
+
+3) FFMPEG_THREADS
+- 作用：FFmpeg 并行线程数
+- 默认值：2（生产）/ 1（开发建议）
+- 取值/格式：>=1 的整数
+- 推荐修改场景：CPU 充足且需要更高吞吐
+- 风险：过高与其他线程竞争，可能过载
+- 代码引用：backend/config/index.js、services/adaptive.service.js、workers/video-processor.js
+- 示例：FFMPEG_THREADS=2
+
+4) SHARP_CONCURRENCY
+- 作用：Sharp 图像并发
+- 默认值：2（生产）/ 1（开发）
+- 取值/格式：>=1 的整数
+- 推荐修改场景：大量缩略图生成、CPU 富余
+- 风险：过高导致 CPU 饱和/内存激增
+- 代码引用：backend/config/index.js、workers/thumbnail-worker.js、workers/indexing-worker.js
+- 示例：SHARP_CONCURRENCY=2
+
+5) SQLITE_BUSY_TIMEOUT
+- 作用：SQLite 忙等待超时（ms）
+- 默认值：20000（生产）/ 10000（开发）
+- 取值/格式：>=1000
+- 推荐修改场景：NFS/慢盘
+- 风险：过低易失败；过高延迟故障显现
+- 代码引用：backend/db/multi-db.js
+- 示例：SQLITE_BUSY_TIMEOUT=20000
+
+6) SQLITE_QUERY_TIMEOUT
+- 作用：SQLite 查询超时（ms）
+- 默认值：30000（生产）/ 15000（开发）
+- 取值/格式：>=5000
+- 推荐修改场景：大查询/慢盘
+- 风险：过低易中断；过高延迟反馈
+- 代码引用：backend/db/multi-db.js
+- 示例：SQLITE_QUERY_TIMEOUT=30000
+
+7) RATE_LIMIT_WINDOW_MINUTES
+- 作用：API 限流窗口（分钟）
+- 默认值：1
+- 取值/格式：>=1
+- 推荐修改场景：对外暴露/高并发
+- 风险：过严误伤正常请求
+- 代码引用：backend/middleware/rateLimiter.js
+- 示例：RATE_LIMIT_WINDOW_MINUTES=15
+
+8) RATE_LIMIT_MAX_REQUESTS
+- 作用：窗口内最大请求数
+- 默认值：800
+- 取值/格式：>=1
+- 推荐修改场景：更严格/更宽松的配额
+- 风险：过低频繁 429；过高失去保护
+- 代码引用：backend/middleware/rateLimiter.js
+- 示例：RATE_LIMIT_MAX_REQUESTS=100
+
+9) REFRESH_RATE_WINDOW_MS / REFRESH_RATE_MAX
+- 作用：刷新令牌限流（窗口毫秒/最大次数）
+- 默认值：60000 / 60
+- 取值/格式：整数
+- 推荐修改场景：大规模登录/刷新
+- 风险：过严导致无法刷新 Token
+- 代码引用：backend/routes/auth.routes.js
+- 示例：REFRESH_RATE_WINDOW_MS=60000
+- 示例：REFRESH_RATE_MAX=60
+
+10) SETTINGS_REDIS_CACHE
+- 作用：启用设置项的 Redis 缓存
+- 默认值：false
+- 取值/格式：true | false
+- 推荐修改场景：生产建议开启以降 DB 压力
+- 风险：关闭会增加 DB 压力；开启需保证 Redis 可用
+- 代码引用：backend/services/settings.service.js
+- 示例：SETTINGS_REDIS_CACHE=true
+
+---
+
+### C. 可选（按场景启用）
+
+1) DISABLE_WATCH / WATCH_USE_POLLING / WATCH_POLL_INTERVAL / WATCH_POLL_BINARY_INTERVAL
+- 作用：文件监听策略（网络盘/NFS 可使用轮询）
+- 默认值：false / false / 1000 / 1500
+- 取值/格式：布尔 / 毫秒整数
+- 推荐修改场景：NFS/SMB/网络盘监听不稳时启用轮询并禁用 watch
+- 风险：轮询增加 IO；禁用 watch 依赖手动/后台维护
+- 代码引用：backend/services/indexer.service.js、config/index.js
+- 示例：
+  - DISABLE_WATCH=true
+  - WATCH_USE_POLLING=true
+  - WATCH_POLL_INTERVAL=2000
+  - WATCH_POLL_BINARY_INTERVAL=3000
+
+2) USE_FILE_SYSTEM_HLS_CHECK / HLS_*（TTL/批次/间隔/延迟）
+- 作用：基于文件系统检查 HLS 就绪与缓存
+- 默认值：true / 300000 / 10 / 1000 / 100
+- 取值/格式：布尔 / 毫秒 / 数量
+- 推荐修改场景：视频多或慢盘时调大间隔与延迟
+- 风险：检查过频繁带来 IO 压力；过慢影响就绪感知
+- 代码引用：backend/config/index.js
+- 示例：HLS_CACHE_TTL_MS=300000
+
+3) FFMPEG_PRESET
+- 作用：FFmpeg 编码预设（速度/质量权衡）
+- 默认值：veryfast
+- 取值/范围：ultrafast|superfast|veryfast|faster|fast|medium|slow|slower|veryslow
+- 推荐修改场景：需要更高质量或更快速度
+- 风险：更慢预设显著增加 CPU/耗时
+- 代码引用：services/adaptive.service.js、workers/video-processor.js
+- 示例：FFMPEG_PRESET=fast
+
+4) SHARP_CACHE_*（MEMORY_MB/ITEMS/FILES）/ SHARP_MAX_PIXELS
+- 作用：Sharp 内存与最大像素保护
+- 默认值：32 / 100 / 0 / 576000000
+- 取值/格式：整数
+- 推荐修改场景：内存充足增大缓存；超大图提高 MAX_PIXELS
+- 风险：缓存过大占用内存；像素阈值过高风险 OOM
+- 代码引用：workers/thumbnail-worker.js、workers/indexing-worker.js、services/file.service.js
+- 示例：SHARP_CACHE_MEMORY_MB=64
+
+5) DIMENSION_PROBE_CONCURRENCY
+- 作用：文件尺寸探测并发（文件服务）
+- 默认值：4
+- 取值/格式：>=1 的整数
+- 推荐修改场景：I/O 富余时上调
+- 风险：并发过高增加磁盘压力
+- 代码引用：services/file.service.js
+- 示例：DIMENSION_PROBE_CONCURRENCY=4
+
+6) AI_*（AI_CACHE_MAX_BYTES / AI_DAILY_LIMIT / AI_PER_IMAGE_COOLDOWN_SEC）
+- 作用：AI 缓存与配额/冷却
+- 默认值：268435456（生产建议）/ 200 / 60（开发较小）
+- 取值/格式：字节数/次数/秒
+- 推荐修改场景：成本/流控管理
+- 风险：限制过严导致失败；过宽增加成本
+- 代码引用：workers/ai-worker.js、middleware/ai-rate-guard.js
+- 示例：AI_CACHE_MAX_BYTES=268435456
+
+7) PERFORMANCE_MODE
+- 作用：全局性能模式（自适应提示）
+- 默认值：auto
+- 取值/格式：auto|low|medium|high
+- 推荐修改场景：初期大批量导入设为 low
+- 风险：高性能模式在低配可能过载
+- 代码引用：services/adaptive.service.js
+- 示例：PERFORMANCE_MODE=low
+
+8) DETECTED_CPU_COUNT / DETECTED_MEMORY_GB
+- 作用：显式指定硬件资源供自适应逻辑参考（容器 cgroup 限制下可能检测不准）
+- 默认值：未设置时系统探测
+- 取值/格式：整数
+- 推荐修改场景：容器受限/探测不准时
+- 风险：填大将高估并发
+- 代码引用：backend/config/index.js（detectHardwareConfig）
+- 示例：DETECTED_CPU_COUNT=4
+
+9) ENABLE_APP_CSP
+- 作用：启用后端层面的 Content-Security-Policy
+- 默认值：false
+- 取值/格式：true|false
+- 推荐修改场景：反代未统一下发 CSP 且需后端控制
+- 风险：规则不全会拦截前端资源
+- 代码引用：backend/app.js（helmet csp）
+- 示例：ENABLE_APP_CSP=true
+
+10) THUMB_ONDEMAND_RESERVE
+- 作用：缩略图批量补全时预留按需工人数量（控制并发）
+- 默认值：0（由 NUM_WORKERS 上限约束）
+- 取值/格式：>=0 的整数
+- 推荐修改场景：混部时保留并发给实时请求
+- 风险：设置过大导致批量补全变慢
+- 代码引用：services/thumbnail.service.js
+- 示例：THUMB_ONDEMAND_RESERVE=0
+
+11) API_BASE
+- 作用：API 基础 URL（为空使用相对路径）
+- 默认值：空字符串
+- 取值/格式：URL 前缀
+- 推荐修改场景：前后端分离或反代前缀
+- 风险：错误前缀导致 404
+- 代码引用：backend/config/index.js
+- 示例：API_BASE=/api
+
+12) VIDEO_TASK_DELAY_MS / INDEX_STABILIZE_DELAY_MS
+- 作用：视频任务间延迟、索引稳定化延迟（ms）
+- 默认值：1000 / 2000
+- 取值/格式：毫秒整数
+- 推荐修改场景：慢盘或抖动较大时调大
+- 风险：过大降低吞吐；过小易过载
+- 代码引用：backend/config/index.js
+- 示例：INDEX_STABILIZE_DELAY_MS=3000
+
+---
+
+## 3) 场景化配置片段
+
+小型家庭（2C/4G，NAS/本地盘）
+```
 PORT=13001
+NODE_ENV=production
 LOG_LEVEL=info
-JWT_SECRET=your-32-character-secret-key-here
-
-# 目录配置
 PHOTOS_DIR=/app/photos
 DATA_DIR=/app/data
-
-# Redis配置
 REDIS_URL=redis://redis:6379
+JWT_SECRET=<32+ 强随机>
+ADMIN_SECRET=<强口令>
 
-# 性能配置（保守）
-PERFORMANCE_MODE=low
-SHARP_CACHE_MEMORY_MB=16
-SHARP_CACHE_ITEMS=50
-SHARP_CONCURRENCY=1
+WORKER_MEMORY_MB=384
 FFMPEG_THREADS=1
+SHARP_CONCURRENCY=1
+SQLITE_BUSY_TIMEOUT=20000
+SQLITE_QUERY_TIMEOUT=30000
+SETTINGS_REDIS_CACHE=true
 
-# 队列配置
-QUEUE_MODE=true
-THUMB_QUEUE_CONCURRENCY=1
-VIDEO_QUEUE_CONCURRENCY=1
-
-# 文件系统
-DISABLE_WATCH=true
+# NFS/网络盘建议
+# DISABLE_WATCH=true
+# WATCH_USE_POLLING=true
+# WATCH_POLL_INTERVAL=2000
+# WATCH_POLL_BINARY_INTERVAL=3000
 ```
 
-### 🏢 中型生产环境 (4C-8G)
-```env
-# 核心配置
-PORT=13001
-LOG_LEVEL=info
-JWT_SECRET=your-32-character-secret-key-here
-
-# 目录配置
-PHOTOS_DIR=/app/photos
-DATA_DIR=/app/data
-
-# Redis配置
-REDIS_URL=redis://redis:6379
-
-# 性能配置（平衡）
-PERFORMANCE_MODE=auto
-SHARP_CACHE_MEMORY_MB=32
-SHARP_CACHE_ITEMS=100
-SHARP_CONCURRENCY=2
+中型生产（4C/8G）
+```
+WORKER_MEMORY_MB=512
+UV_THREADPOOL_SIZE=4
 FFMPEG_THREADS=2
-
-# 队列配置
-QUEUE_MODE=true
-THUMB_QUEUE_CONCURRENCY=2
-VIDEO_QUEUE_CONCURRENCY=1
-
-# 缓存优化
-SETTINGS_REDIS_CACHE=true
-
-# 维护任务
-MAINTENANCE_CRON=*/30 * * * *
-```
-
-### 🚀 大型企业环境 (8C-16G+)
-```env
-# 核心配置
-PORT=13001
-LOG_LEVEL=info
-JWT_SECRET=your-32-character-secret-key-here
-
-# 目录配置
-PHOTOS_DIR=/app/photos
-DATA_DIR=/app/data
-
-# Redis配置
-REDIS_URL=redis://redis:6379
-
-# 性能配置（高性能）
-PERFORMANCE_MODE=auto
-SHARP_CACHE_MEMORY_MB=64
-SHARP_CACHE_ITEMS=200
-SHARP_CONCURRENCY=4
-FFMPEG_THREADS=4
-UV_THREADPOOL_SIZE=8
-
-# 队列配置
-QUEUE_MODE=true
-THUMB_QUEUE_CONCURRENCY=4
-VIDEO_QUEUE_CONCURRENCY=2
-
-# 缓存优化
-SETTINGS_REDIS_CACHE=true
-COVER_INFO_LRU_SIZE=8000
-
-# 维护任务
-MAINTENANCE_CRON=*/15 * * * *
-ENQUEUE_THUMBS_LIMIT=10000
-ENQUEUE_HLS_LIMIT=5000
-
-# 限流配置
+SHARP_CONCURRENCY=2
 RATE_LIMIT_WINDOW_MINUTES=15
-RATE_LIMIT_MAX_REQUESTS=500
+RATE_LIMIT_MAX_REQUESTS=100
+SETTINGS_REDIS_CACHE=true
 ```
 
-### 🌐 NFS/网络存储环境
-```env
-# 基础配置
-PORT=13001
-LOG_LEVEL=info
-JWT_SECRET=your-32-character-secret-key-here
-
-# 目录配置
-PHOTOS_DIR=/app/photos
-DATA_DIR=/app/data
-
-# 文件系统配置
-FS_MODE=nfs
-ENABLE_NFS_SYNC=true
-WATCH_USE_POLLING=true
+NFS/网络存储（稳定优先）
+```
 DISABLE_WATCH=true
-
-# 数据库配置（增加超时）
+WATCH_USE_POLLING=true
+WATCH_POLL_INTERVAL=2000
+WATCH_POLL_BINARY_INTERVAL=3000
 SQLITE_BUSY_TIMEOUT=30000
 SQLITE_QUERY_TIMEOUT=60000
-
-# 性能配置（保守）
-PERFORMANCE_MODE=low
-SHARP_CACHE_MEMORY_MB=32
 ```
 
-## ⚠️ 重要提醒
+---
 
-1. **JWT_SECRET** 是必需的，生产环境必须设置为强密码
-2. **ADMIN_SECRET** 建议修改默认值
-3. 大型图库建议启用 **QUEUE_MODE** 和 **DISABLE_WATCH**
-4. NFS 环境需要特殊配置文件系统相关参数
-5. 根据服务器资源调整 Sharp 和 FFmpeg 相关参数
-6. 生产环境建议启用 **SETTINGS_REDIS_CACHE**
+## 4) 部署与注入方式
+
+- Docker Compose（推荐）
+  - 根目录创建 .env（由 env.production 拷贝）
+  - docker-compose.yml 已引用 env_file: .env
+  - 启动：docker compose up -d
+
+- PM2（示例）
+```js
+module.exports = {
+  apps: [{
+    name: "photonix",
+    script: "backend/server.js",
+    env: {
+      PORT: 13001,
+      NODE_ENV: "production",
+      LOG_LEVEL: "info",
+      PHOTOS_DIR: "/app/photos",
+      DATA_DIR: "/app/data",
+      REDIS_URL: "redis://localhost:6379",
+      JWT_SECRET: "change_me_32_chars",
+      ADMIN_SECRET: "change_me_admin"
+    }
+  }]
+}
+```
+
+- PowerShell（Windows）
+```
+$env:PORT="13001"; $env:NODE_ENV="production"; node backend/server.js
+```
+
+---
+
+## 5) 上线检查清单
+
+- [ ] JWT_SECRET 为强随机 32+ 字符；ADMIN_SECRET 为强口令
+- [ ] REDIS_URL 指向生产 Redis；网络/权限正确
+- [ ] PHOTOS_DIR / DATA_DIR 均已持久化挂载
+- [ ] 限流策略符合预期（RATE_LIMIT_* / REFRESH_RATE_*）
+- [ ] NFS/网络盘采用 WATCH_* 轮询并考虑 DISABLE_WATCH
+- [ ] 首日观察 CPU/内存/IO，按需微调 SHARP_CONCURRENCY / FFMPEG_THREADS / UV_THREADPOOL_SIZE
+- [ ] （可选）SETTINGS_REDIS_CACHE=true 降低 DB 压力
+- [ ] （可选）根据反代策略评估 ENABLE_APP_CSP
+
+---
+
+## 6) 故障排查
+
+- 401/无法登录：检查 JWT_SECRET/ADMIN_SECRET 注入
+- Redis 连接失败：确认 REDIS_URL 与容器网络/密码
+- 访问慢/超时：增大 SQLITE_* 超时，降低 SHARP_CONCURRENCY/FFMPEG_THREADS
+- NFS 丢事件：启用 WATCH_USE_POLLING 并提高轮询间隔

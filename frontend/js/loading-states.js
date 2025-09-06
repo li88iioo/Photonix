@@ -82,7 +82,10 @@ class LoadingStateManager {
                     e.stopPropagation();
                     // 使用 currentTarget 确保获取到按钮元素本身
                     const action = e.currentTarget.dataset.action;
-                    console.log('Error button clicked:', action); // 调试日志
+                    // 减少错误按钮日志输出，只在开发模式下输出
+                    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                        console.debug('Error button clicked:', action);
+                    }
                     if (action === 'reload') {
                         window.location.reload();
                     } else if (action === 'home') {
@@ -165,7 +168,10 @@ class LoadingStateManager {
                     e.stopPropagation();
                     // 使用 currentTarget 确保获取到按钮元素本身
                     const action = e.currentTarget.dataset.action;
-                    console.log('Empty button clicked:', action); // 调试日志
+                    // 减少空状态按钮日志输出，只在开发模式下输出
+                    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                        console.debug('Empty button clicked:', action);
+                    }
                     if (action === 'reload') {
                         window.location.reload();
                     } else if (action === 'home') {

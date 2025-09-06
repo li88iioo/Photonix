@@ -5,6 +5,71 @@
  * 支持精细化的发布/订阅机制，减少不必要的重渲染
  */
 
+/**
+ * 缩略图同步状态管理类
+ * 用于管理缩略图补全操作的状态，解决作用域问题并提供集中的状态管理
+ */
+export class ThumbnailSyncState {
+    constructor() {
+        this.isSilent = false;
+        this.isMonitoring = false;
+        this.monitoringType = null;
+        this.monitoringIntervalId = null;
+        this.monitoringTimeoutId = null;
+    }
+
+    /**
+     * 设置静默模式
+     * @param {boolean} silent - 是否启用静默模式
+     */
+    setSilentMode(silent) {
+        this.isSilent = Boolean(silent);
+    }
+
+    /**
+     * 开始监控
+     * @param {string} type - 监控类型 (thumbnail, index, hls)
+     */
+    startMonitoring(type) {
+        this.isMonitoring = true;
+        this.monitoringType = type;
+    }
+
+    /**
+     * 停止监控
+     */
+    stopMonitoring() {
+        if (this.monitoringIntervalId) {
+            clearInterval(this.monitoringIntervalId);
+            this.monitoringIntervalId = null;
+        }
+        if (this.monitoringTimeoutId) {
+            clearTimeout(this.monitoringTimeoutId);
+            this.monitoringTimeoutId = null;
+        }
+        this.isMonitoring = false;
+        this.monitoringType = null;
+    }
+
+    /**
+     * 设置监控定时器ID
+     * @param {number} intervalId - setInterval 返回的ID
+     * @param {number} timeoutId - setTimeout 返回的ID
+     */
+    setMonitoringTimers(intervalId, timeoutId) {
+        this.monitoringIntervalId = intervalId;
+        this.monitoringTimeoutId = timeoutId;
+    }
+
+    /**
+     * 重置状态
+     */
+    reset() {
+        this.stopMonitoring();
+        this.isSilent = false;
+    }
+}
+
 class StateManager {
     constructor() {
         this.state = {
@@ -125,9 +190,9 @@ class StateManager {
         
         if (!hasChanged) return false;
         
-        // 记录状态变更历史（调试模式）
-        if (options.debug || this.debugMode) {
-            console.log(`状态更新: ${key}`, { from: oldValue, to: value });
+        // 记录状态变更历史（仅开发模式）
+        if ((options.debug || this.debugMode) && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+            console.debug(`状态更新: ${key}`, { from: oldValue, to: value });
         }
         
         this.state[key] = value;
@@ -292,24 +357,24 @@ export const elements = {
     contentGrid: document.getElementById('content-grid'),           // 内容网格
     loadingIndicator: document.getElementById('loading'),           // 加载指示器
     breadcrumbNav: document.getElementById('breadcrumb-nav'),       // 面包屑导航
-    
+
     // 模态框相关元素
     modal: document.getElementById('modal'),                        // 模态框容器
     modalContent: document.getElementById('modal-content'),         // 模态框内容
     modalImg: document.getElementById('modal-img'),                 // 模态框图片
     modalVideo: document.getElementById('modal-video'),             // 模态框视频
     modalClose: document.getElementById('modal-close'),             // 模态框关闭按钮
-    
+
     // AI控制容器
     aiControlsContainer: document.getElementById('ai-controls-container'),  // AI控制容器
-    
+
     // 标题相关元素
     captionContainer: document.getElementById('caption-container'),         // 标题容器
     captionContainerMobile: document.getElementById('caption-container-mobile'), // 移动端标题容器
     captionBubble: document.getElementById('caption-bubble'),               // 标题气泡
     captionBubbleWrapper: document.getElementById('caption-bubble-wrapper'), // 标题气泡包装器
     toggleCaptionBtn: document.getElementById('toggle-caption-btn'),        // 切换标题按钮
-    
+
     // 其他UI元素
     navigationHint: document.getElementById('navigation-hint'),             // 导航提示
     mediaPanel: document.getElementById('media-panel'),                     // 媒体面板
@@ -317,3 +382,33 @@ export const elements = {
     infiniteScrollLoader: document.getElementById('infinite-scroll-loader-container'), // 无限滚动加载器容器
 
 };
+
+// 创建缩略图同步状态管理实例
+export const syncState = new ThumbnailSyncState();
+
+// 添加状态验证函数
+export function validateSyncState() {
+    // 减少状态验证日志输出，只在开发模式下输出
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        console.debug('[状态验证] 当前同步状态:', {
+            isSilent: syncState.isSilent,
+            isMonitoring: syncState.isMonitoring,
+            monitoringType: syncState.monitoringType,
+            hasInterval: !!syncState.monitoringIntervalId,
+            hasTimeout: !!syncState.monitoringTimeoutId
+        });
+    }
+}
+
+/**
+ * 清理同步状态
+ * 在页面卸载或重新初始化时调用，确保清理所有定时器和状态
+ */
+export function cleanupSyncState() {
+    syncState.reset();
+}
+
+// 页面卸载时清理状态
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', cleanupSyncState);
+}

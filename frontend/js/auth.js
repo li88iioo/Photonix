@@ -388,14 +388,20 @@ async function loadBackgroundWithRetry(authBackground) {
                     authBackground.classList.add('opacity-50');
                 }).catch((error) => {
                     // 预加载失败，保持备用背景
-                    console.debug('背景图片预加载失败，使用备用背景:', error.message);
+                    // 减少背景图片预加载失败日志输出，只在开发模式下输出
+                    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                        console.debug('背景图片预加载失败，使用备用背景:', error.message);
+                    }
                     // 可以在这里添加用户友好的提示
                 });
                 return;
             }
         } catch (error) {
             // 静默处理加载错误，但记录日志
+            // 减少背景图片加载失败日志输出，只在开发模式下输出
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
             console.debug('背景图片加载失败:', error.message);
+        }
         }
         
         // 如果不是最后一次尝试，等待后重试
@@ -405,7 +411,10 @@ async function loadBackgroundWithRetry(authBackground) {
     }
     
     // 所有尝试都失败，保持备用背景
-    console.debug('背景图片加载失败，使用备用背景');
+    // 减少背景图片加载失败日志输出，只在开发模式下输出
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        console.debug('背景图片加载失败，使用备用背景');
+    }
 }
 
 /**

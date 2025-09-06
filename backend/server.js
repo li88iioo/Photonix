@@ -102,7 +102,6 @@ async function healThumbnailsIfInconsistent() {
 	}
 }
 
-// 常驻缩略图对账循环已移除，改由 maintenance 任务定时执行低频批处理。
 
 /**
  * 检查目录是否可写

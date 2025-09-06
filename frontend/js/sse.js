@@ -2,6 +2,9 @@ import { showNotification } from './utils.js';
 import { getAuthToken } from './auth.js';
 import { triggerMasonryUpdate } from './masonry.js';
 
+// 直接导入重试管理器，避免异步导入问题
+import { thumbnailRetryManager } from './lazyload.js';
+
 let eventSource = null;
 let retryCount = 0;
 const MAX_RETRY_DELAY = 60000; // 最大重连延迟: 60秒
@@ -16,7 +19,10 @@ const isDevelopment = window.location.hostname === 'localhost' ||
 // 条件日志函数
 const sseLog = (message, ...args) => {
     if (isDevelopment) {
-        console.log(`[SSE] ${message}`, ...args);
+        // 减少SSE日志输出，只在开发模式下输出
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            console.debug(`[SSE] ${message}`, ...args);
+        }
     }
 };
 
@@ -92,12 +98,14 @@ function connect() {
             }
 
             if (imagesToUpdate.length > 0) {
-                imagesToUpdate.forEach(img => {
+                imagesToUpdate.forEach(async (img) => {
                     // 无论是否已加载，都强制刷新图片
                     // 清除处理/失败状态，强制重新请求
                     img.dataset.thumbStatus = '';
                     img.classList.remove('processing', 'error', 'loaded');
                     img.classList.add('opacity-0'); // 先隐藏图片
+
+                    // 使用直接导入的重试管理器
 
                     // 强制刷新：更新URL的版本参数
                     const thumbnailUrl = img.dataset.src;
@@ -113,53 +121,81 @@ function connect() {
                     const token = getAuthToken();
                     const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
 
-                    fetch(freshThumbnailUrl, {
-                        headers,
-                        cache: 'no-cache'  // 强制不使用缓存
-                    })
-                        .then(response => {
-                            if (response.ok) return response.blob();
-                            throw new Error(`Failed to fetch thumbnail via SSE event: ${response.status}`);
-                        })
-                        .then(blob => {
-                            // 清理旧的blob URL
-                            try {
-                                if (img.src && img.src.startsWith('blob:')) {
-                                    URL.revokeObjectURL(img.src);
-                                }
-                            } catch {}
-
-                            // 创建新的blob URL并设置
-                            const newBlobUrl = URL.createObjectURL(blob);
-                            img.src = newBlobUrl;
-
-                            // 同时更新data-src属性，确保下次加载使用最新版本
-                            img.dataset.src = freshThumbnailUrl;
-
-                            // 立即显示图片，不要依赖onload事件（会被lazyload.js覆盖）
-                            img.classList.remove('opacity-0');
-                            img.classList.add('loaded');
-
-                            // 清理可能被lazyload.js覆盖的事件监听器
-                            setTimeout(() => {
-                                if (img.onload) {
-                                    img.onload = null;
-                                }
-
-                                // 触发masonry更新，确保布局正确
-                                try {
-                                    triggerMasonryUpdate();
-                                } catch (e) {
-                                    // 静默失败
-                                }
-                            }, 100);
-                        })
-                        .catch(error => {
-                            sseWarn('Failed to refresh thumbnail after generation:', error);
-                            img.classList.remove('opacity-0');
-                            // 如果失败，触发错误处理
-                            img.dispatchEvent(new Event('error'));
+                    try {
+                        const response = await fetch(freshThumbnailUrl, {
+                            headers,
+                            cache: 'no-cache'  // 强制不使用缓存
                         });
+
+                        if (response.ok) {
+                            const blob = await response.blob();
+
+                            // 使用统一的blob URL管理器，避免与lazyload.js冲突
+                            // 延迟一小段时间，确保lazyload.js有机会先处理
+                            setTimeout(() => {
+                                // 再次检查图片状态，避免并发冲突
+                                if (img.dataset.processingBySSE) {
+                                    return; // 正在被其他SSE处理
+                                }
+                                img.dataset.processingBySSE = 'true';
+
+                                // 清理旧的blob URL（通过管理器）
+                                if (window.blobUrlManager) {
+                                    window.blobUrlManager.cleanup(img);
+                                } else {
+                                    // fallback: 直接revoke
+                                    try {
+                                        if (img.src && img.src.startsWith('blob:')) {
+                                            URL.revokeObjectURL(img.src);
+                                        }
+                                    } catch {}
+                                }
+
+                                // 创建新的blob URL并设置
+                                const newBlobUrl = URL.createObjectURL(blob);
+                                img.src = newBlobUrl;
+
+                                // 如果有blob管理器，注册新的URL
+                                if (window.blobUrlManager) {
+                                    window.blobUrlManager.activeBlobUrls.set(img, newBlobUrl);
+                                }
+
+                                // 同时更新data-src属性，确保下次加载使用最新版本
+                                img.dataset.src = freshThumbnailUrl;
+
+                                // 立即显示图片，不要依赖onload事件（会被lazyload.js覆盖）
+                                img.classList.remove('opacity-0');
+                                img.classList.add('loaded');
+
+                                // 重要：清理重试管理器，避免重复请求
+                                thumbnailRetryManager.removeRetry(img);
+
+                                // 清理可能被lazyload.js覆盖的事件监听器
+                                setTimeout(() => {
+                                    if (img.onload) {
+                                        img.onload = null;
+                                    }
+
+                                    // 触发masonry更新，确保布局正确
+                                    try {
+                                        triggerMasonryUpdate();
+                                    } catch (e) {
+                                        // 静默失败
+                                    }
+
+                                    // 清理处理标记
+                                    delete img.dataset.processingBySSE;
+                                }, 100);
+                            }, 10); // 10ms延迟，让lazyload有机会先处理
+                        } else {
+                            throw new Error(`Failed to fetch thumbnail via SSE event: ${response.status}`);
+                        }
+                    } catch (error) {
+                        sseWarn('Failed to refresh thumbnail after generation:', error);
+                        img.classList.remove('opacity-0');
+                        // 如果失败，触发错误处理
+                        img.dispatchEvent(new Event('error'));
+                    }
                 });
             }
         } catch (error) {

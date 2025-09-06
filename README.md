@@ -65,11 +65,12 @@ cd Photonix
 #### 快速开始
 - **开发环境**：复制 `env.development` 为 `.env`，默认配置即可启动
 - **生产环境**：复制 `env.production` 为 `.env`，根据需要调整
+- 或使用最小模板：复制 `env.example` 为 `.env`（仅核心必配项，其余使用代码默认值）
 
 #### 详细配置
-- 📖 **完整配置指南**：查看 [ENV_GUIDE.md](./ENV_GUIDE.md) 了解所有95+个环境变量
+- 📖 **完整配置指南**：查看 [ENV_GUIDE.md](./ENV_GUIDE.md)（精注释版）与 [ENV_GUIDE_MIN.md](./ENV_GUIDE_MIN.md)（简版速查）
 - 🔧 **核心配置**：`PORT`、`PHOTOS_DIR`、`DATA_DIR`、`JWT_SECRET`
-- ⚡ **性能优化**：根据服务器规模调整队列并发数和缓存大小
+- ⚡ **性能优化**：根据服务器规模调整并发与缓存（更多见 ENV_GUIDE.md）
 - 🔒 **安全设置**：生产环境务必修改 `JWT_SECRET` 和 `ADMIN_SECRET`
 
 
@@ -156,8 +157,6 @@ Photonix/
 │   │   ├── search.routes.js             # /api/search：搜索
 │   │   ├── settings.routes.js           # /api/settings：客户端可读设置
 │   │   └── thumbnail.routes.js          # /api/thumbnail：缩略图获取
-│   ├── scripts/
-│   │   └── maintenance.js               # 周期性维护任务（清理/压缩等）
 │   ├── services/
 │   │   ├── cache.service.js             # 缓存标签管理/失效
 │   │   ├── event.service.js             # 事件总线（SSE）
@@ -178,9 +177,7 @@ Photonix/
 │       ├── settings-worker.js           # 设置持久化任务
 │       ├── thumbnail-worker.js          # Sharp/FFmpeg 生成缩略图
 │       └── video-processor.js           # 视频处理
-│   └── queue/                           # 队列配置
-│       ├── thumb-queue-worker.js        # 缩略图队列工作进程
-│       └── video-queue-worker.js        # 视频处理队列工作进程
+
 └── frontend/
     ├── index.html                        # 页面入口
     ├── manifest.json                     # PWA 清单

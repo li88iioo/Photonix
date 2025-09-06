@@ -486,7 +486,10 @@ export function setupEventListeners() {
                 // F键全屏模式
                 if (!document.fullscreenElement) {
                     document.documentElement.requestFullscreen().catch(err => {
-                        console.log('全屏模式失败:', err);
+                        // 减少全屏模式失败日志输出，只在开发模式下输出
+                        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                            console.debug('全屏模式失败:', err);
+                        }
                     });
                 } else {
                     document.exitFullscreen();
@@ -537,6 +540,11 @@ export function setupEventListeners() {
     
     // 触摸滑动处理 - 支持"滑动后不放"快速翻页
     const swipeHandler = new SwipeHandler(elements.mediaPanel, {
+        shouldAllowSwipe: () => {
+            const isImage = !elements.modalImg.classList.contains('hidden');
+            const zoomed = elements.mediaPanel?.dataset?.isZoomed === '1';
+            return !(isImage && zoomed);
+        },
         onSwipe: (direction) => {
             if (elements.modal.classList.contains('opacity-0')) return;
             // 向左滑动 -> 下一张

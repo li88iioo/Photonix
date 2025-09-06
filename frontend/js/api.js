@@ -450,7 +450,10 @@ export function postViewed(path) {
                     await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1))); // 减少延迟
                 } else {
                     // 只在最终失败时记录，减少日志噪音
-                    console.debug('更新浏览时间失败:', error.message);
+                    // 减少浏览时间更新失败日志输出，只在开发模式下输出
+                    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                        console.debug('更新浏览时间失败:', error.message);
+                    }
                 }
             }
         }

@@ -44,7 +44,7 @@ async function getAllSettings(options = {}) {
 
         // 1) 尝试使用内存缓存（敏感键可要求更短TTL）
         if (isCacheValid(preferFreshSensitive ? SENSITIVE_TTL : CACHE_TTL)) {
-            logger.debug('从内存缓存获取设置');
+            // 设置缓存命中 - 降级为 trace 级别避免刷屏
             // 补充 ALLOW_PUBLIC_ACCESS 默认值
             if (typeof settingsCache.ALLOW_PUBLIC_ACCESS === 'undefined') {
                 settingsCache.ALLOW_PUBLIC_ACCESS = 'true';

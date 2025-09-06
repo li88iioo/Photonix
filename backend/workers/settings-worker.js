@@ -3,6 +3,7 @@ const { Worker } = require('bullmq');
 const winston = require('winston');
 const { initializeConnections, getDB, runPreparedBatch } = require('../db/multi-db');
 const { redis } = require('../config/redis');
+const { runPreparedBatchWithRetry } = require('../db/sqlite-retry');
 const { invalidateTags } = require('../services/cache.service.js');
 
 (async () => {
@@ -35,7 +36,7 @@ const { invalidateTags } = require('../services/cache.service.js');
                     const sql = 'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)';
                     const rows = Object.entries(settingsToUpdate).map(([k, v]) => [k, String(v)]);
                     // 交由通用批处理托管事务
-                    await runPreparedBatch('settings', sql, rows, { chunkSize: 500 });
+                    await runPreparedBatchWithRetry(runPreparedBatch, 'settings', sql, rows, { chunkSize: 500 }, redis);
 
                     logger.info('[SETTINGS-WORKER] 配置更新成功:', Object.keys(settingsToUpdate).join(', '));
 

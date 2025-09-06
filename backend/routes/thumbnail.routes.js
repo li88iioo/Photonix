@@ -20,5 +20,18 @@ const thumbQuerySchema = Joi.object({
 
 router.get('/', validate(thumbQuerySchema, 'query'), cache(300), asyncHandler(thumbnailController.getThumbnail));
 
+// 批量补全缩略图路由
+const batchSchema = Joi.object({
+  limit: Joi.number().integer().min(1).max(5000).optional(),
+  loop: Joi.boolean().optional(),
+  mode: Joi.string().valid('loop').optional(),
+  silent: Joi.boolean().optional()
+});
+
+router.post('/batch', validate(batchSchema, 'body'), asyncHandler(thumbnailController.batchGenerateThumbnails));
+
+// 缩略图统计路由
+router.get('/stats', asyncHandler(thumbnailController.getThumbnailStats));
+
 // 导出缩略图路由模块
 module.exports = router;

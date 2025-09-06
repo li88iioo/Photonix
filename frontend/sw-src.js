@@ -51,7 +51,7 @@ const CORE_ASSETS = [
 
 
   // --- 外部资源 ---
-  'https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700&display=swap'
+
 ];
 
 // 检查响应是否适合缓存

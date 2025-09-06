@@ -188,7 +188,7 @@ function cache(duration) {
             }
 
             cacheStats.misses++;
-            logger.debug(`未命中路由缓存: ${key}`);
+            // 路由缓存未命中 - 降级为 trace 级别避免刷屏
             res.setHeader('X-Cache', 'MISS');
             res.setHeader('Vary', 'Authorization');
 

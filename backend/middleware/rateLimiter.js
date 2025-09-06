@@ -16,13 +16,13 @@ const apiLimiter = rateLimit({
         // 通过 ioredis 的 call 发送底层命令
         sendCommand: (...args) => redis.call(...args)
     }),
-    // 时间窗口：默认15分钟，可通过环境变量RATE_LIMIT_WINDOW_MINUTES配置
+    // 时间窗口：默认1分钟，可通过环境变量RATE_LIMIT_WINDOW_MINUTES配置
     // 单位：毫秒
-    windowMs: (process.env.RATE_LIMIT_WINDOW_MINUTES || 15) * 60 * 1000,
+    windowMs: (process.env.RATE_LIMIT_WINDOW_MINUTES || 1) * 60 * 1000,
     
-    // 最大请求次数：默认100次，可通过环境变量RATE_LIMIT_MAX_REQUESTS配置
+    // 最大请求次数：默认800次，可通过环境变量RATE_LIMIT_MAX_REQUESTS配置
     // 在时间窗口内超过此次数将被限制
-    max: process.env.RATE_LIMIT_MAX_REQUESTS || 100,
+    max: process.env.RATE_LIMIT_MAX_REQUESTS || 800,
     
     // 限制响应消息：当请求被限制时返回的错误信息
     message: {

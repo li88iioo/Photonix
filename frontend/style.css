@@ -806,6 +806,171 @@ body { font-family: 'Noto Sans SC', sans-serif; }
 .lazy-image.processing {
     object-fit: contain !important;
     z-index: 2;
+    /* 更优雅的视觉效果，与项目紫色主题协调 */
+    filter:
+        brightness(1.05)
+        contrast(0.95)
+        saturate(1.1)
+        sepia(0.1)
+        hue-rotate(5deg);
+    transform: scale(0.99);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    /* 更平滑的脉动效果 */
+    animation: processing-pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    /* 添加微妙的边框发光效果 */
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.3);
+}
+
+@keyframes processing-pulse {
+    0%, 100% {
+        transform: scale(0.99);
+        filter:
+            brightness(1.05)
+            contrast(0.95)
+            saturate(1.1)
+            sepia(0.1)
+            hue-rotate(5deg);
+        box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.3);
+    }
+    50% {
+        transform: scale(1.01);
+        filter:
+            brightness(1.1)
+            contrast(0.9)
+            saturate(1.2)
+            sepia(0.05)
+            hue-rotate(2deg);
+        box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.5);
+    }
+}
+
+/* Processing indicator styles - 简洁优雅的设计 */
+.processing-indicator {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    /* 去掉背景，让其与卡片灰色背景融合 */
+    background: transparent;
+    color: white;
+    padding: 16px 24px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 400;
+    z-index: 15;
+    /* 完全透明，无任何阴影 */
+    animation: indicator-fade-in 0.3s ease-out;
+}
+
+@keyframes indicator-fade-in {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.8);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
+.processing-spinner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    margin-bottom: 8px;
+    height: 20px;
+}
+
+.processing-dots {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.processing-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    /* 紫色渐变背景 */
+    background: linear-gradient(135deg, #8B5CF6, #EC4899);
+    /* 添加微妙的阴影 */
+    box-shadow: 0 1px 3px rgba(139, 92, 246, 0.3);
+    animation: processing-bounce 1.4s ease-in-out infinite;
+}
+
+.processing-dot:nth-child(2) {
+    animation-delay: 0.16s;
+}
+
+.processing-dot:nth-child(3) {
+    animation-delay: 0.32s;
+}
+
+@keyframes processing-bounce {
+    0%, 80%, 100% {
+        transform: scale(0.8);
+        opacity: 0.5;
+    }
+    40% {
+        transform: scale(1.2);
+        opacity: 1;
+    }
+}
+
+.processing-text {
+    font-size: 12px;
+    opacity: 0.95;
+    text-align: center;
+    white-space: nowrap;
+    font-weight: 500;
+    letter-spacing: 0.025em;
+    /* 简洁文字，无阴影 */
+    /* 使用更现代的字体栈 */
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+    .processing-indicator {
+        padding: 12px 16px;
+        border-radius: 10px;
+        font-size: 12px;
+    }
+
+    .processing-spinner {
+        width: 24px;
+        height: 24px;
+        margin-bottom: 8px;
+    }
+
+    .processing-text {
+        font-size: 11px;
+    }
+}
+
+/* 暗色模式适配（如果项目支持） */
+@media (prefers-color-scheme: dark) {
+    .processing-indicator {
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.95), rgba(236, 72, 153, 0.95));
+    }
+}
+
+/* 高对比度模式支持 */
+@media (prefers-contrast: high) {
+    .processing-indicator {
+        background: linear-gradient(135deg, #8B5CF6, #EC4899);
+        border: 2px solid white;
+    }
+
+    .processing-text {
+        opacity: 1;
+        text-shadow: none;
+    }
 }
 
 .lazy-image.error {
@@ -1231,6 +1396,31 @@ body.modal-open .topbar {
 /* === 全局兜底和修复 === */
 img:focus, .photo-item:focus, .album-card:focus, *:focus-visible {
   outline: none !important;
+}
+
+/* ===== 交互式信息环样式 ===== */
+
+/* === 现代化系统状态页面样式 === */
+
+/* 状态卡片渐变背景 */
+.status-card-success {
+    background: linear-gradient(135deg, rgba(34, 197, 94, 0.1), rgba(34, 197, 94, 0.05));
+    border-color: rgba(34, 197, 94, 0.2);
+}
+
+.status-card-warning {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.1), rgba(245, 158, 11, 0.05));
+    border-color: rgba(245, 158, 11, 0.2);
+}
+
+.status-card-error {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(239, 68, 68, 0.05));
+    border-color: rgba(239, 68, 68, 0.2);
+}
+
+.status-card-info {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(59, 130, 246, 0.05));
+    border-color: rgba(59, 130, 246, 0.2);
 }
 .photo-item, .album-card img {
   user-select: none;
@@ -1677,8 +1867,39 @@ body.demo-body { background-color: var(--gray-900); color: white; display: flex;
 
 
 
-#settings-modal { position: fixed; inset: 0; z-index: 60; background-color: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; padding: 0; transition: opacity 0.3s; opacity: 0; pointer-events: none; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
-#settings-card { width: 100%; height: 100%; background: var(--gray-900); border: none; border-radius: 0; transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); display: flex; flex-direction: column; overflow: hidden; transform: translateY(100%); }
+#settings-modal { 
+    position: fixed; 
+    inset: 0; 
+    z-index: 60; 
+    background-color: rgba(0,0,0,0.5); 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    padding: 0; 
+    transition: opacity 0.3s; 
+    opacity: 0; 
+    pointer-events: none; 
+    backdrop-filter: blur(8px); 
+    -webkit-backdrop-filter: blur(8px);
+}
+
+#settings-card { 
+    width: 100%; 
+    height: 100%; 
+    background: var(--gray-900); 
+    border: none; 
+    border-radius: 0; 
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); 
+    display: flex; 
+    flex-direction: column; 
+    overflow: hidden; 
+    transform: translateY(100%);
+}
+
+/* 设置模态框打开时隐藏页面滚动条 */
+body.settings-open {
+    overflow: hidden;
+}
 #settings-modal.visible { opacity: 1; pointer-events: auto; }
 #settings-modal.visible #settings-card { transform: translateY(0); }
 .settings-layout { display: flex; flex-direction: column; height: 100%; }
@@ -1693,8 +1914,47 @@ body.demo-body { background-color: var(--gray-900); color: white; display: flex;
 .settings-nav button:hover { background-color: rgba(255, 255, 255, 0.05); color: white; }
 .settings-nav button.active { background-color: var(--gray-700); color: white; }
 .settings-content-panel { flex-grow: 1; position: relative; }
-.settings-tab-content { position: absolute; inset: 0; padding: 1.5rem; overflow-y: auto; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
-.settings-tab-content.active { opacity: 1; pointer-events: auto; }
+.settings-tab-content { 
+    position: absolute; 
+    inset: 0; 
+    padding: 1rem; 
+    overflow-y: auto; 
+    opacity: 0; 
+    transition: opacity 0.3s; 
+    pointer-events: none; 
+    max-height: calc(100vh - 12rem);
+}
+
+.settings-tab-content.active { 
+    opacity: 1; 
+    pointer-events: auto; 
+}
+
+/* 设置页面滚动条美化 */
+.settings-tab-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.settings-tab-content::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 3px;
+}
+
+.settings-tab-content::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(139, 92, 246, 0.6), rgba(236, 72, 153, 0.6));
+    border-radius: 3px;
+    transition: background 0.2s ease;
+}
+
+.settings-tab-content::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, rgba(139, 92, 246, 0.8), rgba(236, 72, 153, 0.8));
+}
+
+/* Firefox 滚动条样式 */
+.settings-tab-content {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(139, 92, 246, 0.6) rgba(255, 255, 255, 0.05);
+}
 .setting-group { margin-bottom: 1.5rem; }
 .setting-group-title { font-size: 1rem; font-weight: 600; color: white; }
 .setting-group-description { font-size: 0.8rem; color: var(--gray-400); margin-top: 0.25rem; margin-bottom: 1rem; }
@@ -2560,6 +2820,391 @@ body.demo-body { background-color: var(--gray-900); color: white; display: flex;
     }
 }
 
+/* === 新增：现代化系统状态页面样式 === */
+
+/* CSS变量定义 */
+:root {
+    --gray-900: #111827;
+    --gray-800: #1F2937;
+    --gray-700: #374151;
+    --gray-600: #4B5563;
+    --gray-500: #6B7280;
+    --gray-400: #9CA3AF;
+    --gray-300: #D1D5DB;
+    --gray-200: #E5E7EB;
+    --violet-500: #8B5CF6;
+    --violet-600: #7C3AED;
+    --violet-400: #A78BFA;
+    --red-400: #F87171;
+    --green-400: #34D399;
+    --yellow-400: #F59E0B;
+    --blue-400: #60A5FA;
+    --emerald-400: #34D399;
+}
+
+/* 现代化状态卡片容器 */
+.status-card-new {
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 1.25rem;
+    padding: 1.5rem;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.status-card-new:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    border-color: rgba(139, 92, 246, 0.2);
+}
+
+.status-card-new::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(139, 92, 246, 0.5), transparent);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.status-card-new:hover::before {
+    opacity: 1;
+}
+
+/* 卡片头部 */
+.card-header-new {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
+.card-title-new {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: white;
+}
+
+/* 状态徽章 */
+.status-badge-new {
+    font-size: 0.75rem;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 99px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.status-badge-new.status-success {
+    background-color: rgba(34, 197, 94, 0.2);
+    color: #34D399;
+}
+
+.status-badge-new.status-warning {
+    background-color: rgba(245, 158, 11, 0.2);
+    color: #F59E0B;
+}
+
+.status-badge-new.status-error {
+    background-color: rgba(239, 68, 68, 0.2);
+    color: #F87171;
+}
+
+.status-badge-new.status-info {
+    background-color: rgba(59, 130, 246, 0.2);
+    color: #60A5FA;
+}
+
+/* 进度条 */
+.linear-progress {
+    height: 6px;
+    width: 100%;
+    background-color: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    margin-bottom: 1.25rem;
+    overflow: hidden;
+}
+
+.linear-progress-bar {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    filter: drop-shadow(0 0 5px var(--glow-color, rgba(139, 92, 246, 0.5)));
+}
+
+#index-progress-bar {
+    background: linear-gradient(90deg, #8B5CF6, #EC4899);
+    --glow-color: rgba(139, 92, 246, 0.7);
+}
+
+#thumbnail-progress-bar {
+    background: linear-gradient(90deg, #10B981, #3B82F6);
+    --glow-color: rgba(16, 185, 129, 0.7);
+}
+
+#hls-progress-bar {
+    background: linear-gradient(90deg, #F59E0B, #EF4444);
+    --glow-color: rgba(245, 158, 11, 0.7);
+}
+
+/* 详细信息网格 */
+.details-grid-new {
+    display: grid;
+    gap: 0.75rem 1.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    margin-bottom: 1.5rem;
+}
+
+.detail-item-new {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 0.875rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.detail-label-new {
+    color: var(--gray-400);
+}
+
+.detail-value-new {
+    font-weight: 500;
+    color: white;
+}
+
+.detail-value-new.status-success {
+    color: var(--green-400);
+}
+
+.detail-value-new.status-warning {
+    color: var(--yellow-400);
+}
+
+.detail-value-new.status-error {
+    color: var(--red-400);
+}
+
+/* 卡片底部 */
+.card-footer-new {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.timestamp-new {
+    font-size: 0.75rem;
+    color: var(--gray-500);
+}
+
+.actions-new {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+/* 加载状态覆盖层 */
+.status-pod-loading {
+    position: absolute;
+    inset: 0;
+    backdrop-filter: blur(5px);
+    background-color: rgba(17, 24, 39, 0.7);
+    z-index: 10;
+    border-radius: 1.25rem;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.status-pod-loading.active {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* 同步按钮样式增强 */
+.sync-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1.2rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease-in-out;
+    background: var(--violet-500);
+    color: white;
+}
+
+.sync-btn:hover {
+    background: var(--violet-600);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+}
+
+.sync-btn:active {
+    transform: translateY(0);
+}
+
+.sync-btn svg {
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+}
+
+/* 响应式设计 */
+@media (min-width: 768px) {
+    .status-card-new {
+        background: linear-gradient(145deg, rgba(30, 41, 59, 0.7), rgba(17, 24, 39, 0.8));
+        backdrop-filter: blur(24px);
+        -webkit-backdrop-filter: blur(24px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 1.5rem;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+        transform: scale(0.95);
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .status-card-new:hover {
+        transform: scale(1) translateY(-4px);
+    }
+}
+
+/* 移动端适配 */
+@media (max-width: 767px) {
+    /* 移动端状态页面卡片间距 */
+    #status-settings-content {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        padding: 0.5rem;
+    }
+
+    .status-card-new {
+        padding: 1rem;
+        border-radius: 1rem;
+        margin-bottom: 0; /* 移除默认margin，使用父容器的gap */
+    }
+
+    .card-header-new {
+        margin-bottom: 0.5rem;
+    }
+
+    .card-title-new {
+        font-size: 1rem;
+    }
+
+    .details-grid-new {
+        grid-template-columns: 1fr;
+        gap: 0.5rem;
+    }
+
+    .detail-item-new {
+        font-size: 0.8rem;
+        padding-bottom: 0.25rem;
+    }
+
+    .actions-new {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        gap: 0.5rem;
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .sync-btn {
+        flex: 1;
+        padding: 0.6rem 0.5rem;
+        font-size: 0.75rem;
+        justify-content: center;
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+    }
+
+    .sync-btn span {
+        display: block;
+        text-overflow: ellipsis;
+        overflow: hidden;
+    }
+
+    .card-footer-new {
+        flex-direction: column;
+        gap: 0.75rem;
+        align-items: stretch;
+    }
+
+    .timestamp-new {
+        text-align: center;
+        order: 1;
+    }
+}
+
+/* 超小屏幕适配 - 确保三个按钮始终在一行 */
+@media (max-width: 480px) {
+    .actions-new {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        gap: 0.25rem;
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .sync-btn {
+        flex: 1;
+        min-width: 0;
+        padding: 0.5rem 0.25rem;
+        font-size: 0.65rem;
+        white-space: nowrap;
+        overflow: hidden;
+    }
+
+    .sync-btn span {
+        display: block;
+        text-overflow: ellipsis;
+        overflow: hidden;
+    }
+
+    .sync-btn svg {
+        width: 0.875rem;
+        height: 0.875rem;
+        flex-shrink: 0;
+    }
+}
+
+/* 极小屏幕适配 - 320px及以下 */
+@media (max-width: 320px) {
+    .sync-btn {
+        padding: 0.4rem 0.2rem;
+        font-size: 0.6rem;
+        gap: 0.25rem;
+    }
+
+    .sync-btn svg {
+        width: 0.75rem;
+        height: 0.75rem;
+    }
+}
+
 /* ===== 无限滚动加载器优化 - 避免重排抖动 ===== */
 
 /* 优化后的加载器容器：始终占据空间，避免重排 */
@@ -2585,4 +3230,3 @@ body.demo-body { background-color: var(--gray-900); color: white; display: flex;
     transform: scale(1);
     pointer-events: auto;
 }
-

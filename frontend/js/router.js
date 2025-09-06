@@ -38,11 +38,21 @@ export function initializeRouter() {
 }
 
 export async function handleHashChange() {
+    // 保存当前页面的懒加载状态
+    if (typeof state.currentBrowsePath === 'string' && window.savePageLazyState) {
+        window.savePageLazyState(state.currentBrowsePath);
+    }
+
+    // 清理恢复防护，为新页面恢复做准备
+    if (window.clearRestoreProtection) {
+        window.clearRestoreProtection();
+    }
+
     if (typeof state.currentBrowsePath === 'string') {
         const key = state.currentBrowsePath;
         state.scrollPositions.set(key, window.scrollY);
     }
-    
+
     AbortBus.abortMany(['page','scroll']);
     const pageSignal = AbortBus.next('page');
 
@@ -298,7 +308,7 @@ function prepareForNewContent() {
 
         window.scrollTo({ top: 0, behavior: 'instant' });
         elements.contentGrid.style.minHeight = `${elements.contentGrid.offsetHeight}px`;
-        
+
         // 添加淡出 class
         elements.contentGrid.classList.add('grid-leaving');
 
@@ -310,7 +320,17 @@ function prepareForNewContent() {
             elements.contentGrid.style.height = 'auto';
             // 【优化】隐藏无限滚动加载器 - 避免重排抖动
             if (elements.infiniteScrollLoader) elements.infiniteScrollLoader.classList.remove('visible');
-            state.update('currentPhotos', []);
+
+            // 【修复】只在真正需要时清空图片状态，保留缓存
+            // 检查是否是同一个相册路径的重新加载
+            const currentPath = state.currentBrowsePath;
+            const isSamePathReload = currentPath && currentPath === getPathOnlyFromHash();
+
+            if (!isSamePathReload) {
+                // 只有在切换到不同相册时才清空图片状态
+                state.update('currentPhotos', []);
+            }
+            // 如果是同一相册的重新加载，保持 currentPhotos 不变，让懒加载系统复用
 
             // 动画结束后移除 entering class
             elements.contentGrid.addEventListener('transitionend', () => {
@@ -325,15 +345,22 @@ function prepareForNewContent() {
 function finalizeNewContent(pathKey) {
     if (!state.get('virtualScroller')) {
         setupLazyLoading();
-        // 仅在瀑布流模式下执行瀑布流布局
-        if (elements.contentGrid.classList.contains('masonry-mode')) {
+
+        // 尝试恢复页面的懒加载状态
+        let stateRestored = false;
+        if (window.restorePageLazyState) {
+            stateRestored = window.restorePageLazyState(pathKey);
+        }
+
+        // 仅在没有恢复状态且瀑布流模式下执行瀑布流布局
+        if (!stateRestored && elements.contentGrid.classList.contains('masonry-mode')) {
             applyMasonryLayout();
         }
     }
-    
+
     sortAlbumsByViewed();
     state.update('currentColumnCount', getMasonryColumns());
-    
+
     const scrollY = state.get('scrollPositions').get(pathKey);
     if (scrollY) {
         window.scrollTo({ top: scrollY, behavior: 'instant' });
@@ -341,7 +368,7 @@ function finalizeNewContent(pathKey) {
     } else if (state.get('isInitialLoad')) {
         window.scrollTo({ top: 0, behavior: 'instant' });
     }
-    
+
     elements.contentGrid.style.minHeight = '';
     state.update('isInitialLoad', false);
 }

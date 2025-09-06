@@ -1,18 +1,18 @@
 /**
- * 索引服务模块
- * 管理文件系统监控、索引重建、增量更新和缩略图生成协调
+ * 索引服务模块 - 按需生成版本
+ * 管理文件系统监控、索引重建、增量更新，禁用自动缩略图生成
  */
 const chokidar = require('chokidar');
 const path = require('path');
 const { promises: fs } = require('fs');
 const logger = require('../config/logger');
-const { redis } = require('../config/redis');
+const { redis, bullConnection } = require('../config/redis');
+const { Queue } = require('bullmq');
 const { invalidateTags } = require('./cache.service');
-const { PHOTOS_DIR, THUMBS_DIR, INDEX_STABILIZE_DELAY_MS, TAG_INVALIDATION_MAX_TAGS, ROUTE_CACHE_BROWSE_PATTERN, THUMB_CHECK_BATCH_SIZE, THUMB_CHECK_BATCH_DELAY_MS } = require('../config');
+const { PHOTOS_DIR, THUMBS_DIR, INDEX_STABILIZE_DELAY_MS } = require('../config');
 const { dbRun, runPreparedBatch, dbAll } = require('../db/multi-db');
 const { getIndexingWorker, getVideoWorker, ensureCoreWorkers } = require('./worker.manager');
 const { shouldDisableHlsBackfill } = require('./adaptive.service');
-const { startIdleThumbnailGeneration, lowPriorityThumbnailQueue, dispatchThumbnailTask, isTaskQueuedOrActive } = require('./thumbnail.service');
 const settingsService = require('./settings.service');
 const { invalidateCoverCache } = require('./file.service');
 const crypto = require('crypto');
@@ -24,57 +24,20 @@ const { findCoverPhotosBatchDb } = require('./file.service');
 let rebuildTimeout;           // 重建超时定时器
 let isIndexing = false;       // 索引进行中标志
 let pendingIndexChanges = []; // 待处理的索引变更队列
-// 背景缩略图补齐循环运行标记，避免重复并行循环占用资源
-let thumbBgLoopActive = false;
 
 /**
  * 以分批、低优先级的方式，将视频处理任务加入队列
  * @param {Array<Object>} videos - 从数据库查询出的视频对象数组
  */
 async function queueVideoTasksInBatches(videos) {
-    const { VIDEO_BATCH_SIZE, VIDEO_BATCH_DELAY_MS, SYSTEM_LOAD_THRESHOLD } = require('../config');
-    const BATCH_SIZE = VIDEO_BATCH_SIZE; // 从配置读取批次大小
-    const BATCH_DELAY_MS = VIDEO_BATCH_DELAY_MS; // 从配置读取批次延迟
-
     if (!videos || videos.length === 0) {
         return;
     }
 
-    logger.info(`[Main-Thread] 发现 ${videos.length} 个视频待处理，开始以分批方式加入队列...`);
+    logger.debug(`[Main-Thread] 发现 ${videos.length} 个视频待处理，开始以分批方式加入队列...`);
 
-    const vw = getVideoWorker();
+    // HLS处理已改为手动模式，跳过所有批量视频处理
 
-    for (let i = 0; i < videos.length; i += BATCH_SIZE) {
-        const batch = videos.slice(i, i + BATCH_SIZE);
-        logger.info(`[Main-Thread] 正在处理批次: ${Math.floor(i / BATCH_SIZE) + 1} / ${Math.ceil(videos.length / BATCH_SIZE)} (共 ${batch.length} 个视频)`);
-
-        // 检查系统负载，如果过高则增加延迟
-        const systemLoad = process.loadavg ? process.loadavg()[0] : 0;
-        const additionalDelay = systemLoad > SYSTEM_LOAD_THRESHOLD ? 5000 : 0; // 使用配置的负载阈值
-        
-        if (additionalDelay > 0) {
-            logger.info(`[Main-Thread] 检测到系统负载较高(${systemLoad.toFixed(2)})，额外延迟${additionalDelay}ms`);
-            await new Promise(resolve => setTimeout(resolve, additionalDelay));
-        }
-
-        for (const video of batch) {
-            try {
-                vw.postMessage({
-                    filePath: path.join(PHOTOS_DIR, video.path),
-                    relativePath: video.path,
-                    thumbsDir: THUMBS_DIR
-                });
-            } catch (e) {
-                logger.warn(`[Main-Thread] 向Video Worker发送任务失败: ${video.path}`, e);
-            }
-        }
-
-        if (i + BATCH_SIZE < videos.length) {
-            await new Promise(resolve => setTimeout(resolve, BATCH_DELAY_MS));
-        }
-    }
-
-    logger.info('[Main-Thread] 所有视频处理任务已全部分批加入队列。');
 }
 
 /**
@@ -106,26 +69,11 @@ function setupWorkerListeners() {
         }
     }
 
-    // --- 启动时检查，补全未处理的视频 ---
-    (async () => {
-        try {
-            const itemCount = await dbAll('main', "SELECT COUNT(*) as count FROM items");
-            if (itemCount && itemCount[0].count > 0) {
-                logger.info(`[Indexer-Startup] 索引已存在，开始检查并补全所有视频的HLS流（分批处理）...`);
-                const videos = await dbAll('main', `SELECT path FROM items WHERE type='video'`);
-                if (videos && videos.length > 0) {
-                    await queueVideoTasksInBatches(videos);
-                }
-            }
-        } catch (e) {
-            logger.error('[Indexer-Startup] 启动时检查视频HLS任务失败:', e);
-        }
-    })();
+    // --- 启动时检查已禁用（HLS处理改为手动模式）---
 
     // --- 监听器设置 ---
     const indexingWorker = getIndexingWorker();
     const videoWorker = getVideoWorker();
-
     videoWorker.on('message', (result) => {
         if (result.success) {
             logger.info(`视频处理完成或跳过: ${result.path}`);
@@ -151,8 +99,8 @@ function setupWorkerListeners() {
             case 'rebuild_complete':
                 logger.info(`[Main-Thread] Indexing Worker 完成索引重建，共处理 ${msg.count} 个条目。`);
                 isIndexing = false;
-                logger.info('[Main-Thread] 准备启动智能缩略图后台生成任务...');
-                startIdleThumbnailGeneration();
+
+                // 禁用自动缩略图生成
 
                 (async () => {
                     try {
@@ -168,153 +116,17 @@ function setupWorkerListeners() {
                 break;
 
             case 'all_media_items_result':
-                if (thumbBgLoopActive) {
-                    logger.debug('[Main-Thread] 背景缩略图循环已在运行，忽略重复触发。');
-                    break;
-                }
-                thumbBgLoopActive = true;
+                // 完全禁用自动缩略图批量处理
                 let items = msg.payload || [];
 
-                const isMediaPath = (p) => /\.(jpe?g|png|webp|gif|mp4|webm|mov)$/i.test(p || '');
-                const isNotTempFile = (p) => !p.includes('/.tmp/') && !p.includes('\\.tmp\\') && !p.startsWith('temp_opt_') && !p.endsWith('.tmp');
-                const validItems = items.filter(it => isMediaPath(it.path) && isNotTempFile(it.path));
-                const invalidItems = items.filter(it => !isMediaPath(it.path) || !isNotTempFile(it.path));
-                if (invalidItems.length > 0) {
-                    try {
-                        const badPaths = invalidItems.map(it => it.path);
-                        const placeholders = badPaths.map(() => '?').join(',');
-                        await dbRun('main', `DELETE FROM items WHERE path IN (${placeholders})`, badPaths);
-                        await dbRun('main', `DELETE FROM items_fts WHERE rowid NOT IN (SELECT rowid FROM items)`);
-                        logger.info(`[Main-Thread] 清理无效媒体索引和临时文件 ${invalidItems.length} 条。`);
-                    } catch (e) {
-                        logger.warn(`[Main-Thread] 清理无效媒体索引失败: ${e.message}`);
-                    }
-                    items = validItems;
-                }
-                logger.info(`[Main-Thread] 收到 ${items.length} 个媒体项目，开始按数据库“缺失集合”入队后台缩略图任务...`);
-                const MIN_PAGE_SIZE = 100;
-                const MAX_PAGE_SIZE = 800;
-                let pageSize = 200;
-
-                const MIN_DELAY = 80;
-                const MAX_DELAY = 500;
-                let dynamicBatchDelay = 200;
-
-                let lastTuneLogTs = 0;
-
-                const processLoop = async () => {
-                    try {
-                        try {
-                            const { getCurrentMode } = require('./adaptive.service');
-                            if (getCurrentMode && getCurrentMode() === 'low') {
-                                logger.debug('[Main-Thread] 自适应 low 档：暂停一轮缩略图缺失扫描');
-                                setTimeout(processLoop, 1000);
-                                return;
-                            }
-                        } catch {} // 忽略 getCurrentMode 不可用
-                        const t0 = Date.now();
-                        const rows = await require('../db/multi-db').dbAll('main',
-                            `SELECT i.path, i.type, i.mtime
-                             FROM items i
-                             LEFT JOIN thumb_status t ON t.path = i.path
-                             WHERE i.type IN ('photo','video')
-                               AND (
-                                   t.mtime IS NULL              -- 从未生成
-                                   OR t.mtime < i.mtime         -- 源文件已更新
-                                   OR t.status IN ('pending','failed') -- 待处理/失败均需要生成
-                               )
-                             ORDER BY i.mtime DESC
-                             LIMIT ?`, [pageSize]
-                        );
-                        const durationMs = Date.now() - t0;
-                        const batch = rows || [];
-                        if (batch.length === 0) {
-                            // 降低噪声：改为 debug，避免频繁刷屏
-                            logger.debug('[Main-Thread] 数据库未发现需要生成的缩略图，后台任务结束。');
-                            thumbBgLoopActive = false;
-                            return;
-                        }
-                        for (const item of batch) {
-                            const sourceAbsPath = path.join(PHOTOS_DIR, item.path);
-
-                            // 跳过已被标记为永久失败的缩略图（根据 Redis 标记）
-                            try {
-                                const failureKey = `thumb_failed_permanently:${item.path}`;
-                                const permanentlyFailed = await redis.get(failureKey);
-                                if (permanentlyFailed) {
-                                    // 可选：更新一次检查时间，避免长时间卡在“失败待处理”视觉状态
-                                    try { 
-                                        await dbRun('main', `INSERT INTO thumb_status(path, mtime, status, last_checked)
-                                                              VALUES(?, ?, 'failed', strftime('%s','now')*1000)
-                                                              ON CONFLICT(path) DO UPDATE SET last_checked=excluded.last_checked`, 
-                                            [item.path, item.mtime || Date.now()]); 
-                                    } catch {} // 忽略更新失败
-                                    continue;
-                                }
-                            } catch {} // 忽略 Redis 获取失败
-
-                            if (!isTaskQueuedOrActive(item.path)) {
-                                lowPriorityThumbnailQueue.push({
-                                    filePath: sourceAbsPath,
-                                    relativePath: item.path,
-                                    type: item.type
-                                });
-                            }
-                        }
-                        dispatchThumbnailTask();
-
-                        // 自适应调参：快则加大批量/缩短间隔，慢则降低批量/拉长间隔
-                        const prevPage = pageSize;
-                        const prevDelay = dynamicBatchDelay;
-                        if (durationMs < 150 && batch.length >= Math.max(20, Math.floor(pageSize * 0.8))) {
-                            // DB 很空闲且批次几乎打满，提速
-                            pageSize = Math.min(MAX_PAGE_SIZE, pageSize + Math.ceil(pageSize * 0.25));
-                            dynamicBatchDelay = Math.max(MIN_DELAY, dynamicBatchDelay - 10);
-                        } else if (durationMs > 1200) {
-                            // DB 繁忙，降速
-                            pageSize = Math.max(MIN_PAGE_SIZE, Math.floor(pageSize * 0.7));
-                            dynamicBatchDelay = Math.min(MAX_DELAY, dynamicBatchDelay + 40);
-                        }
-                        if ((pageSize !== prevPage || dynamicBatchDelay !== prevDelay) && Date.now() - lastTuneLogTs > 30000) {
-                            lastTuneLogTs = Date.now();
-                            logger.info(`[Main-Thread] 缩略图后台扫描自适应调度: pageSize=${pageSize}, delay=${dynamicBatchDelay}ms (duration=${durationMs}ms, batch=${batch.length})`);
-                        }
-                    } catch (e) {
-                        // 降噪：只在间隔性打印一次 warn，其余打印为 debug，同时降速
-                        const msg = e && e.message ? e.message : String(e);
-                        if (!global.__thumbMissingWarnTs || Date.now() - global.__thumbMissingWarnTs > 30000) {
-                            global.__thumbMissingWarnTs = Date.now();
-                            logger.warn('[Main-Thread] 获取缩略图缺失集合失败（重试中）:', msg);
-                        } else {
-                            logger.debug('[Main-Thread] 获取缩略图缺失集合失败（重试中，已降噪）:', msg);
-                        }
-                        // 遇到错误则退避，并反馈给 DB 自适应：适度拉长查询超时/忙等待
-                        pageSize = Math.max(MIN_PAGE_SIZE, Math.floor(pageSize * 0.6));
-                        dynamicBatchDelay = Math.min(MAX_DELAY, dynamicBatchDelay + 80);
-                        try {
-                            const { adaptDbTimeouts } = require('../db/multi-db');
-                            adaptDbTimeouts({
-                                busyTimeoutDeltaMs: +2000,   // +2s 上限 60s
-                                queryTimeoutDeltaMs: +2000,  // +2s 上限 60s
-                            });
-                        } catch {} // 忽略 adaptDbTimeouts 不可用
-                    }
-                    setTimeout(processLoop, dynamicBatchDelay);
-                };
-                processLoop();
                 break;
 
             case 'process_changes_complete':
                 // 增量更新完成
                 logger.info('[Main-Thread] Indexing Worker 完成索引增量更新。');
                 isIndexing = false;
-                // 增量完成后，提示并启动一次后台缩略图检查（更直观的进度日志）
-                try {
-                    logger.info('[Main-Thread] 增量完成，启动后台缩略图检查任务...');
-                    startIdleThumbnailGeneration();
-                } catch (e) {
-                    logger.warn('触发后台缩略图检查失败:', e && e.message);
-                }
+                // 增量完成后，不启动缩略图检查
+
 
                 // 对本批次变更中的视频，触发一次 faststart 检查/优化
                 try {
@@ -323,7 +135,6 @@ function setupWorkerListeners() {
                     for (const ch of changes) {
                         if (ch && ch.filePath && /\.(mp4|webm|mov)$/i.test(ch.filePath)) {
                             try { 
-                                // 统一消息格式：为增量 faststart 任务也补全新逻辑需要的字段
                                 const relativePath = path.relative(PHOTOS_DIR, ch.filePath);
                                 vw.postMessage({ 
                                     filePath: ch.filePath,
@@ -334,7 +145,7 @@ function setupWorkerListeners() {
                         }
                     }
                 } catch (e) {
-                    logger.debug('增量 faststart 触发失败（忽略）：', e && e.message);
+                    logger.debug('增量视频处理触发失败（忽略）：', e && e.message);
                 }
 
                 // 新增：主动重算受影响相册的封面，写入 album_covers 表
@@ -600,10 +411,10 @@ function triggerDelayedIndexProcessing() {
                 const tagsArr = Array.from(albumTags);
                 const dynamicTagLimit = (() => {
                     const changes = pendingIndexChanges.length;
-                    if (changes > 10000) return Math.max(TAG_INVALIDATION_MAX_TAGS || 2000, 6000);
-                    if (changes > 5000) return Math.max(TAG_INVALIDATION_MAX_TAGS || 2000, 4000);
-                    if (changes > 1000) return Math.max(TAG_INVALIDATION_MAX_TAGS || 2000, 3000);
-                    return TAG_INVALIDATION_MAX_TAGS || 2000;
+                    if (changes > 10000) return Math.max(2000, 6000);
+                    if (changes > 5000) return Math.max(2000, 4000);
+                    if (changes > 1000) return Math.max(2000, 3000);
+                    return 2000;
                 })();
 
                 if (tagsArr.length > dynamicTagLimit) {
@@ -612,7 +423,7 @@ function triggerDelayedIndexProcessing() {
                         let cursor = '0';
                         let cleared = 0;
                         do {
-                            const res = await redis.scan(cursor, 'MATCH', ROUTE_CACHE_BROWSE_PATTERN, 'COUNT', 1000);
+                            const res = await redis.scan(cursor, 'MATCH', 'route:browse:*', 'COUNT', 1000);
                             cursor = res[0];
                             const keys = res[1] || [];
                             if (keys.length > 0) {
@@ -658,8 +469,8 @@ function watchPhotosDir() {
         persistent: true,       // 持续监控
         depth: 99,              // 监控深度99层
         ignored: [
-            /(^|[\\/])@eaDir/,  // 忽略隐藏文件和Synology系统目录
-            /(^|[\\/])\.tmp/,   // 忽略临时目录
+            /(^|[\/\\])@eaDir/,  // 忽略隐藏文件和Synology系统目录
+            /(^|[\/\\])\.tmp/,   // 忽略临时目录
             /temp_opt_.*/,      // 忽略临时文件
             /.*\.tmp$/          // 忽略.tmp后缀文件
         ],
@@ -692,49 +503,9 @@ function watchPhotosDir() {
             logger.warn(`智能失效封面缓存失败: ${filePath}`, error);
         }
 
-        // 处理新视频文件，发送到视频处理器进行优化（先检查永久失败标记）
+        // HLS处理已改为手动模式，不再自动处理新视频文件
         if (type === 'add' && /\.(mp4|webm|mov)$/i.test(filePath)) {
-            try {
-                // 验证路径安全性
-                if (!validatePath(filePath, PHOTOS_DIR)) {
-                    logger.warn(`检测到可疑视频文件路径，跳过处理: ${filePath}`);
-                    return;
-                }
-                
-                const failureKey = `video_failed_permanently:${filePath}`;
-                const failed = await redis.get(failureKey);
-                if (failed) {
-                    logger.debug(`检测到永久失败标记，跳过视频处理: ${filePath}`);
-                } else {
-                    logger.info(`检测到新视频文件，发送到处理器进行优化: ${filePath}`);
-                    // 统一消息格式：为新视频文件处理也补全新逻辑需要的字段
-                    const relativePath = getSafeRelativePath(filePath, PHOTOS_DIR);
-                    if (relativePath === null) {
-                        logger.warn(`无法获取安全的相对路径，跳过视频处理: ${filePath}`);
-                        return;
-                    }
-                    const vw = getVideoWorker();
-                    vw.postMessage({
-                        filePath,
-                        relativePath: relativePath,
-                        thumbsDir: THUMBS_DIR
-                    });
-                }
-            } catch (e) {
-                logger.warn(`检查视频永久失败标记出错，仍尝试处理: ${filePath} - ${e && e.message}`);
-                // 统一消息格式：为错误处理分支也补全新逻辑需要的字段
-                const relativePath = getSafeRelativePath(filePath, PHOTOS_DIR);
-                if (relativePath === null) {
-                    logger.warn(`无法获取安全的相对路径，跳过视频处理: ${filePath}`);
-                    return;
-                }
-                const vw = getVideoWorker();
-                vw.postMessage({
-                    filePath,
-                    relativePath: relativePath,
-                    thumbsDir: THUMBS_DIR
-                });
-            }
+
             return;
         }
 
@@ -755,7 +526,7 @@ function watchPhotosDir() {
                 await fs.unlink(thumbPath);
                 logger.debug(`成功删除孤立的缩略图: ${thumbPath}`);
             } catch (err) {
-                if (err.code !== 'ENOENT') { // 忽略“文件不存在”的错误
+                if (err.code !== 'ENOENT') { // 忽略"文件不存在"的错误
                     logger.error(`删除缩略图失败: ${thumbPath}`, err);
                 }
             }
@@ -824,8 +595,6 @@ module.exports = {
     buildSearchIndex,        // 构建搜索索引
     watchPhotosDir,          // 监控照片目录
 };
-
-// 心跳扫描已移除：由 scripts/maintenance.js 的 reconcileDirectories 低频任务替代
 
 /**
  * 主动重算受影响相册的封面并持久化到 album_covers

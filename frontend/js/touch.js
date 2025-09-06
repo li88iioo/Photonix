@@ -18,6 +18,7 @@ export class SwipeHandler {
         this.fastSwipeSpeed = options.fastSwipeSpeed || 300; // 默认0.3秒快速翻页间隔
         this.onSwipe = options.onSwipe;
         this.onFastSwipe = options.onFastSwipe;
+        this.shouldAllowSwipe = typeof options.shouldAllowSwipe === 'function' ? options.shouldAllowSwipe : (() => true);
 
         this.touchStartX = 0;
         this.touchStartY = 0;
@@ -74,6 +75,12 @@ export class SwipeHandler {
 
         const deltaX = this.touchEndX - this.touchStartX;
         const deltaY = this.touchEndY - this.touchStartY;
+
+        // 在外部判定不允许滑动时（例如图片已放大），直接忽略并关闭快速滑动
+        if (typeof this.shouldAllowSwipe === 'function' && !this.shouldAllowSwipe()) {
+            if (this.fastSwipeInterval) this.stopFastSwipe();
+            return;
+        }
 
         // 检查是否是有效的横向滑动
         if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > this.threshold) {
@@ -175,6 +182,7 @@ export function enablePinchZoom(img, container) {
 
     img.style.transformOrigin = 'center center';
     img.style.touchAction = 'none';
+    try { container.dataset.isZoomed = '0'; } catch {}
 
     function getDistance(touches) {
         const [a, b] = touches;
@@ -213,6 +221,7 @@ export function enablePinchZoom(img, container) {
             scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, startScale * factor));
             clampPan();
             applyTransform();
+            try { container.dataset.isZoomed = scale > 1.02 ? '1' : '0'; } catch {}
             e.preventDefault();
             return;
         }
@@ -237,6 +246,7 @@ export function enablePinchZoom(img, container) {
             if (dt < 280 && dist < 24) {
                 scale = scale > 1 ? 1 : 2;
                 translateX = 0; translateY = 0;
+                try { container.dataset.isZoomed = scale > 1.02 ? '1' : '0'; } catch {}
                 applyTransform();
             }
             lastTapTime = now; lastTapX = cx; lastTapY = cy;
@@ -253,5 +263,6 @@ export function enablePinchZoom(img, container) {
         container.removeEventListener('touchend', onTouchEnd, { passive: true });
         img.style.transform = '';
         img.style.touchAction = '';
+        try { delete container.dataset.isZoomed; } catch {}
     };
 }
