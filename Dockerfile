@@ -55,6 +55,7 @@ COPY --from=frontend-builder /app/frontend/index.html ./backend/public/
 COPY --from=frontend-builder /app/frontend/output.css ./backend/public/
 COPY --from=frontend-builder /app/frontend/manifest.json ./backend/public/
 COPY --from=frontend-builder /app/frontend/sw.js ./backend/public/
+COPY --from=frontend-builder /app/frontend/sw-cache-manager.js ./backend/public/
 
 COPY --from=frontend-builder /app/frontend/js/dist/ ./backend/public/js/dist/
 COPY --from=frontend-builder /app/frontend/assets/ ./backend/public/assets/
@@ -67,8 +68,5 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 # 暴露应用端口
 EXPOSE 13001
-
-# 由 entrypoint.sh 使用 pm2-runtime 启动，一般无需 CMD
-# CMD [ "node", "backend/server.js" ]
 
 

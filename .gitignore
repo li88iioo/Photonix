@@ -45,3 +45,7 @@ frontend/.parcel-cache/
 docker-compose.override.yml
 redis_data/
 
+# Development documentation (not needed in git)
+frontend/技术债务**.md
+frontend/债务修复**.md
+

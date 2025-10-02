@@ -15,10 +15,10 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:13001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"]
-      interval: 30s
-      timeout: 20s
+      interval: 20s
+      timeout: 15s
       retries: 3
-      start_period: 160s
+      start_period: 120s
     depends_on:
       redis:
         condition: service_healthy
@@ -41,9 +41,10 @@ services:
       - redis_data:/data  # Redis 数据持久化卷
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]  # 健康检查
-      interval: 5s
-      timeout: 3s
-      retries: 5
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
     networks:
       - photonix-network
