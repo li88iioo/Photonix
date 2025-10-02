@@ -1,6 +1,7 @@
 const { redis } = require('../config/redis');
 const logger = require('../config/logger');
 const { addTagsToKey } = require('../services/cache.service.js');
+const { QueryCacheOptimizer } = require('../services/queryOptimizer.service.js');
 
 const cacheStats = { hits: 0, misses: 0, totalRequests: 0 };
 const inFlight = new Map();
@@ -69,21 +70,26 @@ function generateTagsFromReq(req) {
 }
 
 async function singleflight(key, producer) {
-    if (inFlight.has(key)) return inFlight.get(key);
-    const p = (async () => {
-        try { return await producer(); }
-        finally {
-            setTimeout(() => {
-                inFlight.delete(key);
-                inFlightTimestamps.delete(key);
-            }, 0);
-        }
-    })();
-    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('singleflight_timeout')), INFLIGHT_TIMEOUT_MS));
-    const wrapped = Promise.race([p, timeout]);
-    inFlight.set(key, wrapped);
-    inFlightTimestamps.set(key, Date.now());
-    return wrapped;
+    const isLeader = !inFlight.has(key);
+    if (isLeader) {
+        const p = (async () => {
+            try { return await producer(); }
+            finally {
+                setTimeout(() => {
+                    inFlight.delete(key);
+                    inFlightTimestamps.delete(key);
+                }, 0);
+            }
+        })();
+        inFlight.set(key, p);
+        inFlightTimestamps.set(key, Date.now());
+        // 领导者不超时，避免“未附着 writer 导致不缓存”的问题
+        return p;
+    } else {
+        // 跟随者等待有限时间，避免长尾阻塞
+        const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('singleflight_timeout')), INFLIGHT_TIMEOUT_MS));
+        return Promise.race([inFlight.get(key), timeout]);
+    }
 }
 
 const MAX_CACHEABLE_BYTES = 1024 * 1024;
@@ -145,6 +151,7 @@ function attachWritersWithCache(res, key, ttlSeconds) {
 function cache(duration) {
     return async (req, res, next) => {
         if (req.method !== 'GET') return next();
+        if (redis && redis.isNoRedis) return next();
 
         // 统一获取用户ID：仅信任已认证的 req.user.id；未认证一律视为 anonymous，忽略自报 ID 头，防止缓存键爆炸
         const userId = (req.user && req.user.id) ? String(req.user.id) : 'anonymous';
@@ -192,9 +199,11 @@ function cache(duration) {
             res.setHeader('X-Cache', 'MISS');
             res.setHeader('Vary', 'Authorization');
 
-            await singleflight(`build:${key}`, async () => {
-                attachWritersWithCache(res, key, cacheDuration);
-            });
+            // 先附着 writer，确保即使等待逻辑超时也能缓存本次响应
+            attachWritersWithCache(res, key, cacheDuration);
+
+            // 使用 singleflight 限制并发等待者，但领导者不超时
+            singleflight(`build:${key}`, async () => {}).catch(() => {});
 
             next();
         } catch (err) {

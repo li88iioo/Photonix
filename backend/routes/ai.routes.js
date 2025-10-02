@@ -25,12 +25,22 @@ const generateSchema = Joi.object({
   }).required()
 });
 
+const modelListSchema = Joi.object({
+  url: Joi.string().uri({ allowRelative: false }).max(2048).required(),
+  key: Joi.string().min(1).max(4096).required()
+});
+
 // 为生成接口增加更严格的速率限制（在全局限速之外叠加，防止滥用）
 router.post('/generate', apiLimiter, aiRateGuard, validate(generateSchema), asyncHandler(aiController.generateCaption));
 
-// AI任务状态查询路由
-// 根据任务ID查询AI处理任务的状态和结果
+// 获取可用AI模型
+router.post('/models', apiLimiter, validate(modelListSchema), asyncHandler(aiController.listAvailableModels));
+
+// AI任务状态查询路由（兼容性保留）
 router.get('/job/:jobId', asyncHandler(aiController.getJobStatus));
+
+// AI微服务状态查询路由（新增）
+router.get('/status', asyncHandler(aiController.getMicroserviceStatus));
 
 // 导出AI路由模块
 module.exports = router;

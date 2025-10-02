@@ -27,7 +27,7 @@ function getLoginKeyBase(req) {
 
 // 检查是否需要密码
 exports.getAuthStatus = async (req, res) => {
-    const { PASSWORD_ENABLED } = await getAllSettings();
+    const { PASSWORD_ENABLED } = await getAllSettings({ preferFreshSensitive: true });
     res.json({ 
         passwordEnabled: PASSWORD_ENABLED === 'true'
     });

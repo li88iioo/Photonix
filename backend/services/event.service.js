@@ -1,6 +1,8 @@
 const EventEmitter = require('events');
-const { redis } = require('../config/redis');
+const { redis, createWorkerRedis } = require('../config/redis');
 const logger = require('../config/logger');
+// 显式开关：仅当 ENABLE_REDIS=true 且 Redis 可用时开启订阅
+const WANT_REDIS = (process.env.ENABLE_REDIS || 'false').toLowerCase() === 'true';
 
 // 环境检测：开发环境显示详细日志
 const isDevelopment = process.env.NODE_ENV !== 'production';
@@ -17,10 +19,14 @@ const eventBus = new EventEmitter();
 let redisSubscriber = null;
 
 function setupRedisSubscriber() {
-	if (!redis || redisSubscriber) return;
+	if (redisSubscriber) return;
+	if (!WANT_REDIS || !redis || redis.isNoRedis) {
+		if (isDevelopment) logger.info('[SSE] 使用本地事件总线（未启用 Redis 订阅）');
+		return;
+	}
 
 	try {
-		redisSubscriber = redis.duplicate();
+		redisSubscriber = createWorkerRedis();
 		redisSubscriber.subscribe('thumbnail-generated', (err) => {
 			if (err) {
 				logger.error('[SSE] Redis订阅失败:', err);

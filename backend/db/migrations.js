@@ -9,6 +9,8 @@ const logger = require('../config/logger');
 // 主数据库迁移（图片/视频索引）
 const initializeMainDB = async () => {
     try {
+        logger.debug('[MAIN MIGRATION] 开始主数据库迁移...');
+
         // 创建 migrations 记录表
         await runAsync('main', `CREATE TABLE IF NOT EXISTS migrations (key TEXT PRIMARY KEY, applied_at DATETIME NOT NULL)`);
 
@@ -45,12 +47,6 @@ const initializeMainDB = async () => {
                 check: async () => !(await hasTable('main', 'processed_videos'))
             },
             {
-                // 旧版本可能缺少 last_checked 列，这里补齐
-                key: 'add_last_checked_column_thumb_status',
-                sql: `ALTER TABLE thumb_status ADD COLUMN last_checked INTEGER DEFAULT 0`,
-                check: async () => !(await hasColumn('main', 'thumb_status', 'last_checked'))
-            },
-            {
                 key: 'create_idx_thumb_status_status',
                 sql: `CREATE INDEX IF NOT EXISTS idx_thumb_status_status ON thumb_status(status)`
             },
@@ -69,6 +65,10 @@ const initializeMainDB = async () => {
             {
                 key: 'create_idx_thumb_status_status_mtime',
                 sql: `CREATE INDEX IF NOT EXISTS idx_thumb_status_status_mtime ON thumb_status(status, mtime DESC)`
+            },
+            {
+                key: 'create_idx_thumb_status_count_optimization',
+                sql: `CREATE INDEX IF NOT EXISTS idx_thumb_status_count_optimization ON thumb_status(status, mtime)`
             },
             {
                 key: 'create_album_covers_table',
@@ -166,6 +166,10 @@ const initializeMainDB = async () => {
             {
                 key: 'create_idx_items_width_height',
                 sql: `CREATE INDEX IF NOT EXISTS idx_items_width_height ON items(width, height) WHERE width > 0 AND height > 0`
+            },
+            {
+                key: 'create_idx_items_count_optimization',
+                sql: `CREATE INDEX IF NOT EXISTS idx_items_count_optimization ON items(type, status, mtime)`
             }
         ];
 
@@ -180,6 +184,8 @@ const initializeMainDB = async () => {
 // 设置数据库迁移
 const initializeSettingsDB = async () => {
     try {
+        logger.debug('[SETTINGS MIGRATION] 开始设置数据库迁移...');
+
         await runAsync('settings', `CREATE TABLE IF NOT EXISTS migrations (key TEXT PRIMARY KEY, applied_at DATETIME NOT NULL)`);
         const settingsMigrations = [
             {
@@ -208,6 +214,8 @@ const initializeSettingsDB = async () => {
 // 历史记录数据库迁移
 const initializeHistoryDB = async () => {
     try {
+        logger.debug('[HISTORY MIGRATION] 开始历史记录数据库迁移...');
+
         await runAsync('history', `CREATE TABLE IF NOT EXISTS migrations (key TEXT PRIMARY KEY, applied_at DATETIME NOT NULL)`);
 
         const historyMigrations = [
@@ -236,12 +244,18 @@ const initializeHistoryDB = async () => {
 // 索引数据库迁移
 const initializeIndexDB = async () => {
     try {
+        logger.debug('[INDEX MIGRATION] 开始索引数据库迁移...');
+
         await runAsync('index', `CREATE TABLE IF NOT EXISTS migrations (key TEXT PRIMARY KEY, applied_at DATETIME NOT NULL)`);
 
         const indexMigrations = [
             {
                 key: 'create_index_status_table',
                 sql: `CREATE TABLE IF NOT EXISTS index_status (id INTEGER PRIMARY KEY, status TEXT NOT NULL, progress REAL DEFAULT 0, total_files INTEGER DEFAULT 0, processed_files INTEGER DEFAULT 0, last_updated DATETIME DEFAULT CURRENT_TIMESTAMP)`
+            },
+            {
+                key: 'create_index_progress_table',
+                sql: `CREATE TABLE IF NOT EXISTS index_progress (key TEXT PRIMARY KEY, value TEXT)`
             },
             {
                 key: 'create_index_queue_table',
@@ -263,22 +277,46 @@ const initializeIndexDB = async () => {
 
 // 执行迁移的通用函数
 const executeMigrations = async (dbType, migrations) => {
+    const dbTypeUpper = dbType.toUpperCase();
+    const migrationsToRun = [];
+
+    // 先检查哪些迁移需要执行
     for (const migration of migrations) {
         const done = await dbAll(dbType, "SELECT 1 FROM migrations WHERE key = ?", [migration.key]);
         const needRun = migration.check ? await migration.check() : true;
-        
+
         if (!done.length && needRun) {
-            await runAsync(dbType, migration.sql);
-            await runAsync(dbType, "INSERT INTO migrations (key, applied_at) VALUES (?, ?)", [migration.key, new Date().toISOString()]);
-            logger.info(`[${dbType.toUpperCase()} MIGRATION] 执行迁移: ${migration.key}`);
+            migrationsToRun.push(migration.key);
         }
+    }
+
+    // 如果有迁移需要执行，记录开始信息
+    if (migrationsToRun.length > 0) {
+        logger.debug(`[${dbTypeUpper} MIGRATION] 开始执行 ${migrationsToRun.length} 个迁移步骤: ${migrationsToRun.join(', ')}`);
+
+        // 执行所有需要的迁移
+        for (const migration of migrations) {
+            if (migrationsToRun.includes(migration.key)) {
+                try {
+                    await runAsync(dbType, migration.sql);
+                    await runAsync(dbType, "INSERT INTO migrations (key, applied_at) VALUES (?, ?)", [migration.key, new Date().toISOString()]);
+                } catch (error) {
+                    logger.error(`[${dbTypeUpper} MIGRATION] 迁移失败: ${migration.key} - ${error.message}`);
+                    throw error;
+                }
+            }
+        }
+
+        logger.debug(`[${dbTypeUpper} MIGRATION] 所有迁移步骤执行完成`);
+    } else {
+        logger.debug(`[${dbTypeUpper} MIGRATION] 无需执行新的迁移步骤`);
     }
 };
 
 // 初始化所有数据库
 const initializeAllDBs = async () => {
     try {
-        logger.info('开始初始化所有数据库...');
+        logger.debug('开始初始化所有数据库...');
         // 顺序初始化以避免原生库在高并发下的潜在竞态
         await initializeMainDB();
         await initializeSettingsDB();

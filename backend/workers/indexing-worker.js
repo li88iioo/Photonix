@@ -9,15 +9,95 @@ try {
   const items = Number(process.env.SHARP_CACHE_ITEMS || 100);
   const files = Number(process.env.SHARP_CACHE_FILES || 0);
   sharp.cache({ memory: memMb, items, files });
-  const conc = Number(process.env.SHARP_CONCURRENCY || 1);
-  if (conc > 0) sharp.concurrency(conc);
+  const { SHARP_CONCURRENCY } = require('../config');
+  if (Number(SHARP_CONCURRENCY) > 0) sharp.concurrency(Number(SHARP_CONCURRENCY));
 } catch {}
 const { initializeConnections, getDB, dbRun, dbGet, runPreparedBatch, adaptDbTimeouts } = require('../db/multi-db');
+const { tempFileManager } = require('../utils/tempFileManager');
 const { redis } = require('../config/redis');
 const { runPreparedBatchWithRetry } = require('../db/sqlite-retry');
 const { createNgrams } = require('../utils/search.utils');
 const { getVideoDimensions } = require('../utils/media.utils.js');
 const { invalidateTags } = require('../services/cache.service.js');
+const idxRepo = require('../repositories/indexStatus.repo');
+const { withTransaction } = require('../services/tx.manager');
+
+/**
+ * 数据库超时管理器
+ * 统一管理数据库超时的调整逻辑
+ */
+class DbTimeoutManager {
+    constructor() {
+        this.logger = winston.createLogger({
+            level: process.env.LOG_LEVEL || 'debug',
+            format: winston.format.combine(
+                winston.format.colorize(),
+                winston.format.timestamp(),
+                winston.format.printf(info => `[${info.timestamp}] ${info.level}: ${info.message}`)
+            ),
+            transports: [new winston.transports.Console()],
+        });
+    }
+
+    /**
+     * 提升数据库超时（用于高负载操作）
+     */
+    boostTimeouts() {
+        try {
+            const result = adaptDbTimeouts({
+                busyTimeoutDeltaMs: 20000,
+                queryTimeoutDeltaMs: 15000
+            });
+            this.logger.debug(`[DbTimeoutManager] 提升超时: busy=${result.busyTimeoutMs}ms, query=${result.queryTimeoutMs}ms`);
+            return result;
+        } catch (error) {
+            this.logger.warn(`[DbTimeoutManager] 提升超时失败: ${error.message}`);
+            return null;
+        }
+    }
+
+    /**
+     * 恢复数据库超时到默认值
+     */
+    restoreTimeouts() {
+        try {
+            const result = adaptDbTimeouts({
+                busyTimeoutDeltaMs: -20000,
+                queryTimeoutDeltaMs: -15000
+            });
+            this.logger.debug(`[DbTimeoutManager] 恢复超时: busy=${result.busyTimeoutMs}ms, query=${result.queryTimeoutMs}ms`);
+            return result;
+        } catch (error) {
+            this.logger.warn(`[DbTimeoutManager] 恢复超时失败: ${error.message}`);
+            return null;
+        }
+    }
+
+    /**
+     * 在操作前自动提升超时，结束后自动恢复
+     */
+    async withBoostedTimeouts(operation) {
+        let originalTimeouts = null;
+
+        try {
+            // 提升超时
+            originalTimeouts = this.boostTimeouts();
+
+            // 执行操作
+            const result = await operation();
+
+            return result;
+        } finally {
+            // 恢复超时
+            if (originalTimeouts) {
+                this.restoreTimeouts();
+            }
+        }
+    }
+}
+
+// 创建单例管理器
+const dbTimeoutManager = new DbTimeoutManager();
 
 (async () => {
     await initializeConnections();
@@ -29,15 +109,93 @@ const { invalidateTags } = require('../services/cache.service.js');
     const { dbAll } = require('../db/multi-db');
     const { promises: fs } = require('fs');
     
-    const CONCURRENT_LIMIT = 50;
+    const CONCURRENT_LIMIT = require('../config').INDEX_CONCURRENCY;
+
+    // 内存优化：限制缓存大小，避免内存无限增长
+    const MAX_CACHE_SIZE = 2000; // 最大缓存2000个条目
     const DIMENSION_CACHE = new Map();
     const CACHE_TTL = 1000 * 60 * 10;
 
-    try {
-        await dbRun('index', `CREATE TABLE IF NOT EXISTS index_progress (key TEXT PRIMARY KEY, value TEXT);`);
-    } catch (e) {
-        logger.error('创建 index_progress 表失败:', e);
+    // 缓存外部化：结合Redis和本地缓存
+    class ExternalDimensionCache {
+        constructor() {
+            this.redis = null;
+            this.localCache = new Map(); // 小型本地缓存，快速访问
+            this.LOCAL_CACHE_SIZE = 500; // 本地缓存最大500个条目
+            this.REDIS_TTL = 3600; // Redis缓存1小时
+
+            // 尝试获取Redis连接
+            try {
+                const { redis } = require('../config/redis');
+                if (redis && !redis.isNoRedis && typeof redis.get === 'function' && typeof redis.setex === 'function') {
+                    this.redis = redis;
+                    logger.debug('[内存优化] Redis缓存已启用');
+                } else {
+                    logger.debug('[内存优化] Redis不可用，使用本地缓存');
+                }
+            } catch (e) {
+                logger.debug('[内存优化] Redis加载失败，使用本地缓存');
+            }
+        }
+
+        async get(key) {
+            // 1. 先查本地缓存（最快）
+            if (this.localCache.has(key)) {
+                return this.localCache.get(key);
+            }
+
+            // 2. 再查Redis缓存
+            if (this.redis) {
+                try {
+                    const data = await this.redis.get(`dim:${key}`);
+                    if (data) {
+                        const parsed = JSON.parse(data);
+                        // 同步到本地缓存
+                        this._addToLocalCache(key, parsed);
+                        return parsed;
+                    }
+                } catch (e) {
+                    logger.debug('[内存优化] Redis查询失败:', e.message);
+                }
+            }
+
+            return null;
+        }
+
+        async set(key, value) {
+            // 1. 本地缓存
+            this._addToLocalCache(key, value);
+
+            // 2. Redis缓存（异步，不阻塞）
+            if (this.redis) {
+                try {
+                    await this.redis.setex(`dim:${key}`, this.REDIS_TTL, JSON.stringify(value));
+                } catch (e) {
+                    // Redis失败不影响本地缓存
+                    logger.debug('[内存优化] Redis缓存失败:', e.message);
+                }
+            }
+        }
+
+        _addToLocalCache(key, value) {
+            // 控制本地缓存大小
+            if (this.localCache.size >= this.LOCAL_CACHE_SIZE) {
+                // LRU: 删除最旧的条目
+                const firstKey = this.localCache.keys().next().value;
+                this.localCache.delete(firstKey);
+            }
+            this.localCache.set(key, value);
+        }
+
+        clear() {
+            this.localCache.clear();
+            // Redis缓存保留，不清理（重启后仍然有效）
+        }
     }
+
+    const externalCache = new ExternalDimensionCache();
+
+
 
     // --- 专用表：预计算相册封面（根治运行时重负载计算） ---
     async function ensureAlbumCoversTable() {
@@ -72,7 +230,7 @@ const { invalidateTags } = require('../services/cache.service.js');
     // 思路：先取所有相册路径集合；再将所有媒体按 mtime DESC 扫描，
     // 将尚未设置封面的父相册依次设置为当前媒体。
     async function rebuildAlbumCoversFromItems() {
-        logger.info('[INDEXING-WORKER] 开始重建 album_covers（基于 items 表）...');
+        logger.debug('[INDEXING-WORKER] 开始重建 album_covers（基于 items 表）...');
         const t0 = Date.now();
         try {
             await ensureAlbumCoversTable();
@@ -80,7 +238,7 @@ const { invalidateTags } = require('../services/cache.service.js');
             const albumRows = await dbAll('main', `SELECT path FROM items WHERE type='album'`);
             const albumSet = new Set(albumRows.map(r => (r.path || '').replace(/\\/g, '/')));
             if (albumSet.size === 0) {
-                logger.info('[INDEXING-WORKER] 无相册条目，跳过封面重建。');
+                logger.debug('[INDEXING-WORKER] 无相册条目，跳过封面重建。');
                 return;
             }
 
@@ -107,7 +265,7 @@ const { invalidateTags } = require('../services/cache.service.js');
                 if (coverMap.size >= albumSet.size) break;
             }
 
-            // 批量写入（UPSERT）— 统一使用通用 Prepared 批处理
+            // 批量写入（UPSERT）— 通过统一事务与批处理执行器，杜绝嵌套事务
             const upsertSql = `INSERT INTO album_covers (album_path, cover_path, width, height, mtime)
                                VALUES (?, ?, ?, ?, ?)
                                ON CONFLICT(album_path) DO UPDATE SET
@@ -122,35 +280,87 @@ const { invalidateTags } = require('../services/cache.service.js');
                 info.height,
                 info.mtime
             ]);
-            await runPreparedBatchWithRetry(runPreparedBatch, 'main', upsertSql, rows, { chunkSize: 800 }, redis);
 
-            const dt = ((Date.now() - t0) / 1000).toFixed(1);
-            logger.info(`[INDEXING-WORKER] album_covers 重建完成，用时 ${dt}s，生成 ${coverMap.size} 条。`);
+            let coversUpsertOk = false;
+            if (rows.length > 0) {
+                try {
+                    const orchestrator = require('../services/orchestrator');
+                    const { withTransaction } = require('../services/tx.manager');
+
+                    await orchestrator.withAdmission('album-covers-rebuild', async () => {
+                        await withTransaction('main', async () => {
+                            await runPreparedBatchWithRetry(runPreparedBatch, 'main', upsertSql, rows, { manageTransaction: false, chunkSize: 800 }, redis);
+                        }, { mode: 'IMMEDIATE' });
+                    });
+
+                    coversUpsertOk = true;
+                } catch (e) {
+                    logger.warn('[INDEXING-WORKER] album_covers 重建入库失败（已回退并将直接重试一次）：' + (e && e.message));
+                    // 兜底：不再在执行器中开启事务，由我们显式控制一次短事务重试
+                    try {
+                        const { withTransaction } = require('../services/tx.manager');
+                        await withTransaction('main', async () => {
+                            await runPreparedBatchWithRetry(runPreparedBatch, 'main', upsertSql, rows, { manageTransaction: false, chunkSize: 800 }, redis);
+                        }, { mode: 'IMMEDIATE' });
+                        coversUpsertOk = true;
+                    } catch (e2) {
+                        logger.error('[INDEXING-WORKER] 重建 album_covers 最终失败（已回滚）：' + (e2 && e2.message));
+                    }
+                }
+            } else {
+                logger.info('[INDEXING-WORKER] 无需更新 album_covers（无可用媒体或无需变更）。');
+            }
+
+            const dtCovers = ((Date.now() - t0) / 1000).toFixed(1);
+            if (coversUpsertOk) {
+                logger.info(`[INDEXING-WORKER] album_covers 重建完成，用时 ${dtCovers}s，生成 ${coverMap.size} 条。`);
+            } else {
+                logger.warn('[INDEXING-WORKER] album_covers 重建未完成，已记录失败并回滚。');
+            }
+
+
         } catch (e) {
             logger.error('[INDEXING-WORKER] 重建 album_covers 失败:', e);
         }
     }
     
+    // 内存优化：本地缓存清理（每2分钟一次）
     const cacheCleanupInterval = setInterval(() => {
-        const now = Date.now();
-        DIMENSION_CACHE.forEach((value, key) => {
-            if (now - value.timestamp > CACHE_TTL) {
-                DIMENSION_CACHE.delete(key);
+        // 清理本地缓存大小（externalCache会自动管理）
+        const localCacheSize = externalCache.localCache.size;
+        if (localCacheSize > externalCache.LOCAL_CACHE_SIZE * 0.8) {
+            // 清理最旧的20%条目
+            const entriesToDelete = Math.floor(localCacheSize * 0.2);
+            const entries = Array.from(externalCache.localCache.entries())
+                .sort((a, b) => a[1].timestamp - b[1].timestamp);
+
+            for (let i = 0; i < entriesToDelete && i < entries.length; i++) {
+                externalCache.localCache.delete(entries[i][0]);
             }
-        });
-    }, CACHE_TTL);
+
+            logger.debug(`[内存优化] 定期清理本地缓存: ${localCacheSize} → ${externalCache.localCache.size}/${externalCache.LOCAL_CACHE_SIZE}`);
+        }
+    }, 2 * 60 * 1000); // 每2分钟清理一次
 
     process.on('exit', () => clearInterval(cacheCleanupInterval));
 
     async function getMediaDimensions(filePath, type, mtime) {
         const cacheKey = `${filePath}:${mtime}`;
-        const cached = DIMENSION_CACHE.get(cacheKey);
-        if (cached) return cached.dimensions;
+
+        // 使用外部缓存（Redis + 本地缓存）
+        const cached = await externalCache.get(cacheKey);
+        if (cached) return cached;
+
         try {
             let dimensions = type === 'video'
                 ? await getVideoDimensions(filePath)
                 : await sharp(filePath).metadata().then(m => ({ width: m.width, height: m.height }));
-            DIMENSION_CACHE.set(cacheKey, { dimensions, timestamp: Date.now() });
+
+            // 异步缓存，不阻塞主流程
+            externalCache.set(cacheKey, dimensions).catch(e =>
+                logger.debug('[内存优化] 缓存存储失败:', e.message)
+            );
+
             return dimensions;
         } catch (error) {
             logger.debug(`获取文件尺寸失败: ${path.basename(filePath)}, ${error.message}`);
@@ -196,7 +406,7 @@ const { invalidateTags } = require('../services/cache.service.js');
                     yield* walkDirStream(fullPath, entryRelativePath);
                 } else if (entry.isFile() && /\.(jpe?g|png|webp|gif|mp4|webm|mov)$/i.test(entry.name)) {
                     // 跳过临时文件
-                    if (entry.name.startsWith('temp_opt_') || entry.name.includes('.tmp')) continue;
+                    if (tempFileManager.isTempFile(entry.name)) continue;
                     
                     const type = /\.(jpe?g|png|webp|gif)$/i.test(entry.name) ? 'photo' : 'video';
                     yield { type, path: entryRelativePath, name: entry.name, mtime: stats.mtimeMs };
@@ -222,22 +432,23 @@ const { invalidateTags } = require('../services/cache.service.js');
         async rebuild_index({ photosDir }) {
             logger.info('[INDEXING-WORKER] 开始执行索引重建任务...');
             try {
-                const resumeRow = await dbGet('index', "SELECT value FROM index_progress WHERE key = 'last_processed_path'");
-                const lastProcessedPath = resumeRow ? resumeRow.value : null;
+                const idxRepo = require('../repositories/indexStatus.repo');
+                const lastProcessedPath = await idxRepo.getResumeValue('last_processed_path');
 
                 if (lastProcessedPath) {
                     logger.info(`[INDEXING-WORKER] 检测到上次索引断点，将从 ${lastProcessedPath} 继续...`);
                 } else {
                     logger.info('[INDEXING-WORKER] 未发现索引断点，将从头开始。');
-                    await dbRun('index', "DELETE FROM index_status");
-                    await dbRun('index', "INSERT INTO index_status (id, status, processed_files) VALUES (1, 'building', 0)");
+                    await idxRepo.setIndexStatus('building');
+                    await idxRepo.setProcessedFiles(0);
                     await dbRun('main', "DELETE FROM items");
                     await dbRun('main', "DELETE FROM items_fts");
                 }
 
-                const statusRow = await dbGet('index', "SELECT processed_files FROM index_status WHERE id = 1");
-                let count = statusRow ? statusRow.processed_files : 0;
-                const batchSize = 1000;
+                let count = await idxRepo.getProcessedFiles();
+                // 统一从运行参数派生（支持 env 覆盖）
+                const { INDEX_BATCH_SIZE } = require('../config');
+                const batchSize = INDEX_BATCH_SIZE;
                 
                 // 使用 OR IGNORE 避免断点续跑时重复插入 items；FTS 使用 OR REPLACE 确保令牌更新
                 const itemsStmt = getDB('main').prepare("INSERT OR IGNORE INTO items (name, path, type, mtime, width, height) VALUES (?, ?, ?, ?, ?, ?)");
@@ -256,44 +467,53 @@ const { invalidateTags } = require('../services/cache.service.js');
                     batch.push(item);
                     if (batch.length >= batchSize) {
                         const processedBatch = await processDimensionsInParallel(batch, photosDir);
-                        await dbRun('main', 'BEGIN IMMEDIATE');
-                        try {
+                        await withTransaction('main', async () => {
                             await tasks.processBatchInTransactionOptimized(processedBatch, itemsStmt, ftsStmt, thumbUpsertStmt);
-                            await dbRun('main', 'COMMIT');
-                            const lastItemInBatch = processedBatch[processedBatch.length - 1];
-                            if (lastItemInBatch) {
-                                await dbRun('index', "INSERT OR REPLACE INTO index_progress (key, value) VALUES ('last_processed_path', ?)", [lastItemInBatch.path]);
-                            }
-                        } catch (e) {
-                            await dbRun('main', 'ROLLBACK').catch(()=>{});
-                            throw e;
+                        }, { mode: 'IMMEDIATE' });
+                        const lastItemInBatch = processedBatch[processedBatch.length - 1];
+                        if (lastItemInBatch) {
+                            await idxRepo.setResumeValue('last_processed_path', lastItemInBatch.path);
                         }
                         count += batch.length;
-                        await dbRun('index', "UPDATE index_status SET processed_files = ? WHERE id = 1", [count]);
+                        await idxRepo.setProcessedFiles(count);
                         logger.info(`[INDEXING-WORKER] 已处理 ${count} 个条目...`);
+
+                        // 内存优化：分批清理本地缓存（每处理一批就清理一次）
+                        const localCacheSize = externalCache.localCache.size;
+                        const batchCleanupCount = Math.floor(localCacheSize * 0.1); // 清理10%的本地缓存
+                        if (batchCleanupCount > 0) {
+                            const entries = Array.from(externalCache.localCache.entries())
+                                .sort((a, b) => a[1].timestamp - b[1].timestamp)
+                                .slice(0, batchCleanupCount);
+
+                            entries.forEach(([key]) => externalCache.localCache.delete(key));
+                            logger.debug(`[内存优化] 批处理后清理本地缓存: ${batchCleanupCount}个条目，当前大小: ${externalCache.localCache.size}/${externalCache.LOCAL_CACHE_SIZE}`);
+                        }
+
                         batch = [];
                     }
                 }
                 if (batch.length > 0) {
                     const processedBatch = await processDimensionsInParallel(batch, photosDir);
-                    await dbRun('main', 'BEGIN IMMEDIATE');
-                    try {
+                    await withTransaction('main', async () => {
                         await tasks.processBatchInTransactionOptimized(processedBatch, itemsStmt, ftsStmt, thumbUpsertStmt);
-                        await dbRun('main', 'COMMIT');
-                    } catch (e) {
-                        await dbRun('main', 'ROLLBACK').catch(()=>{});
-                        throw e;
-                    }
+                    }, { mode: 'IMMEDIATE' });
                     count += batch.length;
-                    await dbRun('index', "UPDATE index_status SET processed_files = ? WHERE id = 1", [count]);
+                    await idxRepo.setProcessedFiles(count);
                 }
                 
                 await new Promise((resolve, reject) => itemsStmt.finalize(err => err ? reject(err) : resolve()));
                 await new Promise((resolve, reject) => ftsStmt.finalize(err => err ? reject(err) : resolve()));
                 await new Promise((resolve, reject) => thumbUpsertStmt.finalize(err => err ? reject(err) : resolve()));
                 
-                await dbRun('index', "DELETE FROM index_progress WHERE key = 'last_processed_path'");
-                await dbRun('index', "UPDATE index_status SET status = 'complete', processed_files = ? WHERE id = 1", [count]);
+                await idxRepo.deleteResumeKey('last_processed_path');
+                await idxRepo.setIndexStatus('complete');
+                await idxRepo.setProcessedFiles(count);
+
+                // 内存优化：索引完成后清理本地缓存（Redis缓存保留）
+                const finalCacheSize = externalCache.localCache.size;
+                externalCache.clear();
+                logger.info(`[内存优化] 索引完成后清理本地缓存: ${finalCacheSize}个条目已清理`);
 
                 logger.info(`[INDEXING-WORKER] 索引重建完成，共处理 ${count} 个条目。`);
 
@@ -302,7 +522,6 @@ const { invalidateTags } = require('../services/cache.service.js');
                 parentPort.postMessage({ type: 'rebuild_complete', count });
             } catch (error) {
                 logger.error('[INDEXING-WORKER] 重建索引失败:', error.message, error.stack);
-                await dbRun('main', 'ROLLBACK').catch(()=>{});
                 parentPort.postMessage({ type: 'error', error: error.message });
             }
         },
@@ -320,8 +539,8 @@ const { invalidateTags } = require('../services/cache.service.js');
                 // 2) 获取 rowid：若忽略（已存在），查询现有 id
                 let rowId = insertRes.lastID;
                 if (!rowId) {
-                    const existing = await dbGet('main', 'SELECT id FROM items WHERE path = ?', [item.path]).catch(() => null);
-                    rowId = existing && existing.id ? existing.id : null;
+                    const existingId = await require('../repositories/items.repo').getIdByPath(item.path);
+                    rowId = existingId != null ? existingId : null;
                     if (!rowId) {
                         // 理论上不应发生；安全跳过以防止崩溃
                         continue;
@@ -354,13 +573,14 @@ const { invalidateTags } = require('../services/cache.service.js');
             logger.info(`[INDEXING-WORKER] 开始处理 ${changes.length} 个索引变更...`);
             const tagsToInvalidate = new Set();
             const affectedAlbums = new Set();
+            const videoAdds = [];
 
             try {
                 // 索引期间提升 DB 超时，并标记“索引进行中”，以便其它后台任务让路
                 try { adaptDbTimeouts({ busyTimeoutDeltaMs: 20000, queryTimeoutDeltaMs: 15000 }); } catch {}
                 try { await redis.set('indexing_in_progress', '1', 'EX', 60); } catch {}
 
-                await dbRun('main', "BEGIN IMMEDIATE");
+                await withTransaction('main', async () => {
                 
                 const addOperations = [];
                 const deletePaths = [];
@@ -396,6 +616,9 @@ const { invalidateTags } = require('../services/cache.service.js');
                         const name = path.basename(relativePath);
                         const type = change.type === 'addDir' ? 'album' : (/\.(jpe?g|png|webp|gif)$/i.test(name) ? 'photo' : 'video');
                         addOperations.push({ name, path: relativePath, type, mtime: stats.mtimeMs });
+                        if (type === 'video') {
+                            videoAdds.push(relativePath);
+                        }
                     } else if (change.type === 'unlink' || change.type === 'unlinkDir') {
                         deletePaths.push(relativePath);
                     }
@@ -420,9 +643,22 @@ const { invalidateTags } = require('../services/cache.service.js');
                     const thumbUpsertStmt = getDB('main').prepare("INSERT INTO thumb_status(path, mtime, status, last_checked) VALUES(?, ?, 'pending', 0) ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, status='pending'");
                     const processedAdds = await processDimensionsInParallel(addOperations, photosDir);
                     await tasks.processBatchInTransactionOptimized(processedAdds, itemsStmt, ftsStmt, thumbUpsertStmt);
-                    try { await new Promise((resolve, reject) => itemsStmt.finalize(err => err ? reject(err) : resolve())); } catch (e) { logger.warn('Finalizing itemsStmt failed (ignored):', e.message); }
-                    try { await new Promise((resolve, reject) => ftsStmt.finalize(err => err ? reject(err) : resolve())); } catch (e) { logger.warn('Finalizing ftsStmt failed (ignored):', e.message); }
-                    try { await new Promise((resolve, reject) => thumbUpsertStmt.finalize(err => err ? reject(err) : resolve())); } catch (e) { logger.warn('Finalizing thumbUpsertStmt failed (ignored):', e.message); }
+
+                    // 通用finalize处理函数
+                    const finalizeWithErrorHandling = async (stmt, stmtName) => {
+                        try {
+                            await new Promise((resolve, reject) => stmt.finalize(err => err ? reject(err) : resolve()));
+                        } catch (e) {
+                            logger.warn(`Finalizing ${stmtName} failed (ignored):`, e.message);
+                        }
+                    };
+
+                    // 并行finalize所有语句
+                    await Promise.allSettled([
+                        finalizeWithErrorHandling(itemsStmt, 'itemsStmt'),
+                        finalizeWithErrorHandling(ftsStmt, 'ftsStmt'),
+                        finalizeWithErrorHandling(thumbUpsertStmt, 'thumbUpsertStmt')
+                    ]);
                 }
 
                 // 基于变更的相册集，增量维护 album_covers（UPSERT）
@@ -454,11 +690,17 @@ const { invalidateTags } = require('../services/cache.service.js');
                 }
                 if (upsertRows.length > 0) {
                     try {
-                        await runPreparedBatchWithRetry(runPreparedBatch, 'main', upsertSql, upsertRows, { manageTransaction: false, chunkSize: 800 }, redis);
+                        const orchestrator = require('../services/orchestrator');
+                        await orchestrator.withAdmission('album-covers-upsert', async () => {
+                            await runPreparedBatchWithRetry(runPreparedBatch, 'main', upsertSql, upsertRows, { manageTransaction: false, chunkSize: 800 }, redis);
+                        });
                     } catch (err) {
                         if (/no such table: .*album_covers/i.test(err && err.message)) {
                             await ensureAlbumCoversTable();
-                            await runPreparedBatchWithRetry(runPreparedBatch, 'main', upsertSql, upsertRows, { manageTransaction: false, chunkSize: 800 }, redis);
+                            const orchestrator = require('../services/orchestrator');
+                            await orchestrator.withAdmission('album-covers-upsert', async () => {
+                                await runPreparedBatchWithRetry(runPreparedBatch, 'main', upsertSql, upsertRows, { manageTransaction: false, chunkSize: 800 }, redis);
+                            });
                         } else {
                             throw err;
                         }
@@ -474,19 +716,25 @@ const { invalidateTags } = require('../services/cache.service.js');
                     });
                 }
                 
-                await dbRun('main', "COMMIT");
+                }, { mode: 'IMMEDIATE' });
 
                 if (tagsToInvalidate.size > 0) {
                     await invalidateTags(Array.from(tagsToInvalidate));
                 }
 
                 logger.info('[INDEXING-WORKER] 索引增量更新完成。');
-                parentPort.postMessage({ type: 'process_changes_complete' });
+
+                const response = { type: 'process_changes_complete', needsMaintenance: true };
+                if (videoAdds.length > 0) {
+                    response.videoPaths = videoAdds.map(rel => path.join(photosDir, rel));
+                }
+
+                parentPort.postMessage(response);
                 try { await redis.del('indexing_in_progress'); } catch {}
                 try { adaptDbTimeouts({ busyTimeoutDeltaMs: -20000, queryTimeoutDeltaMs: -15000 }); } catch {}
             } catch (error) {
                 logger.error('[INDEXING-WORKER] 处理索引变更失败:', error.message, error.stack);
-                await dbRun('main', "ROLLBACK").catch(rbError => logger.error('[INDEXING-WORKER] 变更处理事务回滚失败:', rbError.message));
+
                 parentPort.postMessage({ type: 'error', error: error.message });
                 try { await redis.del('indexing_in_progress'); } catch {}
                 try { adaptDbTimeouts({ busyTimeoutDeltaMs: -20000, queryTimeoutDeltaMs: -15000 }); } catch {}
@@ -500,6 +748,8 @@ const { invalidateTags } = require('../services/cache.service.js');
                 const BATCH = Number(process.env.DIM_BACKFILL_BATCH || 500);
                 const SLEEP_MS = Number(process.env.DIM_BACKFILL_SLEEP_MS || 200);
                 let totalUpdated = 0;
+                // 统一闸门：重负载时让路，避免与索引/用户请求竞争
+                try { const orchestrator = require('../services/orchestrator'); await orchestrator.gate('index-batch', { checkIntervalMs: 1500 }); } catch {}
                 while (true) {
                     const rows = await dbAll('main',
                         `SELECT path, type, mtime
@@ -527,7 +777,7 @@ const { invalidateTags } = require('../services/cache.service.js');
                     // 轻微歇口，避免长期压榨 IO/CPU
                     await new Promise(r => setTimeout(r, SLEEP_MS));
                 }
-                logger.info(`[INDEXING-WORKER] 尺寸回填完成，更新 ${totalUpdated} 条记录。`);
+                logger.debug(`[INDEXING-WORKER] 尺寸回填完成，更新 ${totalUpdated} 条记录。`);
                 parentPort.postMessage({ type: 'backfill_dimensions_complete', updated: totalUpdated });
             } catch (e) {
                 logger.warn(`[INDEXING-WORKER] 尺寸回填失败：${e && e.message}`);
@@ -542,6 +792,8 @@ const { invalidateTags } = require('../services/cache.service.js');
                 const BATCH = Number(process.env.MTIME_BACKFILL_BATCH || 500);
                 const SLEEP_MS = Number(process.env.MTIME_BACKFILL_SLEEP_MS || 200);
                 let totalUpdated = 0;
+                // 统一闸门：重负载时让路，避免与索引/用户请求竞争
+                try { const orchestrator = require('../services/orchestrator'); await orchestrator.gate('index-batch', { checkIntervalMs: 1500 }); } catch {}
                 while (true) {
                     const rows = await dbAll('main',
                         `SELECT path
@@ -573,10 +825,32 @@ const { invalidateTags } = require('../services/cache.service.js');
                     if (rows.length < BATCH) break;
                     await new Promise(r => setTimeout(r, SLEEP_MS));
                 }
-                logger.info(`[INDEXING-WORKER] mtime 回填完成，更新 ${totalUpdated} 条记录。`);
+                logger.debug(`[INDEXING-WORKER] mtime 回填完成，更新 ${totalUpdated} 条记录。`);
+                try { parentPort.postMessage({ type: 'backfill_mtime_complete', updated: totalUpdated }); } catch {}
             } catch (e) {
                 logger.warn(`[INDEXING-WORKER] mtime 回填失败：${e && e.message}`);
             }
+        },
+
+        async post_index_backfill(payload) {
+            const photosDir = (payload && payload.photosDir) || process.env.PHOTOS_DIR || '/app/photos';
+            try {
+                if (typeof tasks.backfill_missing_dimensions === 'function') {
+                    await tasks.backfill_missing_dimensions({ photosDir, origin: 'post_index_backfill' });
+                }
+            } catch (e) {
+                logger.warn('[INDEXING-WORKER] post_index_backfill 尺寸回填失败（忽略）：', e && e.message);
+            }
+
+            try {
+                if (typeof tasks.backfill_missing_mtime === 'function') {
+                    await tasks.backfill_missing_mtime({ photosDir, origin: 'post_index_backfill' });
+                }
+            } catch (e) {
+                logger.warn('[INDEXING-WORKER] post_index_backfill mtime 回填失败（忽略）：', e && e.message);
+            }
+
+            parentPort.postMessage({ type: 'post_index_backfill_complete' });
         },
     };
 

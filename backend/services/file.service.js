@@ -20,6 +20,7 @@ const { PHOTOS_DIR, API_BASE, COVER_INFO_LRU_SIZE } = require('../config');
 const { isPathSafe } = require('../utils/path.utils');
 const { dbAll, runAsync } = require('../db/multi-db');
 const { getVideoDimensions } = require('../utils/media.utils.js');
+const { withServiceErrorBoundary, withDatabaseErrorBoundary } = require('../utils/errorHandler');
 
 // 限制重型尺寸探测的并发量，降低冷启动高 IO/CPU 冲击
 const DIMENSION_PROBE_CONCURRENCY = Number(process.env.DIMENSION_PROBE_CONCURRENCY || 4);
@@ -44,14 +45,14 @@ function createConcurrencyLimiter(maxConcurrent) {
 const limitDimensionProbe = createConcurrencyLimiter(DIMENSION_PROBE_CONCURRENCY);
 
 // 缓存配置
-const CACHE_DURATION = 604800; // 7天缓存
+const CACHE_DURATION = Number(process.env.FILE_CACHE_DURATION || 604800); // 7天缓存
 // 外部化缓存：移除进程内大 LRU，统一使用 Redis 作为封面缓存后端
 
 // 批量日志统计器
 class BatchLogStats {
     constructor() {
         this.reset();
-        this.flushInterval = 5000; // 5秒刷新一次统计
+        this.flushInterval = Number(process.env.BATCH_LOG_FLUSH_INTERVAL || 5000); // 5秒刷新一次统计
         this.lastFlush = Date.now();
     }
     
@@ -137,16 +138,23 @@ async function ensureBrowseIndexes() {
  * @param {Array<string>} directoryPaths - 目录的绝对路径数组
  * @returns {Promise<Map>} 目录路径到封面信息的映射
  */
-async function findCoverPhotosBatch(directoryPaths) {
-    if (!Array.isArray(directoryPaths) || directoryPaths.length === 0) {
-        return new Map();
+const findCoverPhotosBatchWithErrorBoundary = withServiceErrorBoundary(
+    async function findCoverPhotosBatch(directoryPaths) {
+        if (!Array.isArray(directoryPaths) || directoryPaths.length === 0) {
+            return new Map();
+        }
+        // 将绝对路径转换为 findCoverPhotosBatchDb 所需的相对路径
+        const relativeDirs = directoryPaths.map(p => path.relative(PHOTOS_DIR, p));
+
+        // 直接调用基于数据库的实现
+        return findCoverPhotosBatchDb(relativeDirs);
+    },
+    {
+        context: 'FileService.findCoverPhotosBatch',
+        fallbackResult: new Map(),
+        errorMessage: '批量查找相册封面失败'
     }
-    // 将绝对路径转换为 findCoverPhotosBatchDb 所需的相对路径
-    const relativeDirs = directoryPaths.map(p => path.relative(PHOTOS_DIR, p));
-    
-    // 直接调用基于数据库的实现
-    return findCoverPhotosBatchDb(relativeDirs);
-}
+);
 
 /**
  * 使用数据库查找相册封面（基于相对路径，避免递归 FS 扫描）
@@ -199,7 +207,7 @@ async function findCoverPhotosBatchDb(relativeDirs) {
 
     if (missing.length > 0) {
         // 优先从 album_covers 表按 IN 批量查找，分批避免超长 SQL
-        const BATCH = 200;
+        const BATCH = Number(process.env.FILE_BATCH_SIZE || 200);
         try {
             for (let i = 0; i < missing.length; i += BATCH) {
                 const batch = missing.slice(i, i + BATCH);
@@ -281,7 +289,7 @@ async function getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, 
 
     // 构建排序表达式
     const now = Date.now();
-    const dayAgo = Math.floor(now - 24 * 60 * 60 * 1000);
+    const dayAgo = Math.floor(now - Number(process.env.CACHE_CLEANUP_DAYS || 1) * 24 * 60 * 60 * 1000);
     let orderBy = '';
 
     switch (sort) {
@@ -614,65 +622,145 @@ async function buildMediaItem(row, hlsReadySet, entryRelativePath, fullAbsPath) 
  * @param {Object} dbDimensions - 从数据库查询到的尺寸信息
  * @returns {Promise<Object>} 包含width和height的对象
  */
+/**
+ * 媒体尺寸管理器
+ * 处理媒体文件的尺寸获取和缓存逻辑
+ */
+class MediaDimensionsManager {
+    constructor() {
+        this.redis = redis;
+        this.logger = logger;
+        this.batchLogStats = batchLogStats;
+    }
+
+    /**
+     * 检查数据库尺寸是否有效
+     */
+    isValidDbDimensions(dimensions) {
+        return dimensions &&
+               typeof dimensions.width === 'number' &&
+               typeof dimensions.height === 'number' &&
+               dimensions.width > 0 &&
+               dimensions.height > 0;
+    }
+
+    /**
+     * 从数据库提取尺寸信息
+     */
+    extractDimensionsFromDb(dbDimensions, entryRelativePath) {
+        if (!dbDimensions) return null;
+
+        const dimensions = {
+            width: dbDimensions.width,
+            height: dbDimensions.height
+        };
+
+        if (this.isValidDbDimensions(dimensions)) {
+            this.batchLogStats.recordDbHit(entryRelativePath);
+            return dimensions;
+        }
+
+        return null;
+    }
+
+    /**
+     * 生成缓存键
+     */
+    generateCacheKey(entryRelativePath, mtime) {
+        return `dim:${entryRelativePath}:${mtime}`;
+    }
+
+    /**
+     * 从Redis缓存获取尺寸
+     */
+    async getDimensionsFromCache(cacheKey, entryRelativePath) {
+        try {
+            const cachedData = await this.redis.get(cacheKey);
+            if (!cachedData) return null;
+
+            const dimensions = JSON.parse(cachedData);
+            if (this.isValidDbDimensions(dimensions)) {
+                return dimensions;
+            } else {
+                this.logger.debug(`无效的缓存尺寸数据 for ${entryRelativePath}, 将重新计算。`);
+                return null;
+            }
+        } catch (e) {
+            this.logger.debug(`解析缓存尺寸失败 for ${entryRelativePath}, 将重新计算。`, e);
+            return null;
+        }
+    }
+
+    /**
+     * 计算媒体文件的实际尺寸
+     */
+    async calculateDimensions(fullAbsPath, isVideo) {
+        return await limitDimensionProbe(async () => {
+            if (isVideo) {
+                return await getVideoDimensions(fullAbsPath);
+            } else {
+                const metadata = await sharp(fullAbsPath).metadata();
+                return { width: metadata.width, height: metadata.height };
+            }
+        });
+    }
+
+    /**
+     * 缓存尺寸到Redis
+     */
+    async cacheDimensions(cacheKey, dimensions, entryRelativePath) {
+        try {
+            await this.redis.set(cacheKey, JSON.stringify(dimensions), 'EX', Number(process.env.DIMENSION_CACHE_TTL || 60 * 60 * 24 * 30));
+        } catch (e) {
+            this.logger.warn(`设置尺寸Redis缓存失败: ${cacheKey}`, e.message);
+        }
+    }
+
+    /**
+     * 获取默认尺寸（兜底）
+     */
+    getDefaultDimensions() {
+        return { width: 1920, height: 1080 };
+    }
+
+    /**
+     * 获取媒体文件的尺寸（主要入口函数）
+     */
+    async getMediaDimensions(entryRelativePath, fullAbsPath, isVideo, mtime, dbDimensions = null) {
+        // 1. 尝试从数据库获取
+        let dimensions = this.extractDimensionsFromDb(dbDimensions, entryRelativePath);
+        if (dimensions) return dimensions;
+
+        // 2. 记录数据库未命中
+        this.batchLogStats.recordDbMiss(entryRelativePath);
+
+        // 3. 尝试从缓存获取
+        const cacheKey = this.generateCacheKey(entryRelativePath, mtime);
+        dimensions = await this.getDimensionsFromCache(cacheKey, entryRelativePath);
+        if (dimensions) return dimensions;
+
+        // 4. 计算实际尺寸
+        try {
+            dimensions = await this.calculateDimensions(fullAbsPath, isVideo);
+
+            // 5. 缓存计算结果
+            await this.cacheDimensions(cacheKey, dimensions, entryRelativePath);
+
+            this.logger.debug(`动态获取 ${entryRelativePath} 的尺寸: ${dimensions.width}x${dimensions.height}`);
+            return dimensions;
+        } catch (e) {
+            this.logger.error(`无法获取媒体文件尺寸: ${entryRelativePath}`, e);
+            return this.getDefaultDimensions();
+        }
+    }
+}
+
+// 创建单例管理器
+const mediaDimensionsManager = new MediaDimensionsManager();
+
+// 兼容旧用法
 async function getMediaDimensions(entryRelativePath, fullAbsPath, isVideo, mtime, dbDimensions = null) {
-    // 优先使用数据库中的预存储宽高信息
-    let dimensions = dbDimensions ? { width: dbDimensions.width, height: dbDimensions.height } : { width: null, height: null };
-
-    // 如果数据库中有有效的尺寸信息，直接使用
-    if (dimensions.width && dimensions.height && dimensions.width > 0 && dimensions.height > 0) {
-        batchLogStats.recordDbHit(entryRelativePath);
-        return dimensions;
-    }
-
-    // 如果数据库中没有宽高信息或数据无效，则动态获取
-    batchLogStats.recordDbMiss(entryRelativePath);
-    const cacheKey = `dim:${entryRelativePath}:${mtime}`;
-    let cachedDimensions = null;
-
-    try {
-        cachedDimensions = await redis.get(cacheKey);
-    } catch (e) {
-        logger.warn(`获取尺寸Redis缓存失败: ${cacheKey}`, e.message);
-    }
-
-    if (cachedDimensions) {
-        try {
-            dimensions = JSON.parse(cachedDimensions);
-            if (!dimensions || typeof dimensions.width !== 'number' || typeof dimensions.height !== 'number') {
-                logger.debug(`无效的缓存尺寸数据 for ${entryRelativePath}, 将重新计算。`);
-                dimensions = null;
-            }
-        } catch (e) {
-            logger.debug(`解析缓存尺寸失败 for ${entryRelativePath}, 将重新计算。`, e);
-            dimensions = null;
-        }
-    }
-
-    if (!dimensions) {
-        try {
-            dimensions = await limitDimensionProbe(async () => {
-                if (isVideo) {
-                    return await getVideoDimensions(fullAbsPath);
-                } else {
-                    const metadata = await sharp(fullAbsPath).metadata();
-                    return { width: metadata.width, height: metadata.height };
-                }
-            });
-
-            try {
-                await redis.set(cacheKey, JSON.stringify(dimensions), 'EX', 60 * 60 * 24 * 30);
-            } catch (e) {
-                logger.warn(`设置尺寸Redis缓存失败: ${cacheKey}`, e.message);
-            }
-
-            logger.debug(`动态获取 ${entryRelativePath} 的尺寸: ${dimensions.width}x${dimensions.height}`);
-        } catch (e) {
-            logger.error(`无法获取媒体文件尺寸: ${entryRelativePath}`, e);
-            dimensions = { width: 1920, height: 1080 };
-        }
-    }
-
-    return dimensions;
+    return await mediaDimensionsManager.getMediaDimensions(entryRelativePath, fullAbsPath, isVideo, mtime, dbDimensions);
 }
 
 
@@ -716,7 +804,7 @@ function getAllParentPaths(filePath) {
 
 // 导出文件服务函数
 module.exports = {
-    findCoverPhotosBatch,
+    findCoverPhotosBatch: findCoverPhotosBatchWithErrorBoundary,
     findCoverPhotosBatchDb,
     getDirectoryContents,
     invalidateCoverCache

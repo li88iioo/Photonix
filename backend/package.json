@@ -3,16 +3,19 @@
     "version": "1.0.0",
     "description": "Backend server for the Photonix",
     "main": "server.js",
-    "scripts": {
-        "start": "node server.js",
-        "worker:ai": "node workers/ai-worker.js"
-    },
+  "scripts": {
+    "start": "node server.js",
+    "start:pm2": "pm2 start ecosystem.config.js",
+    "stop:pm2": "pm2 stop ecosystem.config.js",
+    "restart:pm2": "pm2 restart ecosystem.config.js"
+  },
     "dependencies": {
         "axios": "^1.6.0",
         "axios-retry": "^3.9.1",
         "bcryptjs": "^3.0.2",
         "bullmq": "^5.56.1",
         "chokidar": "^3.5.3",
+        "compression": "^1.7.4",
         "express": "^4.18.2",
         "express-rate-limit": "^6.11.0",
         "joi": "^17.11.0",

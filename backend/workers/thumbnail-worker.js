@@ -1,5 +1,7 @@
 const { parentPort, workerData } = require('worker_threads');
 const sharp = require('sharp');
+const logger = require('../config/logger');
+
 // 限制 sharp/libvips 缓存以控制内存占用
 try {
     const memMb = Number(process.env.SHARP_CACHE_MEMORY_MB || 32);
@@ -8,23 +10,17 @@ try {
     sharp.cache({ memory: memMb, items, files });
     const conc = Number(process.env.SHARP_CONCURRENCY || 1);
     if (conc > 0) sharp.concurrency(conc);
-} catch {}
+} catch (error) {
+    logger.warn('Sharp配置失败，使用默认设置', { error: error.message });
+}
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs').promises;
+const { errorMessageTranslator } = require('../utils/errorMessageTranslator');
 
-function translateErrorMessage(message = '') {
-    const msg = String(message || '').toLowerCase();
-    if (msg.includes('webp') && (msg.includes('unable to parse image') || msg.includes('corrupt header'))) {
-        return 'WebP 文件头损坏或格式异常，无法解析';
-    }
-    if (msg.includes('invalid marker') || msg.includes('jpeg')) {
-        return 'JPEG 文件损坏或不完整，无法解析';
-    }
-    if (msg.includes('png') && (msg.includes('bad') || msg.includes('invalid'))) {
-        return 'PNG 文件损坏或格式异常，无法解析';
-    }
-    return message || '无法解析的图片文件';
+// 使用统一的错误消息转换器
+function translateErrorMessage(error) {
+    return errorMessageTranslator.translate(error, 'sharp');
 }
 
 // 增加对损坏或非标准图片文件的容错处理
@@ -61,7 +57,12 @@ async function generateImageThumbnail(imagePath, thumbPath) {
         return { success: true };
     } catch (error) {
         const zhReason = translateErrorMessage(error && error.message);
-        console.warn(`[WORKER] 图片: ${path.basename(imagePath)} 首次处理失败，原因: ${zhReason}。尝试进入安全模式...`);
+        parentPort.postMessage({
+            type: 'log',
+            level: 'warn',
+            message: `[WORKER] 图片: ${path.basename(imagePath)} 首次处理失败，原因: ${zhReason}。尝试进入安全模式...`,
+            workerId: workerData.workerId
+        });
         
         try {
             // 使用 failOn: 'none' 模式，让 sharp 尽可能忽略错误，完成转换
@@ -70,12 +71,22 @@ async function generateImageThumbnail(imagePath, thumbPath) {
                 .webp({ quality: 60 }) // 在安全模式下使用稍低的质量
                 .toFile(thumbPath);
             
-            console.log(`[WORKER] 图片: ${path.basename(imagePath)} 在安全模式下处理成功。`);
+            parentPort.postMessage({
+                type: 'log',
+                level: 'info',
+                message: `[WORKER] 图片: ${path.basename(imagePath)} 在安全模式下处理成功。`,
+                workerId: workerData.workerId
+            });
             return { success: true };
         } catch (safeError) {
             // 如果连安全模式都失败了，那这个文件确实有问题
             const zhSafeReason = translateErrorMessage(safeError && safeError.message);
-            console.error(`[WORKER] 图片: ${path.basename(imagePath)} 在安全模式下处理失败: ${zhSafeReason}`);
+            parentPort.postMessage({
+                type: 'log',
+                level: 'error',
+                message: `[WORKER] 图片: ${path.basename(imagePath)} 在安全模式下处理失败: ${zhSafeReason}`,
+                workerId: workerData.workerId
+            });
             return { success: false, error: 'PROCESSING_FAILED_IN_SAFE_MODE', message: zhSafeReason };
         }
     }
@@ -132,7 +143,12 @@ parentPort.on('message', async (task) => {
         parentPort.postMessage({ ...result, task, workerId: workerData.workerId });
     } catch (error) {
         // 捕获到任何未处理的异常
-        console.error(`[THUMBNAIL-WORKER] Fatal error processing ${task.relativePath}: ${error.message}`);
+        parentPort.postMessage({
+            type: 'log',
+            level: 'error',
+            message: `[THUMBNAIL-WORKER] Fatal error processing ${task.relativePath}: ${error.message}`,
+            workerId: workerData.workerId
+        });
         // 向主线程报告失败，以便更新数据库状态并继续处理下一个任务
         parentPort.postMessage({
             success: false,

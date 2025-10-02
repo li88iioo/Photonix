@@ -6,6 +6,7 @@ const express = require('express');
 const router = express.Router();
 const settingsController = require('../controllers/settings.controller');
 const { validate, Joi, asyncHandler } = require('../middleware/validation');
+const { requirePermission, PERMISSIONS } = require('../middleware/permissions');
 
 // 定义获取和更新设置的路由端点
 router.get('/', asyncHandler(settingsController.getSettingsForClient));     // 获取客户端设置
@@ -36,9 +37,9 @@ router.get('/status', asyncHandler(settingsController.getSettingsUpdateStatus));
 
 // 状态表相关接口
 router.get('/status-tables', asyncHandler(settingsController.getStatusTables));          // 获取状态表信息
-router.post('/sync/:type', asyncHandler(settingsController.triggerSync));                // 触发补全操作
-router.post('/cleanup/:type', asyncHandler(settingsController.triggerCleanup));           // 触发同步操作（删除冗余文件）
-router.post('/resync/thumbnails', asyncHandler(settingsController.resyncThumbnails));    // 重新同步缩略图状态
+router.post('/sync/:type', requirePermission(PERMISSIONS.GENERATE_THUMBNAILS), asyncHandler(settingsController.triggerSync));                // 触发补全操作
+router.post('/cleanup/:type', requirePermission(PERMISSIONS.GENERATE_THUMBNAILS), asyncHandler(settingsController.triggerCleanup));           // 触发同步操作（删除冗余文件）
+router.post('/resync/thumbnails', requirePermission(PERMISSIONS.GENERATE_THUMBNAILS), asyncHandler(settingsController.resyncThumbnails));    // 重新同步缩略图状态
 
 // 导出设置路由模块
 module.exports = router;

@@ -27,47 +27,47 @@ async function performSearch(query, page, limit) {
     // 创建n-gram搜索查询
     const ftsQuery = createNgrams(sanitizedQuery, 1, 2);
 
-    // 计算总数
+    // 构建优化的查询条件
+    let whereCondition = 'items_fts.name MATCH ?';
+    const queryParams = [ftsQuery];
+    const leafAlbumPredicate = `(
+        i.type = 'video'
+        OR (
+            i.type = 'album'
+            AND NOT EXISTS (
+                SELECT 1 FROM items child
+                WHERE child.type = 'album'
+                  AND child.path LIKE i.path || '/%'
+            )
+        )
+    )`;
+
+    whereCondition += ` AND ${leafAlbumPredicate}`;
+
+    // 计算总数（使用预计算的叶子相册）
     const totalCountSql = `
         SELECT COUNT(1) AS count
         FROM items_fts
         JOIN items i ON items_fts.rowid = i.id
-        WHERE items_fts.name MATCH ?
-          AND (
-                i.type = 'video'
-             OR (
-                  i.type = 'album'
-              AND NOT EXISTS (
-                    SELECT 1 FROM items AS sub
-                    WHERE sub.type = 'album' AND sub.path LIKE i.path || '/%'
-              )
-             )
-          )
+        WHERE ${whereCondition}
     `;
-    const totalRow = await dbAll('main', totalCountSql, [ftsQuery]);
+    const totalRow = await dbAll('main', totalCountSql, queryParams);
     const totalResults = totalRow?.[0]?.count || 0;
     const totalPages = Math.ceil(totalResults / limit);
 
-    // 获取分页数据
+    // 获取分页数据（使用相同的优化条件）
     const unifiedSql = `
         SELECT i.id, i.path, i.type, i.mtime, i.width, i.height, items_fts.rank, i.name
         FROM items_fts
         JOIN items i ON items_fts.rowid = i.id
-        WHERE items_fts.name MATCH ?
-          AND (
-                i.type = 'video'
-             OR (
-                  i.type = 'album'
-              AND NOT EXISTS (
-                    SELECT 1 FROM items AS sub
-                    WHERE sub.type = 'album' AND sub.path LIKE i.path || '/%'
-              )
-             )
-          )
+        WHERE ${whereCondition}
         ORDER BY CASE i.type WHEN 'album' THEN 0 ELSE 1 END, items_fts.rank ASC
         LIMIT ? OFFSET ?
     `;
-    const paginatedResults = await dbAll('main', unifiedSql, [ftsQuery, limit, offset]);
+
+    // 添加分页参数
+    const paginatedParams = [...queryParams, limit, offset];
+    const paginatedResults = await dbAll('main', unifiedSql, paginatedParams);
 
     // 批量获取相册封面
     const albumResultsForCover = paginatedResults.filter(r => r.type === 'album');

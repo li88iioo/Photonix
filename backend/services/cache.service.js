@@ -6,14 +6,21 @@ const { redis } = require('../config/redis');
 const logger = require('../config/logger');
 
 const TAG_PREFIX = 'tag:';
+const QUERY_CACHE_PREFIX = 'query:';
+const QUERY_CACHE_TTL = 300; // 5分钟缓存时间
+
+let redisNoOpWarned = false;
 
 /**
  * 根据一个或多个标签，使关联的缓存失效（高效、非阻塞版）
  * @param {string|string[]} tags - 要使其失效的单个标签或标签数组
  */
 async function invalidateTags(tags) {
-    if (!redis) {
-        logger.warn('Redis 未连接，跳过缓存失效操作。');
+    if (!redis || redis.isNoRedis) {
+        if (!redisNoOpWarned) {
+            redisNoOpWarned = true;
+            logger.info('Redis 未连接或处于 No-Op 模式，已跳过路由缓存失效操作。');
+        }
         return;
     }
 
@@ -29,9 +36,6 @@ async function invalidateTags(tags) {
         const allCacheKeys = await redis.sunion(tagKeys);
 
         const keysToDelete = Array.from(allCacheKeys);
-        if (keysToDelete.length === 0 && tagKeys.length === 0) {
-            return;
-        }
 
         // 2. 使用单个 pipeline 和非阻塞的 UNLINK 命令来删除所有键
         const pipeline = redis.pipeline();
@@ -70,7 +74,7 @@ async function invalidateTags(tags) {
  * @returns {Promise<void>}
  */
 async function addTagsToKey(key, tags) {
-    if (!redis) return;
+    if (!redis || redis.isNoRedis) return;
 
     const tagsToAdd = Array.isArray(tags) ? tags : [tags];
     if (tagsToAdd.length === 0) {
@@ -88,7 +92,96 @@ async function addTagsToKey(key, tags) {
     }
 }
 
+/**
+ * 缓存查询结果
+ * @param {string} queryKey - 查询缓存键
+ * @param {any} data - 要缓存的数据
+ * @param {string[]} tags - 关联的缓存标签
+ * @param {number} ttl - 缓存时间（秒）
+ */
+async function cacheQueryResult(queryKey, data, tags = [], ttl = QUERY_CACHE_TTL) {
+    if (!redis || redis.isNoRedis) return;
+
+    try {
+        const cacheKey = `${QUERY_CACHE_PREFIX}${queryKey}`;
+        const serializedData = JSON.stringify(data);
+
+        // 设置缓存数据
+        await redis.setex(cacheKey, ttl, serializedData);
+
+        // 添加标签关联
+        if (tags.length > 0) {
+            await addTagsToKey(cacheKey, tags);
+        }
+
+        logger.debug(`[Cache] 查询结果已缓存: ${queryKey}`);
+    } catch (error) {
+        logger.warn('缓存查询结果失败:', error);
+    }
+}
+
+/**
+ * 获取缓存的查询结果
+ * @param {string} queryKey - 查询缓存键
+ * @returns {Promise<any|null>} 缓存的数据或null
+ */
+async function getCachedQueryResult(queryKey) {
+    if (!redis || redis.isNoRedis) return null;
+
+    try {
+        const cacheKey = `${QUERY_CACHE_PREFIX}${queryKey}`;
+        const cachedData = await redis.get(cacheKey);
+
+        if (cachedData) {
+            const data = JSON.parse(cachedData);
+            logger.debug(`[Cache] 查询结果命中缓存: ${queryKey}`);
+            return data;
+        }
+
+        return null;
+    } catch (error) {
+        logger.warn('获取缓存查询结果失败:', error);
+        return null;
+    }
+}
+
+/**
+ * 使查询缓存失效
+ * @param {string|string[]} queryKeys - 要失效的查询键
+ */
+async function invalidateQueryCache(queryKeys) {
+    if (!redis || redis.isNoRedis) return;
+
+    const keysToInvalidate = Array.isArray(queryKeys) ? queryKeys : [queryKeys];
+    if (keysToInvalidate.length === 0) return;
+
+    try {
+        const cacheKeys = keysToInvalidate.map(key => `${QUERY_CACHE_PREFIX}${key}`);
+        await redis.del(...cacheKeys);
+        logger.debug(`[Cache] 已失效 ${cacheKeys.length} 个查询缓存`);
+    } catch (error) {
+        logger.warn('失效查询缓存失败:', error);
+    }
+}
+
+/**
+ * 生成查询缓存键
+ * @param {string} sql - SQL查询语句
+ * @param {Array} params - 查询参数
+ * @returns {string} 缓存键
+ */
+function generateQueryKey(sql, params = []) {
+    // 简化SQL（移除多余空格）并与参数结合生成键
+    const simplifiedSql = sql.replace(/\s+/g, ' ').trim();
+    const paramsStr = params.length > 0 ? `:${JSON.stringify(params)}` : '';
+    return `${simplifiedSql}${paramsStr}`;
+}
+
 module.exports = {
     invalidateTags,
     addTagsToKey,
+    cacheQueryResult,
+    getCachedQueryResult,
+    invalidateQueryCache,
+    generateQueryKey,
 };

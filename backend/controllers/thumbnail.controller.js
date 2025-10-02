@@ -7,6 +7,7 @@ const { promises: fs } = require('fs');
 const logger = require('../config/logger');
 const { PHOTOS_DIR, THUMBS_DIR } = require('../config');
 const { ensureThumbnailExists, batchGenerateMissingThumbnails } = require('../services/thumbnail.service');
+const { getThumbStatusStats, getCount } = require('../repositories/stats.repo');
 
 // 内存监控（仅在开发环境启用）
 const enableMemoryMonitoring = process.env.NODE_ENV !== 'production';
@@ -30,17 +31,29 @@ if (enableMemoryMonitoring) {
     }, 60000); // 每分钟监控一次
 }
 
-// 请求频率计数器（平衡限流）
+// 请求频率计数器（智能限流）
 const requestCounter = new Map();
+// 批量补全频率限制映射
+const batchThrottleMap = new Map();
 const REQUEST_WINDOW_MS = 1000; // 1秒时间窗口
-const MAX_REQUESTS_PER_WINDOW = 20; // 每秒最大请求数（增加到20个，适合正常浏览）
-const BURST_ALLOWANCE = 10; // 突发流量允许额外请求数（增加到10个）
-const NORMAL_BURST_DURATION = 3000; // 正常浏览允许的突发持续时间（3秒）
+const BASE_REQUESTS_PER_WINDOW = 50; // 基础请求数（提高到50个，适合相册浏览）
+const BURST_MULTIPLIER = 2.0; // 突发模式倍数
+const NORMAL_BURST_DURATION = 5000; // 正常浏览允许的突发持续时间（5秒）
+
+// 动态调整参数
+let currentMaxRequests = BASE_REQUESTS_PER_WINDOW;
+let lastAdjustmentTime = 0;
+const ADJUSTMENT_COOLDOWN = 30000; // 30秒调整冷却时间
 
 // 记录最近的请求时间，用于检测突发流量模式
 let recentRequestTimes = [];
 let burstModeStartTime = 0;
 let isInBurstMode = false;
+
+// 日志抑制机制，避免频繁输出相同警告
+let lastRateLimitLogTime = 0;
+let lastRejectionLogTime = 0;
+const LOG_SUPPRESSION_MS = 5000; // 5秒内只记录一次相同类型的警告
 
 /**
  * 检查请求频率是否超限（智能版本）
@@ -73,11 +86,13 @@ function checkRequestRate(req = null) {
 
     // 检测是否处于突发模式（最近5秒内请求数过多）
     const recentRequests = recentRequestTimes.length;
-    if (recentRequests > 15 && !isInBurstMode) {
+    const burstThreshold = Math.max(25, currentMaxRequests * 0.6); // 动态突发阈值
+
+    if (recentRequests > burstThreshold && !isInBurstMode) {
         // 进入突发模式
         isInBurstMode = true;
         burstModeStartTime = now;
-        logger.debug(`[频率控制] 进入突发模式，最近5秒内有${recentRequests}个请求`);
+        logger.debug(`[频率控制] 进入突发模式，最近5秒内有${recentRequests}个请求 (阈值: ${burstThreshold})`);
     } else if (isInBurstMode && (now - burstModeStartTime > NORMAL_BURST_DURATION)) {
         // 退出突发模式
         isInBurstMode = false;
@@ -91,14 +106,32 @@ function checkRequestRate(req = null) {
         keysToDelete.forEach(key => requestCounter.delete(key));
     }
 
+    // 动态调整限制阈值
+    if (now - lastAdjustmentTime > ADJUSTMENT_COOLDOWN) {
+        // 根据近期请求模式调整限制
+        const avgRequestsPerSecond = recentRequests / 5; // 5秒内的平均请求数
+
+        if (avgRequestsPerSecond > 30 && currentMaxRequests < BASE_REQUESTS_PER_WINDOW * 1.5) {
+            // 高频使用，增加限制
+            currentMaxRequests = Math.min(currentMaxRequests + 10, BASE_REQUESTS_PER_WINDOW * 1.5);
+            lastAdjustmentTime = now;
+            logger.debug(`[频率控制] 动态增加限制到: ${currentMaxRequests}`);
+        } else if (avgRequestsPerSecond < 10 && currentMaxRequests > BASE_REQUESTS_PER_WINDOW * 0.8) {
+            // 低频使用，减少限制节省资源
+            currentMaxRequests = Math.max(currentMaxRequests - 5, BASE_REQUESTS_PER_WINDOW * 0.8);
+            lastAdjustmentTime = now;
+            logger.debug(`[频率控制] 动态减少限制到: ${currentMaxRequests}`);
+        }
+    }
+
     // 根据模式设置不同的限制
     let effectiveLimit;
     if (isInBurstMode) {
         // 突发模式下允许更多的请求（正常浏览时的批量加载）
-        effectiveLimit = MAX_REQUESTS_PER_WINDOW + BURST_ALLOWANCE;
+        effectiveLimit = Math.round(currentMaxRequests * BURST_MULTIPLIER);
     } else {
         // 正常模式
-        effectiveLimit = MAX_REQUESTS_PER_WINDOW;
+        effectiveLimit = currentMaxRequests;
     }
 
     // 检查是否为重试请求
@@ -109,7 +142,11 @@ function checkRequestRate(req = null) {
 
     // 如果超过限制，记录警告但不立即拒绝
     if (currentRequests >= effectiveLimit) {
-        logger.warn(`[频率控制] 请求频率较高: ${currentRequests}/${effectiveLimit} (${isInBurstMode ? '突发模式' : '正常模式'})`);
+        const now = Date.now();
+        if (now - lastRateLimitLogTime > LOG_SUPPRESSION_MS) {
+            logger.debug(`[频率控制] 请求频率较高: ${currentRequests}/${effectiveLimit} (${isInBurstMode ? '突发模式' : '正常模式'})`);
+            lastRateLimitLogTime = now;
+        }
 
         // 在突发模式下更宽松
         if (isInBurstMode && currentRequests < effectiveLimit * 1.5) {
@@ -136,7 +173,11 @@ async function getThumbnail(req, res) {
     try {
         // 检查请求频率
         if (!checkRequestRate(req)) {
-            logger.warn('[缩略图请求] 请求频率过高，暂时拒绝');
+            const now = Date.now();
+            if (now - lastRejectionLogTime > LOG_SUPPRESSION_MS) {
+                logger.debug('[缩略图请求] 请求频率过高，暂时拒绝');
+                lastRejectionLogTime = now;
+            }
             const errorSvg = generateErrorSvg();
             res.set({
                 'Content-Type': 'image/svg+xml',
@@ -148,7 +189,12 @@ async function getThumbnail(req, res) {
 
         const { path: relativePath } = req.query;
 
-        logger.debug(`[缩略图请求] 收到请求: ${relativePath}`);
+        // 减少缩略图请求日志的频率，避免日志刷屏
+        const now = Date.now();
+        if (!global.__lastThumbLogTime || now - global.__lastThumbLogTime > 5000) {
+            logger.debug(`[缩略图请求] 收到请求: ${relativePath}`);
+            global.__lastThumbLogTime = now;
+        }
 
         if (!relativePath) {
             return res.status(400).json({ error: '缺少 path 参数' });
@@ -228,7 +274,36 @@ async function getThumbnail(req, res) {
 async function batchGenerateThumbnails(req, res) {
     try {
         const { limit = 1000 } = req.body;
-        
+
+        // 为批量补全添加频率限制（普通用户保护）
+        const now = Date.now();
+        const userKey = `batch_${req.user?.id || 'anonymous'}`;
+        const lastBatchTime = batchThrottleMap.get(userKey) || 0;
+
+        // 普通用户限制：每30秒最多一次批量补全
+        if (now - lastBatchTime < 30000) {
+            const remaining = Math.ceil((30000 - (now - lastBatchTime)) / 1000);
+            logger.warn(`[批量补全] 频率过高，用户 ${userKey} 需等待 ${remaining} 秒`);
+            return res.status(429).json({
+                code: 'RATE_LIMIT_EXCEEDED',
+                message: `批量补全过于频繁，请等待 ${remaining} 秒后再试`,
+                retryAfter: remaining
+            });
+        }
+
+        // 更新最后请求时间
+        batchThrottleMap.set(userKey, now);
+
+        // 定期清理过期的频率限制记录（防止内存泄漏）
+        if (batchThrottleMap.size > 1000) { // 如果记录太多，清理过期记录
+            const cutoff = now - 60000; // 1分钟前的记录
+            for (const [key, timestamp] of batchThrottleMap.entries()) {
+                if (timestamp < cutoff) {
+                    batchThrottleMap.delete(key);
+                }
+            }
+        }
+
         // 参数验证
         const processLimit = Math.min(Math.max(1, parseInt(limit) || 1000), 5000);
         
@@ -249,6 +324,8 @@ async function batchGenerateThumbnails(req, res) {
 
         if (loopFlag) {
             logger.info(`[批量补全] 自动循环模式启动：单批限制 ${processLimit}`);
+            //   设置循环模式标志，防止worker池被销毁
+            try { global.__thumbBatchLoopActive = true; } catch {}
             setImmediate(async () => {
                 try {
                     let rounds = 0;
@@ -281,6 +358,9 @@ async function batchGenerateThumbnails(req, res) {
                     logger.info(`[批量补全] 自动循环完成：轮次=${rounds} processed=${totalProcessed} queued=${totalQueued} skipped=${totalSkipped}`);
                 } catch (e) {
                     logger.error('自动循环批量补全失败:', e);
+                } finally {
+                    //   清除循环模式标志
+                    try { global.__thumbBatchLoopActive = false; } catch {}
                 }
             });
             return res.json({
@@ -293,7 +373,10 @@ async function batchGenerateThumbnails(req, res) {
         logger.info(`[批量补全] 开始批量生成缩略图，限制: ${processLimit}`);
         
         const result = await batchGenerateMissingThumbnails(processLimit);
-        
+
+        //   确保普通批量模式完成后也清除循环标志
+        try { global.__thumbBatchLoopActive = false; } catch {}
+
         res.json({
             success: true,
             message: result.message,
@@ -320,18 +403,18 @@ async function batchGenerateThumbnails(req, res) {
  */
 async function getThumbnailStats(req, res) {
     try {
-        const { dbGet, dbAll } = require('../db/multi-db');
-        
-        // 获取各种状态的缩略图数量
-        const stats = await Promise.all([
-            dbGet('main', 'SELECT COUNT(*) as count FROM thumb_status WHERE status = ?', ['exists']),
-            dbGet('main', 'SELECT COUNT(*) as count FROM thumb_status WHERE status = ?', ['missing']),
-            dbGet('main', 'SELECT COUNT(*) as count FROM thumb_status WHERE status = ?', ['failed']),
-            dbGet('main', 'SELECT COUNT(*) as count FROM thumb_status WHERE status = ?', ['pending']),
-            dbGet('main', 'SELECT COUNT(*) as total FROM thumb_status'),
-        ]);
+        const { dbAll } = require('../db/multi-db');
 
-        const [existsResult, missingResult, failedResult, pendingResult, totalResult] = stats;
+        // 获取缩略图状态统计
+        const statusStats = await getThumbStatusStats();
+        const totalCount = await getCount('thumb_status');
+
+        // 构建结果对象
+        const existsResult = { count: statusStats.exists || 0 };
+        const missingResult = { count: statusStats.missing || 0 };
+        const failedResult = { count: statusStats.failed || 0 };
+        const pendingResult = { count: statusStats.pending || 0 };
+        const totalResult = { total: totalCount };
         
         // 如果是调试模式，返回更详细的信息
         if (req.query.debug === 'true') {

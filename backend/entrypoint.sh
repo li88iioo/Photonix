@@ -30,5 +30,6 @@ echo "🗄️ 正在检查数据库迁移..."
 node /app/backend/db/migrate-to-multi-db.js || echo "数据库迁移脚本执行失败或无需执行，继续启动..."
 echo "✅ 环境配置完成，正在启动应用程序..."
 
-# 使用 gosu 切换到 node 用户，并使用 pm2-runtime 启动在 ecosystem.config.js 中定义的所有应用。
+# 使用 gosu 切换到 node 用户，并使用 pm2-runtime 启动应用
+echo "🚀 启动 Photonix 服务器"
 exec gosu node pm2-runtime start backend/ecosystem.config.js

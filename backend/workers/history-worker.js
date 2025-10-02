@@ -2,6 +2,7 @@ const { parentPort } = require('worker_threads');
 const path = require('path');
 const winston = require('winston');
 const { initializeConnections, getDB, runPreparedBatch } = require('../db/multi-db');
+const { withTransaction } = require('../services/tx.manager');
 const { redis } = require('../config/redis');
 const { runPreparedBatchWithRetry } = require('../db/sqlite-retry');
 
@@ -40,7 +41,9 @@ const { runPreparedBatchWithRetry } = require('../db/sqlite-retry');
                 // 批量执行所有更新（交由通用批处理托管事务）
                 const sql = "INSERT OR REPLACE INTO view_history (user_id, item_path, viewed_at) VALUES (?, ?, CURRENT_TIMESTAMP)";
                 const rows = pathsToUpdate.map(p => [userId, p]);
-                await runPreparedBatchWithRetry(runPreparedBatch, 'history', sql, rows, { chunkSize: 800 }, redis);
+                await withTransaction('history', async () => {
+                    await runPreparedBatchWithRetry(runPreparedBatch, 'history', sql, rows, { chunkSize: 800 }, redis);
+                }, { mode: 'IMMEDIATE' });
                 
                 logger.debug(`[HISTORY-WORKER] 批量更新了 ${pathsToUpdate.length} 个路径的查看时间 for user ${userId}`);
 
@@ -50,11 +53,27 @@ const { runPreparedBatchWithRetry } = require('../db/sqlite-retry');
                 const keysToClear = new Set();
                 
                 for (const dir of uniqueParentDirs) {
-                     const pattern = `route_cache:${userId}:/api/browse/${dir}*`;
-                     const stream = redis.scanStream({ match: pattern });
-                     for await (const keys of stream) {
-                        keys.forEach(key => keysToClear.add(key));
-                     }
+                    const pattern = `route_cache:${userId}:/api/browse/${dir}*`;
+
+                    // 当 Redis 可用时使用事件模型消费 scanStream；No-Op 或无此方法时跳过
+                    if (redis && !redis.isNoRedis && typeof redis.scanStream === 'function') {
+                        const stream = redis.scanStream({ match: pattern });
+                        await new Promise((resolve, reject) => {
+                            try {
+                                stream.on('data', (keys) => {
+                                    try {
+                                        for (const key of keys) keysToClear.add(key);
+                                    } catch {}
+                                });
+                                stream.on('end', resolve);
+                                stream.on('error', reject);
+                            } catch (e) {
+                                // 某些实现返回的对象非真正流，直接结束
+                                resolve();
+                            }
+                        });
+                    }
+                    // else: 无 Redis 或不支持 scanStream，直接跳过清理（功能性退化）
                 }
                 
                 if (keysToClear.size > 0) {

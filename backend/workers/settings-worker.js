@@ -1,7 +1,8 @@
 const { parentPort } = require('worker_threads');
-const { Worker } = require('bullmq');
+/* BullMQ 将在启用 Redis 时按需加载 */
 const winston = require('winston');
 const { initializeConnections, getDB, runPreparedBatch } = require('../db/multi-db');
+const { withTransaction } = require('../services/tx.manager');
 const { redis } = require('../config/redis');
 const { runPreparedBatchWithRetry } = require('../db/sqlite-retry');
 const { invalidateTags } = require('../services/cache.service.js');
@@ -35,8 +36,10 @@ const { invalidateTags } = require('../services/cache.service.js');
                 try {
                     const sql = 'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)';
                     const rows = Object.entries(settingsToUpdate).map(([k, v]) => [k, String(v)]);
-                    // 交由通用批处理托管事务
-                    await runPreparedBatchWithRetry(runPreparedBatch, 'settings', sql, rows, { chunkSize: 500 }, redis);
+                    // 统一事务边界：用 withTransaction 包裹批写（runPreparedBatch 将感知外层事务）
+                    await withTransaction('settings', async () => {
+                        await runPreparedBatchWithRetry(runPreparedBatch, 'settings', sql, rows, { chunkSize: 500 }, redis);
+                    }, { mode: 'IMMEDIATE' });
 
                     logger.info('[SETTINGS-WORKER] 配置更新成功:', Object.keys(settingsToUpdate).join(', '));
 
@@ -46,11 +49,12 @@ const { invalidateTags } = require('../services/cache.service.js');
                     // 使用新的基于标签的缓存失效机制
                     // 任何设置变更都只影响被打上 'settings' 标签的缓存
                     await invalidateTags('settings');
-                    
+
                     parentPort && parentPort.postMessage({ 
                         type: 'settings_update_complete', 
                         success: true, 
-                        updatedKeys: Object.keys(settingsToUpdate) 
+                        updatedKeys: Object.keys(settingsToUpdate),
+                        updateId
                     });
 
                     try {
@@ -73,7 +77,8 @@ const { invalidateTags } = require('../services/cache.service.js');
                     parentPort && parentPort.postMessage({ 
                         type: 'settings_update_failed', 
                         error: error.message,
-                        updatedKeys: Object.keys(settingsToUpdate)
+                        updatedKeys: Object.keys(settingsToUpdate),
+                        updateId
                     });
                     try {
                         if (updateId) await redis.set(`settings_update_status:${updateId}` , JSON.stringify({ status: 'failed', message: error.message, updatedKeys: Object.keys(settingsToUpdate||{}), ts: Date.now() }), 'EX', 300);
@@ -99,18 +104,24 @@ const { invalidateTags } = require('../services/cache.service.js');
 
     // 兼容 BullMQ 队列消费（可与线程消息并存，避免迁移中断）
     try {
-        const { bullConnection } = require('../config/redis');
+        const { bullConnection, getAvailability } = require('../config/redis');
         const { SETTINGS_QUEUE_NAME } = require('../config');
-        // 创建一个 BullMQ Worker 监听设置队列
-        new Worker(SETTINGS_QUEUE_NAME, async job => {
-            const { settingsToUpdate, updateId } = job.data || {};
-            if (!settingsToUpdate || typeof settingsToUpdate !== 'object') {
-                throw new Error('无效的设置任务数据');
-            }
-            await tasks.update_settings({ settingsToUpdate, updateId });
-            return { success: true, updatedKeys: Object.keys(settingsToUpdate), updateId };
-        }, { connection: bullConnection });
-        logger.info(`[SETTINGS-WORKER] 已启动 BullMQ 队列消费者：${SETTINGS_QUEUE_NAME}`);
+        // 创建一个 BullMQ Worker 监听设置队列（仅在 Redis 启用且就绪时）
+        const availability = typeof getAvailability === 'function' ? getAvailability() : (bullConnection ? 'ready' : 'disabled');
+        if (bullConnection && availability === 'ready') {
+            const { Worker } = require('bullmq');
+            new Worker(SETTINGS_QUEUE_NAME, async job => {
+                const { settingsToUpdate, updateId } = job.data || {};
+                if (!settingsToUpdate || typeof settingsToUpdate !== 'object') {
+                    throw new Error('无效的设置任务数据');
+                }
+                await tasks.update_settings({ settingsToUpdate, updateId });
+                return { success: true, updatedKeys: Object.keys(settingsToUpdate), updateId };
+            }, { connection: bullConnection });
+            logger.info(`[SETTINGS-WORKER] 已启动 BullMQ 队列消费者：${SETTINGS_QUEUE_NAME}`);
+        } else {
+            logger.info(`[SETTINGS-WORKER] 跳过 BullMQ 消费者（Redis 未启用或未就绪: ${typeof availability !== 'undefined' ? availability : 'unknown'}），使用线程消息回退`);
+        }
     } catch (e) {
         logger.warn('[SETTINGS-WORKER] 启动 BullMQ 队列消费者失败（忽略，仍支持线程消息）：', e && e.message);
     }

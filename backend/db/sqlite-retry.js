@@ -4,6 +4,7 @@
  */
 
 const logger = require('../config/logger');
+const { trackBusyRetry } = require('./multi-db');
 
 /**
  * 默认重试配置
@@ -129,6 +130,7 @@ async function withSQLiteRetry(operation, options = {}) {
                 error: error.message,
                 context
             });
+            try { trackBusyRetry(operationName); } catch (trackErr) { logger.silly('trackBusyRetry failed', trackErr && trackErr.message ? { error: trackErr.message } : undefined); }
 
             // 等待后重试
             await sleep(backoffDelay);

@@ -5,6 +5,11 @@
 const jwt = require('jsonwebtoken');
 const { getAllSettings } = require('../services/settings.service');
 const logger = require('../config/logger');
+const { getUserRole } = require('./permissions');
+
+// 认证缓存，避免重复验证相同的token
+const authCache = new Map();
+const AUTH_CACHE_TTL = 30000; // 30秒缓存
 
 /**
  * JWT密钥配置
@@ -84,11 +89,74 @@ module.exports = async function(req, res, next) {
             logger.error(`[${req.requestId || '-'}] [Auth] 服务器缺少 JWT_SECRET 配置，无法验证 Token`);
             return res.status(500).json({ code: 'SERVER_CONFIG_MISSING', message: '服务器缺少 JWT 配置', requestId: req.requestId });
         }
+
+        // 检查认证缓存
+        const cacheKey = token.substring(0, 50); // 使用token前50个字符作为缓存键
+        const cachedAuth = authCache.get(cacheKey);
+        const now = Date.now();
+        
+        if (cachedAuth && (now - cachedAuth.timestamp) < AUTH_CACHE_TTL) {
+            // 使用缓存的认证结果
+            req.user = cachedAuth.user;
+            req.userRole = cachedAuth.userRole;
+            req.userPermissions = cachedAuth.userPermissions;
+            return next();
+        }
+
+        // 只在开发环境或首次认证时记录详细日志
+        const isFirstAuth = !global.__authLogged;
+        if (isFirstAuth || process.env.NODE_ENV === 'development') {
+            logger.debug(`[${req.requestId || '-'}] [Auth] 开始验证token，JWT_SECRET前缀: ${JWT_SECRET.substring(0, 8)}...`);
+            logger.debug(`[${req.requestId || '-'}] [Auth] Token前缀: ${token.substring(0, 20)}...`);
+            global.__authLogged = true;
+        }
+
         const decoded = jwt.verify(token, JWT_SECRET);
+
+        // 只在开发环境记录详细解码信息
+        if (process.env.NODE_ENV === 'development') {
+            logger.debug(`[${req.requestId || '-'}] [Auth] Token验证成功，decoded:`, {
+                sub: decoded?.sub,
+                iat: decoded?.iat,
+                exp: decoded?.exp
+            });
+        }
+
         // 修正：Token 中只包含 `sub` 声明，移除对 `id` 或 `user` 的无效检查
         // 如果 `sub` 不存在，则视为匿名用户，与系统单用户设计保持一致
         const userId = decoded?.sub || 'anonymous';
         req.user = { id: String(userId) };
+
+        // 添加用户角色信息
+        req.userRole = getUserRole(req);
+        req.userPermissions = [];
+
+        // 缓存认证结果
+        authCache.set(cacheKey, {
+            user: req.user,
+            userRole: req.userRole,
+            userPermissions: req.userPermissions,
+            timestamp: now
+        });
+
+        // 定期清理过期缓存
+        if (authCache.size > 100) {
+            for (const [key, value] of authCache.entries()) {
+                if (now - value.timestamp > AUTH_CACHE_TTL) {
+                    authCache.delete(key);
+                }
+            }
+        }
+
+        // 只在开发环境或首次认证时记录完成日志
+        if (isFirstAuth || process.env.NODE_ENV === 'development') {
+            logger.debug(`[${req.requestId || '-'}] [Auth] 用户认证完成:`, {
+                userId: req.user.id,
+                userRole: req.userRole,
+                requestPath: req.originalUrl
+            });
+        }
+
         next(); // Token 有效，继续处理请求
 
     } catch (err) {

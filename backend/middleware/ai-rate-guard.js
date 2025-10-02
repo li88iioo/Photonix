@@ -9,9 +9,16 @@ function hash(input) {
  * AI 频控与配额守卫
  * - 按用户的日配额限制
  * - 对同一用户+图片在短时间窗口内的重复请求做去重（短锁）
+ * - 智能冷却：只有在AI成功生成内容后才设置冷却锁
+ * - 无 Redis 环境下自动放行，避免误伤
  */
 module.exports = async function aiRateGuard(req, res, next) {
   try {
+    // 无 Redis 时直接放行（redis 是 Proxy，isNoRedis 为 true 表示回退）
+    if (redis && redis.isNoRedis === true) {
+      return next();
+    }
+
     // 识别用户：优先 token 注入的 req.user.id，其次 header，最后 IP
     const headerUserId = req.headers['x-user-id'] || req.headers['x-userid'] || req.headers['x-user'];
     const userIdRaw = (req.user && req.user.id) || headerUserId || req.ip || 'anonymous';
@@ -19,7 +26,7 @@ module.exports = async function aiRateGuard(req, res, next) {
 
     // 环境参数（提供默认）
     const DAILY_LIMIT = parseInt(process.env.AI_DAILY_LIMIT || '200', 10); // 每用户每日最大次数
-    const PER_IMAGE_COOLDOWN_SEC = parseInt(process.env.AI_PER_IMAGE_COOLDOWN_SEC || '60', 10); // 单图冷却
+    const PER_IMAGE_COOLDOWN_SEC = parseInt(process.env.AI_PER_IMAGE_COOLDOWN_SEC || '30', 10); // 单图冷却（缩短为30秒）
 
     // 计算日期分区 key
     const y = new Date();
@@ -38,20 +45,33 @@ module.exports = async function aiRateGuard(req, res, next) {
       return res.status(429).json({ code: 'AI_QUOTA_EXCEEDED', message: '今日 AI 生成次数已用尽，请明日再试。' });
     }
 
-    // 单图片冷却（防抖幂等）
+    // 🎯 智能单图片冷却：检查是否有正在进行的请求
     const imagePathRaw = (req.body && (req.body.image_path || req.body.imagePath)) || '';
     const imageSig = hash(imagePathRaw);
     const dedupeKey = `ai_cooldown:${userId}:${imageSig}`;
-    const ok = await redis.set(dedupeKey, '1', 'NX', 'EX', PER_IMAGE_COOLDOWN_SEC);
-    if (ok === null) {
-      return res.status(202).json({ message: '最近已提交过该图片的生成请求，请稍后再试。', cooldownSeconds: PER_IMAGE_COOLDOWN_SEC });
+
+    // 先检查是否已有冷却锁
+    const existingLock = await redis.get(dedupeKey);
+    if (existingLock) {
+      // 检查锁是否是因为成功生成设置的（值为'success'）
+      if (existingLock === 'success') {
+        return res.status(202).json({
+          message: '该图片的AI密语已生成，请稍后再试。',
+          cooldownSeconds: PER_IMAGE_COOLDOWN_SEC,
+          reason: 'already_generated'
+        });
+      } else {
+        // 如果是正在进行的请求，允许继续（不设置新的锁）
+        return next();
+      }
     }
+
+    // 设置临时的请求锁（值为'processing'，短过期时间）
+    await redis.set(dedupeKey, 'processing', 'EX', 10); // 10秒过期，用于检测正在进行的请求
 
     return next();
   } catch (e) {
-    // 降级：Redis 不可用时放行
+    // 降级：异常时放行
     return next();
   }
 };
-
-

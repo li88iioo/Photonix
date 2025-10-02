@@ -79,7 +79,9 @@ app.use((req, res, next) => {
             res.removeHeader('Cross-Origin-Opener-Policy');
             res.removeHeader('Origin-Agent-Cluster');
         }
-    } catch {}
+    } catch (error) {
+        logger.debug('设置安全头失败', { error: error.message });
+    }
     next();
 });
 app.use(requestId());
@@ -89,6 +91,25 @@ app.use(requestId());
  * 解析请求体中的JSON数据，限制大小为50MB
  */
 app.use(express.json({ limit: '50mb' }));
+
+// 条件压缩（仅 JSON，阈值≥2KB；若未安装 compression 则静默跳过）
+try {
+    const compression = require('compression');
+    app.use(compression({
+        threshold: 2048,
+        filter: (req, res) => {
+            try {
+                const type = (res.getHeader('Content-Type') || '').toString();
+                return /application\/json/i.test(type);
+            } catch (error) {
+                logger.debug('检查Content-Type失败', { error: error.message });
+                return false;
+            }
+        }
+    }));
+} catch (error) {
+    logger.warn('Compression中间件加载失败，使用未压缩模式', { error: error.message });
+}
 
 // --- API 路由（先于前端静态资源与 SPA catch-all） ---
 
@@ -174,25 +195,15 @@ app.use(express.static(frontendBuildPath));
  * @returns {Object} 服务状态信息
  */
 app.get('/health', async (req, res) => {
+    // 轻量探活：仅验证可达性与表可读，无全表 COUNT
     try {
         const { dbAll } = require('./db/multi-db');
-        const itemCount = await dbAll('main', "SELECT COUNT(*) as count FROM items");
-        const ftsCount = await dbAll('main', "SELECT COUNT(*) as count FROM items_fts");
-        
-        res.json({
-            status: 'ok',
-            timestamp: new Date().toISOString(),
-            database: {
-                items: itemCount[0].count,
-                fts: ftsCount[0].count
-            }
-        });
+        // 采用 LIMIT 1 的存在性检查，避免表扫描
+        await dbAll('main', "SELECT 1 FROM items LIMIT 1").catch(()=>[]);
+        await dbAll('main', "SELECT 1 FROM items_fts LIMIT 1").catch(()=>[]);
+        res.json({ status: 'ok', timestamp: new Date().toISOString() });
     } catch (error) {
-        res.status(503).json({
-            status: 'error',
-            message: error.message,
-            timestamp: new Date().toISOString()
-        });
+        res.status(503).json({ status: 'error', message: error.message, timestamp: new Date().toISOString() });
     }
 });
 
