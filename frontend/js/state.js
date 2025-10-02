@@ -1,39 +1,55 @@
 // frontend/js/state.js
 
 import { map } from 'nanostores';
+import { createModuleLogger } from './logger.js';
+import { safeGetElementById } from './dom-utils.js';
+
+const stateLogger = createModuleLogger('State');
 
 /**
  * ----------------------------------------------------------------
- * 主应用状态
+ * 统一应用状态管理
  * ----------------------------------------------------------------
- * 使用 nanostores 的 map store 来管理整个应用的响应式状态。
- * 替代了原有的手动实现的 StateManager。
+ * 使用单一的 nanostores map store 来管理所有应用状态。
+ * 统一的状态管理策略，避免状态分散和不一致问题。
  */
 const appStateStore = map({
-    // 应用状态和API配置
+    // 应用基础状态
     userId: null,
     API_BASE: '',
+
+    // 内容和导航状态
     currentPhotos: [],
     currentPhotoIndex: 0,
     isModalNavigating: false,
+
+    // UI状态
     isBlurredMode: false,
-    captionDebounceTimer: null,
-    currentAbortController: null,
-    currentObjectURL: null,
-    scrollPositions: new Map(),
-    scrollPositionBeforeModal: null,
-    activeThumbnail: null,
-    preSearchHash: '#/',
-    searchDebounceTimer: null,
     hasShownNavigationHint: false,
     lastWheelTime: 0,
     uiVisibilityTimer: null,
     activeBackdrop: 'one',
     isInitialLoad: true,
+
+    // 功能开关状态
     aiEnabled: false,
     passwordEnabled: false,
 
-    // 缩略图请求队列
+    // 异步操作状态
+    captionDebounceTimer: null,
+    currentAbortController: null,
+    searchDebounceTimer: null,
+
+    // 媒体和URL状态
+    currentObjectURL: null,
+    scrollPositionBeforeModal: null,
+    activeThumbnail: null,
+    preSearchHash: '#/',
+
+    // 滚动位置缓存
+    scrollPositions: new Map(),
+
+    // 缩略图请求管理
     thumbnailRequestQueue: [],
     activeThumbnailRequests: 0,
     MAX_CONCURRENT_THUMBNAIL_REQUESTS: Math.min(12, (navigator.hardwareConcurrency || 4) < 6 ? 8 : 12),
@@ -55,15 +71,8 @@ const appStateStore = map({
 
     // 预览布局模式
     layoutMode: (typeof localStorage !== 'undefined' && localStorage.getItem('sg_layout_mode')) || 'grid',
-});
 
-/**
- * ----------------------------------------------------------------
- * 同步任务状态
- * ----------------------------------------------------------------
- * 用于管理缩略图、索引等后台任务的状态。
- */
-const syncStateStore = map({
+    // 同步任务状态（合并到主状态管理器）
     isSilent: false,
     isMonitoring: false,
     monitoringType: null,
@@ -71,27 +80,34 @@ const syncStateStore = map({
     monitoringTimeoutId: null,
 });
 
-// syncStateStore 的辅助函数，模拟旧的类方法
-const syncStateProxy = {
-    get isSilent() { return syncStateStore.get().isSilent; },
-    get isMonitoring() { return syncStateStore.get().isMonitoring; },
-    get monitoringType() { return syncStateStore.get().monitoringType; },
-    get monitoringIntervalId() { return syncStateStore.get().monitoringIntervalId; },
-    get monitoringTimeoutId() { return syncStateStore.get().monitoringTimeoutId; },
-    
+/**
+ * ----------------------------------------------------------------
+ * 简化的状态管理接口
+ * ----------------------------------------------------------------
+ * 直接使用 nanostores 的现代API，移除复杂的兼容层。
+ */
+
+// 同步状态管理器（兼容接口）
+export const syncState = {
+    get isSilent() { return appStateStore.get().isSilent; },
+    get isMonitoring() { return appStateStore.get().isMonitoring; },
+    get monitoringType() { return appStateStore.get().monitoringType; },
+    get monitoringIntervalId() { return appStateStore.get().monitoringIntervalId; },
+    get monitoringTimeoutId() { return appStateStore.get().monitoringTimeoutId; },
+
     setSilentMode(silent) {
-        syncStateStore.setKey('isSilent', Boolean(silent));
+        appStateStore.setKey('isSilent', Boolean(silent));
     },
     startMonitoring(type) {
-        syncStateStore.setKey('isMonitoring', true);
-        syncStateStore.setKey('monitoringType', type);
+        appStateStore.setKey('isMonitoring', true);
+        appStateStore.setKey('monitoringType', type);
     },
     stopMonitoring() {
-        const { monitoringIntervalId, monitoringTimeoutId } = syncStateStore.get();
-        if (monitoringIntervalId) clearInterval(monitoringIntervalId);
-        if (monitoringTimeoutId) clearTimeout(monitoringTimeoutId);
-        syncStateStore.set({
-            ...syncStateStore.get(),
+        const state = appStateStore.get();
+        if (state.monitoringIntervalId) clearInterval(state.monitoringIntervalId);
+        if (state.monitoringTimeoutId) clearTimeout(state.monitoringTimeoutId);
+        appStateStore.set({
+            ...state,
             isMonitoring: false,
             monitoringType: null,
             monitoringIntervalId: null,
@@ -99,36 +115,28 @@ const syncStateProxy = {
         });
     },
     setMonitoringTimers(intervalId, timeoutId) {
-        syncStateStore.setKey('monitoringIntervalId', intervalId);
-        syncStateStore.setKey('monitoringTimeoutId', timeoutId);
+        appStateStore.setKey('monitoringIntervalId', intervalId);
+        appStateStore.setKey('monitoringTimeoutId', timeoutId);
     },
     reset() {
         this.stopMonitoring();
         this.setSilentMode(false);
     }
 };
-// 旧文件导出了一个实例，所以我们导出代理对象。
-export const syncState = syncStateProxy;
 
-/**
- * ----------------------------------------------------------------
- * 兼容层 (StateManager 兼容层)
- * ----------------------------------------------------------------
- */
-const stateManagerInstance = {
-    _store: appStateStore,
-    
+// 主状态管理器（简化的接口）
+export const stateManager = {
     get state() {
-        return this._store.get();
+        return appStateStore.get();
     },
 
     subscribe(keys, callback) {
         const keyArray = Array.isArray(keys) ? keys : [keys];
-        
+
         let lastKnownValues = {};
         keyArray.forEach(k => lastKnownValues[k] = this.state[k]);
 
-        const unsubscribe = this._store.listen(currentState => {
+        const unsubscribe = appStateStore.listen(currentState => {
             const changedKeys = [];
             for (const key of keyArray) {
                 if (lastKnownValues[key] !== currentState[key]) {
@@ -145,12 +153,12 @@ const stateManagerInstance = {
 
     update(key, value) {
         if (this.state[key] !== value) {
-            this._store.setKey(key, value);
+            appStateStore.setKey(key, value);
         }
     },
 
     batchUpdate(updates) {
-        this._store.set({ ...this.state, ...updates });
+        appStateStore.set({ ...this.state, ...updates });
     },
 
     get(key) {
@@ -171,27 +179,106 @@ const stateManagerInstance = {
     }
 };
 
-// 导出管理器实例，供直接使用它的代码使用
-export const stateManager = stateManagerInstance;
+// 定义允许的状态属性集合（类型安全）
+const ALLOWED_STATE_KEYS = new Set([
+    // 应用基础状态
+    'userId', 'API_BASE',
 
-// 导出代理对象，这是访问状态的主要方式
-export const state = new Proxy(stateManagerInstance, {
+    // 内容和导航状态
+    'currentPhotos', 'currentPhotoIndex', 'isModalNavigating',
+
+    // UI状态
+    'isBlurredMode', 'hasShownNavigationHint', 'lastWheelTime',
+    'uiVisibilityTimer', 'activeBackdrop', 'isInitialLoad',
+
+    // 功能开关状态
+    'aiEnabled', 'passwordEnabled',
+
+    // 异步操作状态
+    'captionDebounceTimer', 'currentAbortController', 'searchDebounceTimer',
+
+    // 媒体和URL状态
+    'currentObjectURL', 'scrollPositionBeforeModal', 'activeThumbnail', 'preSearchHash',
+
+    // 滚动位置缓存
+    'scrollPositions',
+
+    // 缩略图请求管理
+    'thumbnailRequestQueue', 'activeThumbnailRequests', 'MAX_CONCURRENT_THUMBNAIL_REQUESTS',
+
+    // 搜索和浏览状态
+    'isSearchLoading', 'currentSearchPage', 'totalSearchPages', 'currentSearchQuery',
+    'isBrowseLoading', 'currentBrowsePage', 'totalBrowsePages', 'currentBrowsePath',
+    'currentSort', 'entrySort', 'currentColumnCount', 'currentLayoutWidth', 'pageCache',
+
+    // 预览布局模式
+    'layoutMode',
+
+    // 虚拟滚动器状态
+    'virtualScroller',
+
+    // 同步任务状态
+    'isSilent', 'isMonitoring', 'monitoringType', 'monitoringIntervalId', 'monitoringTimeoutId'
+]);
+
+// 导出代理对象（主要的状态访问接口）
+export const state = new Proxy(stateManager, {
     get(target, prop) {
+        // 方法访问
         if (typeof target[prop] === 'function') {
             return target[prop].bind(target);
         }
-        if (prop in target.state) {
+
+        // 状态属性访问 - 严格验证
+        if (ALLOWED_STATE_KEYS.has(prop)) {
             return target.state[prop];
         }
-        return target[prop];
+
+        // 管理器自身属性访问
+        if (prop in target) {
+            return target[prop];
+        }
+
+        // 警告：访问未定义的状态属性
+        stateLogger.warn(`访问未定义的状态属性: ${prop}`, {
+            allowedKeys: Array.from(ALLOWED_STATE_KEYS),
+            suggestion: '请检查属性名称是否正确，或在ALLOWED_STATE_KEYS中添加新属性'
+        });
+
+        return undefined;
     },
+
     set(target, prop, value) {
-        if (prop in target.state) {
+        // 状态属性设置 - 严格验证
+        if (ALLOWED_STATE_KEYS.has(prop)) {
             target.update(prop, value);
             return true;
         }
+
+        // 管理器自身属性设置
         target[prop] = value;
         return true;
+    },
+
+    has(target, prop) {
+        return ALLOWED_STATE_KEYS.has(prop) || prop in target;
+    },
+
+    ownKeys(target) {
+        // 返回所有允许的键
+        return Array.from(ALLOWED_STATE_KEYS);
+    },
+
+    getOwnPropertyDescriptor(target, prop) {
+        if (ALLOWED_STATE_KEYS.has(prop)) {
+            return {
+                configurable: true,
+                enumerable: true,
+                value: target.state[prop],
+                writable: true
+            };
+        }
+        return undefined;
     }
 });
 
@@ -200,45 +287,20 @@ export const state = new Proxy(stateManagerInstance, {
  * 模态框背景元素
  */
 export const backdrops = {
-    one: document.getElementById('modal-backdrop-one'),
-    two: document.getElementById('modal-backdrop-two')
+    one: safeGetElementById('modal-backdrop-one'),
+    two: safeGetElementById('modal-backdrop-two')
 };
 
-/**
- * DOM元素选择器
- */
-export const elements = {
-    galleryView: document.getElementById('gallery-view'),
-    contentGrid: document.getElementById('content-grid'),
-    loadingIndicator: document.getElementById('loading'),
-    breadcrumbNav: document.getElementById('breadcrumb-nav'),
-    modal: document.getElementById('modal'),
-    modalContent: document.getElementById('modal-content'),
-    modalImg: document.getElementById('modal-img'),
-    modalVideo: document.getElementById('modal-video'),
-    modalClose: document.getElementById('modal-close'),
-    aiControlsContainer: document.getElementById('ai-controls-container'),
-    captionContainer: document.getElementById('caption-container'),
-    captionContainerMobile: document.getElementById('caption-container-mobile'),
-    captionBubble: document.getElementById('caption-bubble'),
-    captionBubbleWrapper: document.getElementById('caption-bubble-wrapper'),
-    toggleCaptionBtn: document.getElementById('toggle-caption-btn'),
-    navigationHint: document.getElementById('navigation-hint'),
-    mediaPanel: document.getElementById('media-panel'),
-    searchInput: document.getElementById('search-input'),
-    infiniteScrollLoader: document.getElementById('infinite-scroll-loader-container'),
-};
+// DOM元素现在在 dom-elements.js 中定义
 
 export function validateSyncState() {
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        console.debug('[状态验证] 当前同步状态:', {
-            isSilent: syncState.isSilent,
-            isMonitoring: syncState.isMonitoring,
-            monitoringType: syncState.monitoringType,
-            hasInterval: !!syncState.monitoringIntervalId,
-            hasTimeout: !!syncState.monitoringTimeoutId
-        });
-    }
+    stateLogger.debug('当前同步状态', {
+        isSilent: syncState.isSilent,
+        isMonitoring: syncState.isMonitoring,
+        monitoringType: syncState.monitoringType,
+        hasInterval: !!syncState.monitoringIntervalId,
+        hasTimeout: !!syncState.monitoringTimeoutId
+    });
 }
 
 export function cleanupSyncState() {
@@ -248,3 +310,6 @@ export function cleanupSyncState() {
 if (typeof window !== 'undefined') {
     window.addEventListener('beforeunload', cleanupSyncState);
 }
+
+// 导出主状态store，供需要直接使用nanostores API的代码
+export { appStateStore as store };

@@ -1,5 +1,11 @@
 // frontend/js/utils.js
 
+import { NETWORK, UI, isDevelopment } from './constants.js';
+import { createModuleLogger } from './logger.js';
+import { safeSetInnerHTML, safeGetElementById, safeClassList } from './dom-utils.js';
+
+const utilsLogger = createModuleLogger('Utils');
+
 /**
  * 带重试机制的动态导入，解决 PWA 环境下的路径解析问题
  * @param {string} modulePath - 模块路径
@@ -11,7 +17,7 @@ export async function importWithRetry(modulePath, maxRetries = 3) {
 		try {
 			return await import(modulePath);
 		} catch (error) {
-			console.warn(`动态导入失败 (尝试 ${i + 1}/${maxRetries}): ${modulePath}`, error);
+			utilsLogger.warn('动态导入失败', { attempt: i + 1, maxRetries, modulePath, error });
 			
 			// 如果是 PWA 环境且出现扩展相关错误，尝试使用绝对路径
 			if (error.message && error.message.includes('chrome-extension')) {
@@ -19,14 +25,14 @@ export async function importWithRetry(modulePath, maxRetries = 3) {
 					const absolutePath = new URL(modulePath, window.location.origin + '/js/').href;
 					return await import(absolutePath);
 				} catch (absoluteError) {
-					console.warn('绝对路径导入也失败:', absoluteError);
+					utilsLogger.warn('绝对路径导入也失败', absoluteError);
 				}
 			}
 			
 			if (i === maxRetries - 1) throw error;
 			
 			// 指数退避重试
-			await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 100));
+			await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * NETWORK.RETRY_BASE_DELAY));
 		}
 	}
 }
@@ -38,9 +44,9 @@ export async function importWithRetry(modulePath, maxRetries = 3) {
  * @param {number} duration - 自动消失时间（毫秒）
  */
 // 去重提示：同一 message+type 的通知在可见期内仅保留一条，并累加计数
-export function showNotification(message, type = 'info', duration = 3000) {
+export function showNotification(message, type = 'info', duration = UI.NOTIFICATION_DURATION_DEFAULT) {
     // 获取或创建通知容器
-    let container = document.getElementById('notification-container');
+    let container = safeGetElementById('notification-container');
     if (!container) {
         container = document.createElement('div');
         container.id = 'notification-container';
@@ -59,9 +65,9 @@ export function showNotification(message, type = 'info', duration = 3000) {
         if (existing._hideTimeout) clearTimeout(existing._hideTimeout);
         existing._hideTimeout = setTimeout(() => remove(existing), duration);
         // 轻微动效反馈（可选，不影响样式不存在时的兼容）
-        existing.classList.remove('show');
+        safeClassList(existing, 'remove', 'show');
         // 下一帧再添加以触发过渡
-        requestAnimationFrame(() => existing.classList.add('show'));
+        requestAnimationFrame(() => safeClassList(existing, 'add', 'show'));
         return;
     }
     
@@ -70,14 +76,14 @@ export function showNotification(message, type = 'info', duration = 3000) {
     notif.className = `notification ${type}`;
     notif.dataset.key = key;
     notif.dataset.count = '1';
-    notif.innerHTML = `
+    safeSetInnerHTML(notif, `
         <span>${message}</span>
         <button class="close-btn" aria-label="关闭">&times;</button>
-    `;
+    `);
     container.appendChild(notif);
 
     // 动画显示
-    setTimeout(() => notif.classList.add('show'), 10);
+    setTimeout(() => safeClassList(notif, 'add', 'show'), 10);
 
     // 自动消失逻辑
     notif._hideTimeout = setTimeout(() => remove(notif), duration);
@@ -95,7 +101,7 @@ export function showNotification(message, type = 'info', duration = 3000) {
     function remove(el) {
         try { if (el && el._hideTimeout) clearTimeout(el._hideTimeout); } catch {}
         const node = el || notif;
-        node.classList.remove('show');
+        safeClassList(node, 'remove', 'show');
         setTimeout(() => node.remove(), 300);
     }
 }
@@ -144,16 +150,13 @@ export function detectTunnelEnvironment() {
                      (hostname !== 'localhost' && hostname !== '127.0.0.1' && port !== '12080');
     
     if (isTunnel) {
-        // 减少内网穿透检测日志输出，只在开发模式下输出
-        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-            console.debug('检测到内网穿透环境，应用优化策略');
-        }
+        utilsLogger.debug('检测到内网穿透环境，应用优化策略');
         
         // 调整请求超时时间
-        window.TUNNEL_TIMEOUT = 10000; // 10秒
-        
+        window.TUNNEL_TIMEOUT = NETWORK.TUNNEL_TIMEOUT; // 10秒
+
         // 调整重试策略
-        window.TUNNEL_RETRY_DELAY = 2000; // 2秒
+        window.TUNNEL_RETRY_DELAY = NETWORK.TUNNEL_RETRY_DELAY; // 2秒
         
         // 标记为隧道环境
         window.IS_TUNNEL_ENVIRONMENT = true;
@@ -170,12 +173,79 @@ export function getTunnelOptimizedConfig() {
     const isTunnel = window.IS_TUNNEL_ENVIRONMENT || detectTunnelEnvironment();
     
     return {
-        timeout: isTunnel ? 10000 : 5000,
-        retries: isTunnel ? 3 : 2,
-        retryDelay: isTunnel ? 2000 : 1000,
+        timeout: isTunnel ? NETWORK.TUNNEL_TIMEOUT : NETWORK.DEFAULT_TIMEOUT,
+        retries: isTunnel ? NETWORK.MAX_RETRY_ATTEMPTS : NETWORK.MAX_RETRY_ATTEMPTS - 1,
+        retryDelay: isTunnel ? NETWORK.TUNNEL_RETRY_DELAY : NETWORK.DEFAULT_RETRY_DELAY,
         keepalive: true
     };
 }
+
+// 废弃的函数已移除，请直接使用 security.js 中的对应函数
+
+/**
+ * 统一的日志管理器
+ * 提供条件化输出和统一的日志格式
+ */
+export const Logger = {
+    /**
+     * 开发环境日志输出
+     * @param {string} level - 日志级别 ('log', 'warn', 'error', 'debug')
+     * @param {string} message - 日志消息
+     * @param {any} data - 附加数据
+     */
+    dev(level, message, data = null) {
+        if (!isDevelopment()) return;
+
+        const timestamp = new Date().toISOString().substr(11, 8); // HH:MM:SS
+        const formattedMessage = `[${timestamp}] ${message}`;
+
+        if (data !== null) {
+            console[level](formattedMessage, data);
+        } else {
+            console[level](formattedMessage);
+        }
+    },
+
+    /**
+     * 错误日志输出（生产环境也输出）
+     * @param {string} message - 错误消息
+     * @param {Error} error - 错误对象
+     */
+    error(message, error = null) {
+        if (error) {
+            utilsLogger.error(message, error);
+        } else {
+            utilsLogger.error(message);
+        }
+    },
+
+    /**
+     * 警告日志输出（仅开发环境）
+     * @param {string} message - 警告消息
+     * @param {any} data - 附加数据
+     */
+    warn(message, data = null) {
+        this.dev('warn', message, data);
+    },
+
+    /**
+     * 调试日志输出（仅开发环境）
+     * @param {string} message - 调试消息
+     * @param {any} data - 附加数据
+     */
+    debug(message, data = null) {
+        this.dev('debug', message, data);
+    },
+
+    /**
+     * 普通日志输出（仅开发环境）
+     * @param {string} message - 日志消息
+     * @param {any} data - 附加数据
+     */
+    log(message, data = null) {
+        this.dev('log', message, data);
+    }
+};
 
 /**
  * 调试内网穿透环境下的请求状态
@@ -183,14 +253,37 @@ export function getTunnelOptimizedConfig() {
  * @param {any} data - 调试数据
  */
 export function debugTunnelRequest(message, data = null) {
-    if (window.IS_TUNNEL_ENVIRONMENT && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
-        console.debug(`[Tunnel Debug] ${message}`, data);
+    if (window.IS_TUNNEL_ENVIRONMENT) {
+        Logger.debug(`[Tunnel] ${message}`, data);
+    }
+}
+
+/**
+ * 生产环境console控制函数
+ * 在生产环境中禁用console输出，在开发环境中保留
+ */
+function setupConsoleControl() {
+    // 检查是否为生产环境
+    const isProduction = !isDevelopment();
+
+    if (isProduction) {
+        // 生产环境：禁用console输出但保留error
+        const noop = () => {};
+        const methods = ['log', 'debug', 'info', 'warn'];
+        methods.forEach(method => {
+            console[method] = noop;
+        });
+
+        // 保留error和trace用于错误报告
+        console.error = console.error || noop;
+        console.trace = console.trace || noop;
     }
 }
 
 // 在页面加载时检测环境
 document.addEventListener('DOMContentLoaded', () => {
     detectTunnelEnvironment();
+    setupConsoleControl();
     
     // 添加全局错误监听，减少内网穿透环境下的错误噪音
     if (window.IS_TUNNEL_ENVIRONMENT) {
@@ -201,10 +294,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (message.includes('Failed to execute \'put\' on \'Cache\'') ||
                     message.includes('net::ERR_ABORTED') ||
                     message.includes('503')) {
-                    // 减少抑制错误日志输出，只在开发模式下输出
-                    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                        console.debug('Suppressed tunnel error:', message);
-                    }
+                    utilsLogger.debug('Suppressed tunnel error', { message });
                     event.preventDefault();
                 }
             }

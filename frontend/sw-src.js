@@ -12,9 +12,12 @@ try {
   // 如果 CDN 不可达，SW 仍可通过下面的运行时缓存工作
 }
 
-// --- 以下是您现有的自定义 Service Worker 逻辑 ---
-
-// 从注入的预缓存清单自动派生缓存版本
+// 首先计算构建版本（必须在加载缓存管理器之前）
+/**
+ * 简单的哈希函数，用于生成构建版本标识
+ * @param {string} str - 要哈希的字符串
+ * @returns {string} 哈希值的十六进制字符串
+ */
 function hashString(str) {
   // FNV-1a 32 位哈希
   let h = 0x811c9dc5;
@@ -31,11 +34,49 @@ try {
   __BUILD_REV = hashString(JSON.stringify(__WB_ENTRIES));
 } catch {}
 
+// 加载缓存管理器 - 使用绝对路径确保在所有环境下都能正确加载
+try {
+  importScripts('/sw-cache-manager.js');
+
+  // 检查缓存管理器是否正确加载
+  if (typeof self.swCacheManager === 'object' && self.swCacheManager) {
+    console.log('[SW] Cache manager loaded successfully');
+    // 将构建版本传递给缓存管理器，确保缓存名称一致
+    self.swCacheManager.__BUILD_REV = __BUILD_REV;
+  } else {
+    console.warn('[SW] Cache manager loaded but interface not found');
+  }
+} catch (error) {
+  console.warn('[SW] Failed to load cache manager:', error);
+}
+
 // 缓存版本控制（自动随构建更新）
 const STATIC_CACHE_VERSION = `static-${__BUILD_REV}`;
 const API_CACHE_VERSION = `api-${__BUILD_REV}`;
 const MEDIA_CACHE_VERSION = `media-${__BUILD_REV}`;
 const THUMBNAIL_CACHE_VERSION = `thumb-${__BUILD_REV}`;
+
+// 缓存管理器已统一处理LRU限制和清理
+
+// --- 以下是您现有的自定义 Service Worker 逻辑 ---
+
+// 缓存管理器已统一处理LRU限制和清理
+
+// 统一的缓存清理函数
+async function cleanupCache(cacheType) {
+  try {
+    if (self.swCacheManager && typeof self.swCacheManager.performLRUCleanup === 'function') {
+      const cacheName = self.swCacheManager.getCacheNameForType ? self.swCacheManager.getCacheNameForType(cacheType) : `${cacheType}-${__BUILD_REV}`;
+      const config = self.swCacheManager.getCacheConfig ? self.swCacheManager.getCacheConfig(cacheType) : {
+        MAX_ENTRIES: cacheType === 'api' ? 500 : cacheType === 'media' ? 800 : cacheType === 'thumbnail' ? 2000 : 100,
+        MAX_AGE_MS: cacheType === 'api' ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000
+      };
+      await self.swCacheManager.performLRUCleanup(cacheName, config);
+    }
+  } catch (error) {
+    console.warn(`[SW] Cache cleanup failed for ${cacheType}:`, error);
+  }
+}
 
 // 仅缓存稳定核心；JS 使用 dist 入口，其他 chunk 运行时按策略缓存
 const CORE_ASSETS = [
@@ -126,6 +167,10 @@ self.addEventListener('activate', event => {
       );
 
       await self.clients.claim(); // 立即接管所有页面
+      // 激活后进行一次异步LRU清理
+      cleanupCache('api');
+      cleanupCache('media');
+      cleanupCache('thumbnail');
     })()
   );
 });
@@ -143,7 +188,12 @@ self.addEventListener('fetch', event => {
         .then(response => {
           // 后台更新 index.html 缓存
           const copy = response.clone();
-          caches.open(STATIC_CACHE_VERSION).then(cache => cache.put('/index.html', copy)).catch(() => {});
+          // 使用统一缓存接口
+          if (self.swCacheManager && typeof self.swCacheManager.putWithLRU === 'function') {
+            self.swCacheManager.putWithLRU('static', new Request('/index.html'), copy).catch(() => {});
+          } else {
+            caches.open(STATIC_CACHE_VERSION).then(cache => cache.put('/index.html', copy)).catch(() => {});
+          }
           return response;
         })
         .catch(() => caches.match('/index.html'))
@@ -192,9 +242,17 @@ self.addEventListener('fetch', event => {
         .then(response => {
           if (isCacheableResponse(response, request)) {
             const responseForCache = response.clone();
-            return caches.open('api-search-v1')
-              .then(cache => cache.put(request, responseForCache))
-              .then(() => response);
+
+            if (self.swCacheManager && typeof self.swCacheManager.putWithLRU === 'function') {
+              self.swCacheManager.putWithLRU('api', request, responseForCache).catch(() => {});
+            } else {
+              caches.open(API_CACHE_VERSION)
+                .then(cache => cache.put(request, responseForCache))
+                .then(() => cleanupCache('api'))
+                .catch(() => {});
+            }
+
+            return response;
           }
           return response;
         })
@@ -227,7 +285,10 @@ self.addEventListener('fetch', event => {
             const responseForCache = networkResponse.clone();
             return caches.open(API_CACHE_VERSION)
               .then(cache => cache.put(request, responseForCache))
-              .then(() => networkResponse);
+              .then(() => {
+                cleanupCache('api');
+                return networkResponse;
+              });
           }
           return networkResponse;
         })
@@ -253,6 +314,7 @@ self.addEventListener('fetch', event => {
                 cache.put(request, responseForCache).catch(err => {
                   console.warn('缩略图缓存失败:', err);
                 });
+                cleanupCache('thumbnail');
               }
               return networkResponse;
             })
@@ -347,6 +409,7 @@ self.addEventListener('fetch', event => {
                   cache.put(request, copy).catch(err => {
                     console.warn('媒体缓存失败:', err);
                   });
+                  cleanupCache('media');
                 }
               }
               return networkResponse;
@@ -482,6 +545,9 @@ self.addEventListener('message', event => {
                     }
                 }));
                 console.log('Service Worker: API 缓存已清除');
+                // 只清理被清除的缓存类型
+                cleanupCache('api');
+                cleanupCache('thumbnail');
             })()
         );
     }

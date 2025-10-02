@@ -1,17 +1,49 @@
 // frontend/js/router.js
 
-import { state, elements } from './state.js';
-import { applyMasonryLayout, getMasonryColumns, initializeVirtualScroll } from './masonry.js';
+import { state } from './state.js';
+import { elements } from './dom-elements.js';
+import { applyMasonryLayout, getMasonryColumns } from './masonry.js';
 import { setupLazyLoading } from './lazyload.js';
 import { fetchSearchResults, fetchBrowseResults, postViewed } from './api.js';
-import { renderBreadcrumb, renderBrowseGrid, renderSearchGrid, sortAlbumsByViewed, renderSortDropdown, checkIfHasMediaFiles, applyLayoutMode, renderLayoutToggleOnly, ensureLayoutToggleVisible, adjustScrollOptimization } from './ui.js';
+import { renderBreadcrumb, renderBrowseGrid, renderSearchGrid, sortAlbumsByViewed, renderSortDropdown, applyLayoutMode, renderLayoutToggleOnly, ensureLayoutToggleVisible, adjustScrollOptimization } from './ui.js';
 import { saveViewed, getUnsyncedViewed, markAsSynced } from './indexeddb-helper.js';
 import { AbortBus } from './abort-bus.js';
-import { handleBrowseScroll, handleSearchScroll, removeScrollListeners } from './listeners.js';
+import { refreshPageEventListeners } from './listeners.js';
 import { showNetworkError, showEmptySearchResults, showEmptyAlbum, showIndexBuildingError, showSkeletonGrid } from './loading-states.js';
+import { routerLogger } from './logger.js';
+import { safeSetInnerHTML, safeGetElementById, safeClassList, safeSetStyle } from './dom-utils.js';
+import { executeAsync, ErrorTypes, ErrorSeverity } from './error-handler.js';
+import { setManagedTimeout } from './timer-manager.js';
+import { CACHE, ROUTER } from './constants.js';
+import { escapeHtml } from './security.js';
 
 
 let currentRequestController = null;
+
+/**
+ * 生成安全的面包屑导航HTML
+ * @param {Object} data - 搜索结果数据
+ * @param {string} query - 搜索查询
+ * @returns {string} 安全的HTML字符串
+ */
+function generateBreadcrumbHTML(data, query) {
+    const preSearchHash = state.preSearchHash;
+    const hasResults = data.results && data.results.length > 0;
+    const searchQuery = escapeHtml(data.query || query || '');
+    const totalResults = data.totalResults || 0;
+
+    return `
+       <div class="flex items-center justify-between w-full">
+           <div class="flex items-center">
+               <a href="${preSearchHash}" class="flex items-center text-purple-400 hover:text-purple-300 transition-colors duration-200 group">
+                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="mr-1 group-hover:-translate-x-1 transition-transform"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+                   返回
+               </a>
+               ${hasResults ? `<span class="mx-3 text-gray-600">/</span><span class="text-white">搜索结果: "${searchQuery}" (${totalResults}项)</span>` : ''}
+           </div>
+           <div id="sort-container" class="flex-shrink-0 ml-4"></div>
+       </div>`;
+}
 
 function getPathOnlyFromHash() {
     const cleanHashString = window.location.hash.replace(/#modal$/, '');
@@ -25,7 +57,7 @@ export function initializeRouter() {
         const raw = sessionStorage.getItem('sg_scroll_positions');
         if (raw) {
             const obj = JSON.parse(raw);
-            const entries = Object.entries(obj).slice(-200);
+            const entries = Object.entries(obj).slice(-CACHE.SCROLL_POSITION_STORAGE_LIMIT);
             const map = new Map(entries);
             state.update('scrollPositions', map);
         }
@@ -60,6 +92,12 @@ export async function handleHashChange() {
 
     const cleanHashString = window.location.hash.replace(/#modal$/, '');
     const newDecodedPath = decodeURIComponent(cleanHashString.substring(1).replace(/^\//, ''));
+
+    try {
+        refreshPageEventListeners();
+    } catch (error) {
+        routerLogger.warn('刷新页面事件监听失败', error);
+    }
     
     const questionMarkIndex = newDecodedPath.indexOf('?');
     const pathOnly = questionMarkIndex !== -1 ? newDecodedPath.substring(0, questionMarkIndex) : newDecodedPath;
@@ -80,8 +118,6 @@ export async function handleHashChange() {
             return;
         }
     }
-
-    removeScrollListeners();
 
     if (cleanHashString.startsWith('#/search?q=')) {
         if (!state.currentBrowsePath || !state.currentBrowsePath.startsWith('search?q=')) {
@@ -107,15 +143,15 @@ export async function handleHashChange() {
         await streamPath(pathOnly, pageSignal);
 
         try {
-            setTimeout(async () => {
+            setManagedTimeout(async () => {
                 const stillSameRoute = getPathOnlyFromHash() === pathOnly && AbortBus.get('page') === pageSignal;
                 const noRealContent = !(elements.contentGrid && elements.contentGrid.querySelector('.grid-item'));
-                const notError = !(elements.contentGrid && elements.contentGrid.classList.contains('error-container'));
+                const notError = !(elements.contentGrid && safeClassList(elements.contentGrid, 'contains', 'error-container'));
                 if (stillSameRoute && noRealContent && notError) {
                     const retrySignal = AbortBus.next('page');
                     await streamPath(pathOnly, retrySignal);
                 }
-            }, 6000);
+            }, ROUTER.ROUTE_RETRY_DELAY, 'route-retry-delay');
         } catch {}
     }
 }
@@ -129,81 +165,102 @@ export async function streamPath(path, signal) {
     renderBreadcrumb(path);
     
     if (path.startsWith('search?q=')) {
-        console.error('搜索页面不应该调用 streamPath 函数');
+        routerLogger.error('搜索页面不应该调用 streamPath 函数');
         return;
     }
     
-    window.addEventListener('scroll', handleBrowseScroll);
-    
     try {
-        const [data] = await Promise.all([
-            fetchBrowseResults(path, state.currentBrowsePage, signal),
-            onAlbumViewed(path)
-        ]);
+        const data = await executeAsync(
+            async () => {
+                const [browseData] = await Promise.all([
+                    fetchBrowseResults(path, state.currentBrowsePage, signal),
+                    onAlbumViewed(path)
+                ]);
+                return browseData;
+            },
+            {
+                context: { path, operation: 'streamPath' },
+                errorType: ErrorTypes.NETWORK,
+                errorSeverity: ErrorSeverity.MEDIUM,
+                onError: (error, ctx) => {
+                    routerLogger.warn(`路径流式加载失败 (尝试 ${ctx.attempt})`, {
+                        path,
+                        error: error.message
+                    });
+                }
+            }
+        );
 
         if (!data || signal.aborted || AbortBus.get('page') !== signal || getPathOnlyFromHash() !== path) return;
 
         state.currentBrowsePath = path;
         state.totalBrowsePages = data.totalPages;
-        
+
         if (!data.items || data.items.length === 0) {
-            const sortContainer = document.getElementById('sort-container');
-            if (sortContainer) sortContainer.innerHTML = '';
+            const sortContainer = safeGetElementById('sort-container');
+            if (sortContainer) safeSetInnerHTML(sortContainer, '');
             state.totalBrowsePages = 0;
             state.currentBrowsePage = 1;
             // 【优化】隐藏无限滚动加载器 - 避免重排抖动
-            if (elements.infiniteScrollLoader) elements.infiniteScrollLoader.classList.remove('visible');
+            if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'remove', 'visible');
             showEmptyAlbum();
             return;
         }
 
         const hasMediaFiles = data.items.some(item => item.type === 'photo' || item.type === 'video');
-        const sortContainer = document.getElementById('sort-container');
-        if (sortContainer) {
-            if (hasMediaFiles) {
-                // 对于有媒体文件的相册，显示布局切换按钮
-                renderLayoutToggleOnly();
-            } else {
-                // 对于只有相册的页面，显示排序下拉框
-                renderSortDropdown();
-            }
-        }
 
         // 应用布局模式（网格或瀑布）
-        elements.contentGrid.classList.add('masonry-mode');
+        safeClassList(elements.contentGrid, 'add', 'masonry-mode');
         const { contentElements, newMediaUrls } = renderBrowseGrid(data.items, 0);
-        const skeleton = document.getElementById('skeleton-grid');
+        const skeleton = safeGetElementById('skeleton-grid');
         if (skeleton) {
             skeleton.replaceWith(...contentElements);
         } else {
-            elements.contentGrid.innerHTML = ''; // 清空旧内容
+            safeSetInnerHTML(elements.contentGrid, ''); // 清空旧内容
             elements.contentGrid.append(...contentElements);
         }
-        
+
         state.currentPhotos = newMediaUrls;
         state.currentBrowsePage++;
-        
+
         if (AbortBus.get('page') !== signal || getPathOnlyFromHash() !== path) return;
-        applyLayoutMode();
-        finalizeNewContent(path);
+
+        // 重新初始化DOM元素，确保sortContainer可用，然后渲染UI元素
+        import('./dom-elements.js').then(({ reinitializeElements }) => {
+            reinitializeElements();
+            const sortContainer = safeGetElementById('sort-container');
+            if (sortContainer) {
+                if (hasMediaFiles) {
+                    // 对于有媒体文件的相册，显示布局切换按钮
+                    renderLayoutToggleOnly();
+                } else {
+                    // 对于只有相册的页面，显示排序下拉框
+                    renderSortDropdown();
+                }
+            }
+
+            // 在UI元素渲染完成后执行后续操作
+            applyLayoutMode();
+            finalizeNewContent(path);
+        });
 
         // 确保布局切换按钮正确显示
-        setTimeout(() => {
+        setManagedTimeout(() => {
             ensureLayoutToggleVisible();
             // 根据内容长度动态调整优化策略
             adjustScrollOptimization(path);
-        }, 50);
+        }, 50, 'layout-post-render');
 
     } catch (error) {
         if (error.name !== 'AbortError') {
-            console.error("流式加载路径失败:", error);
+            // 错误已经由executeAsync处理，这里只需要处理UI反馈
             showNetworkError();
             return;
         }
     } finally {
         state.isBrowseLoading = false;
-        if (!elements.contentGrid.classList.contains('error-container')) {
-            elements.contentGrid.style.minHeight = '';
+        if (!safeClassList(elements.contentGrid, 'contains', 'error-container')) {
+            safeSetStyle(elements.contentGrid, 'minHeight', '');
         }
     }
 }
@@ -216,52 +273,53 @@ async function executeSearch(query, signal) {
     state.totalSearchPages = 1;
     state.isSearchLoading = true;
     
-    window.addEventListener('scroll', handleSearchScroll);
-
     try {
-        const data = await fetchSearchResults(query, state.currentSearchPage, signal);
+        const data = await executeAsync(
+            () => fetchSearchResults(query, state.currentSearchPage, signal),
+            {
+                context: { query, operation: 'executeSearch' },
+                errorType: ErrorTypes.NETWORK,
+                errorSeverity: ErrorSeverity.MEDIUM,
+                onError: (error, ctx) => {
+                    routerLogger.warn(`搜索请求失败 (尝试 ${ctx.attempt})`, {
+                        query,
+                        error: error.message
+                    });
+                }
+            }
+        );
+
         const searchPathKey = `search?q=${query}`;
         if (signal.aborted || AbortBus.get('page') !== signal) return;
 
         if (!data || !data.results) {
-            console.error('搜索返回数据不完整:', data);
+            routerLogger.error('搜索返回数据不完整', data);
             showNetworkError();
             return;
         }
 
         state.currentBrowsePath = searchPathKey;
         
-        elements.breadcrumbNav.innerHTML = `
-           <div class="flex items-center justify-between w-full">
-               <div class="flex items-center">
-                   <a href="${state.preSearchHash}" class="flex items-center text-purple-400 hover:text-purple-300 transition-colors duration-200 group">
-                       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="mr-1 group-hover:-translate-x-1 transition-transform"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
-                       返回
-                   </a>
-                   ${data.results.length > 0 ? `<span class=\"mx-3 text-gray-600\">/</span><span class=\"text-white\">搜索结果: \"${data.query || query}\" (${data.totalResults || 0}项)</span>` : ''}
-               </div>
-               <div id="sort-container" class="flex-shrink-0 ml-4"></div>
-           </div>`;
+        safeSetInnerHTML(elements.breadcrumbNav, generateBreadcrumbHTML(data, query));
 
        if (data.results.length === 0) {
           state.totalSearchPages = 0;
           state.currentSearchPage = 1;
           // 【优化】隐藏无限滚动加载器 - 避免重排抖动
-          const loaderContainer = document.getElementById('infinite-scroll-loader-container');
-          if (loaderContainer) loaderContainer.classList.remove('visible');
+          const loaderContainer = safeGetElementById('infinite-scroll-loader-container');
+          if (loaderContainer) safeClassList(loaderContainer, 'remove', 'visible');
           showEmptySearchResults(query);
-          removeScrollListeners();
-          elements.contentGrid.style.minHeight = '';
+          safeSetStyle(elements.contentGrid, 'minHeight', '');
           return;
        }
 
-        elements.contentGrid.classList.add('masonry-mode');
+        safeClassList(elements.contentGrid, 'add', 'masonry-mode');
         const { contentElements, newMediaUrls } = renderSearchGrid(data.results, 0);
-        const skeleton = document.getElementById('skeleton-grid');
+        const skeleton = safeGetElementById('skeleton-grid');
         if (skeleton) {
             skeleton.replaceWith(...contentElements);
         } else {
-            elements.contentGrid.innerHTML = ''; // 清空旧内容
+            safeSetInnerHTML(elements.contentGrid, ''); // 清空旧内容
             elements.contentGrid.append(...contentElements);
         }
         
@@ -270,21 +328,27 @@ async function executeSearch(query, signal) {
         state.currentSearchPage++;
         
         if (AbortBus.get('page') !== signal) return;
-        // 搜索页也显示布局切换按钮
-        renderLayoutToggleOnly();
+
+        // 重新初始化DOM元素，确保sortContainer可用
+        import('./dom-elements.js').then(({ reinitializeElements }) => {
+            reinitializeElements();
+            // 搜索页只显示布局切换按钮
+            renderLayoutToggleOnly();
+        });
+
         applyLayoutMode();
         finalizeNewContent(searchPathKey);
 
         // 确保布局切换按钮正确显示
-        setTimeout(() => {
+        setManagedTimeout(() => {
             ensureLayoutToggleVisible();
             // 根据内容长度动态调整优化策略
             adjustScrollOptimization(searchPathKey);
-        }, 50);
+        }, 50, 'search-layout-post-render');
 
     } catch (error) {
         if (error.name !== 'AbortError') {
-            console.error("执行搜索失败:", error);
+            routerLogger.error("执行搜索失败", error);
             if (error.message && error.message.includes('搜索索引正在构建中')) {
                 showIndexBuildingError();
             } else {
@@ -294,34 +358,35 @@ async function executeSearch(query, signal) {
         }
     } finally {
         state.isSearchLoading = false;
-        if (!elements.contentGrid.classList.contains('error-container')) {
-            elements.contentGrid.style.minHeight = '';
+        if (!safeClassList(elements.contentGrid, 'contains', 'error-container')) {
+            safeSetStyle(elements.contentGrid, 'minHeight', '');
         }
     }
 }
 
 function prepareForNewContent() {
     return new Promise(resolve => {
-        const scroller = state.get('virtualScroller');
+        const scroller = state.virtualScroller;
         if (scroller) {
             scroller.destroy();
             state.update('virtualScroller', null);
         }
 
         window.scrollTo({ top: 0, behavior: 'instant' });
-        elements.contentGrid.style.minHeight = `${elements.contentGrid.offsetHeight}px`;
+        safeSetStyle(elements.contentGrid, 'minHeight', `${elements.contentGrid.offsetHeight}px`);
 
         // 添加淡出 class
-        elements.contentGrid.classList.add('grid-leaving');
+        safeClassList(elements.contentGrid, 'add', 'grid-leaving');
 
         // 等待动画完成
-        setTimeout(() => {
+        setManagedTimeout(() => {
             showSkeletonGrid();
-            elements.contentGrid.classList.remove('masonry-mode', 'grid-leaving');
-            elements.contentGrid.classList.add('grid-entering');
-            elements.contentGrid.style.height = 'auto';
+            safeClassList(elements.contentGrid, 'remove', 'masonry-mode');
+            safeClassList(elements.contentGrid, 'remove', 'grid-leaving');
+            safeClassList(elements.contentGrid, 'add', 'grid-entering');
+            safeSetStyle(elements.contentGrid, 'height', 'auto');
             // 【优化】隐藏无限滚动加载器 - 避免重排抖动
-            if (elements.infiniteScrollLoader) elements.infiniteScrollLoader.classList.remove('visible');
+            if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'remove', 'visible');
 
             // 【修复】只在真正需要时清空图片状态，保留缓存
             // 检查是否是同一个相册路径的重新加载
@@ -336,16 +401,16 @@ function prepareForNewContent() {
 
             // 动画结束后移除 entering class
             elements.contentGrid.addEventListener('transitionend', () => {
-                elements.contentGrid.classList.remove('grid-entering');
+                safeClassList(elements.contentGrid, 'remove', 'grid-entering');
             }, { once: true });
 
             resolve();
-        }, 150); // 匹配 CSS 中的 transition duration
+        }, 150, 'content-transition'); // 匹配 CSS 中的 transition duration
     });
 }
 
 function finalizeNewContent(pathKey) {
-    if (!state.get('virtualScroller')) {
+    if (!state.virtualScroller) {
         setupLazyLoading();
 
         // 尝试恢复页面的懒加载状态
@@ -355,7 +420,7 @@ function finalizeNewContent(pathKey) {
         }
 
         // 仅在没有恢复状态且瀑布流模式下执行瀑布流布局
-        if (!stateRestored && elements.contentGrid.classList.contains('masonry-mode')) {
+        if (!stateRestored && safeClassList(elements.contentGrid, 'contains', 'masonry-mode')) {
             applyMasonryLayout();
         }
     }
@@ -363,18 +428,18 @@ function finalizeNewContent(pathKey) {
     sortAlbumsByViewed();
     state.update('currentColumnCount', getMasonryColumns());
 
-    const scrollPositions = state.get('scrollPositions');
+    const scrollPositions = state.scrollPositions;
     const scrollY = scrollPositions.get(pathKey);
     if (scrollY) {
         window.scrollTo({ top: scrollY, behavior: 'instant' });
         const newScrollPositions = new Map(scrollPositions);
         newScrollPositions.delete(pathKey);
         state.scrollPositions = newScrollPositions;
-    } else if (state.get('isInitialLoad')) {
+    } else if (state.isInitialLoad) {
         window.scrollTo({ top: 0, behavior: 'instant' });
     }
 
-    elements.contentGrid.style.minHeight = '';
+    safeSetStyle(elements.contentGrid, 'minHeight', '');
     state.update('isInitialLoad', false);
 }
 

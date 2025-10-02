@@ -1,16 +1,20 @@
 // frontend/js/auth.js
 
-import { state, elements } from './state.js';
+import { elements } from './dom-elements.js';
 import { initializeRouter } from './router.js';
-// ✨ FIX: 从 api.js 导入，打破循环依赖
-import { fetchSettings, saveSettings, clearAuthHeadersCache } from './api.js';
+import { clearAuthHeadersCache } from './api.js';
+import { createModuleLogger } from './logger.js';
+import { safeSetInnerHTML, safeGetElementById, safeSetStyle, safeClassList, safeQuerySelector } from './dom-utils.js';
+import { AUTH } from './constants.js';
+
+const authLogger = createModuleLogger('Auth');
 
 /**
  * 认证管理模块
  * 负责用户认证、登录界面、初始设置和令牌管理
  */
 
-const AUTH_TOKEN_KEY = 'authToken';  // 认证令牌的本地存储键名
+// 使用统一的AUTH配置常量
 
 /**
  * 初始化用户认证
@@ -37,10 +41,17 @@ export async function checkAuthStatus() {
     // 添加超时控制，避免长时间等待
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000); // 增加超时时间到15秒
-    
+
     try {
+        const token = getAuthToken();
+        const headers = {};
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
         const response = await fetch('/api/auth/status', {
-            signal: controller.signal
+            signal: controller.signal,
+            headers
         });
         
         clearTimeout(timeoutId);
@@ -55,7 +66,7 @@ export async function checkAuthStatus() {
     } catch (error) {
         clearTimeout(timeoutId);
         if (error.name === 'AbortError') {
-            console.warn('认证状态检查超时，使用默认设置');
+            authLogger.warn('认证状态检查超时，使用默认设置');
             return { passwordEnabled: false };
         }
         throw error;
@@ -67,16 +78,16 @@ export async function checkAuthStatus() {
  * 渲染登录表单并设置背景图片
  */
 export function showLoginScreen() {
-    const authOverlay = document.getElementById('auth-overlay');
-    const authContainer = document.getElementById('auth-container');
-    const authBackground = document.getElementById('auth-background');
+    const authOverlay = safeGetElementById('auth-overlay');
+    const authContainer = safeGetElementById('auth-container');
+    const authBackground = safeGetElementById('auth-background');
 
     // 重置背景样式
-    authBackground.style.backgroundImage = '';
-    authBackground.classList.remove('opacity-50');
+    safeSetStyle(authBackground, 'backgroundImage', '');
+    safeClassList(authBackground, 'remove', 'opacity-50');
 
-    // 渲染登录表单
-    authContainer.innerHTML = `
+    // XSS安全修复：对静态HTML模板进行安全检查
+    const loginTemplate = `
     <div class="login-card">
         <h2 class="auth-title">登录到 Photonix</h2>
         <form id="login-form">
@@ -94,14 +105,23 @@ export function showLoginScreen() {
     </div>
     `;
 
+    // 安全检查：确保模板不包含危险内容
+    if (!/<script|javascript:|vbscript:|on\w+\s*=|javascript\s*:|data\s*:|vbscript\s*:/i.test(loginTemplate)) {
+        safeSetInnerHTML(authContainer, loginTemplate);
+    } else {
+        authLogger.error('检测到登录模板中的潜在安全风险');
+        return;
+    }
+
     // 立即显示登录遮罩层
-    authOverlay.classList.remove('opacity-0', 'pointer-events-none');
-    authOverlay.classList.add('opacity-100');
+    safeClassList(authOverlay, 'remove', 'opacity-0');
+    safeClassList(authOverlay, 'remove', 'pointer-events-none');
+    safeClassList(authOverlay, 'add', 'opacity-100');
 
     // 改进的背景图片加载机制
     loadBackgroundWithRetry(authBackground);
 
-    document.getElementById('login-form').addEventListener('submit', handleLogin);
+    safeGetElementById('login-form').addEventListener('submit', handleLogin);
     setupPasswordToggle();
 }
 
@@ -113,8 +133,8 @@ export function showLoginScreen() {
  */
 async function handleLogin(e) {
     e.preventDefault();
-    const password = document.getElementById('password').value;
-    const errorEl = document.getElementById('login-error');
+    const password = safeGetElementById('password').value;
+    const errorEl = safeGetElementById('login-error');
     const loginButton = e.target.querySelector('button');
     const originalButtonText = loginButton.textContent;
     let reenableTimer = null;
@@ -134,13 +154,13 @@ async function handleLogin(e) {
         
         if (!response.ok || !data.success) {
             // 登录失败时的抖动动画效果
-            const loginCard = document.querySelector('.login-card');
+            const loginCard = safeQuerySelector('.login-card');
             if (loginCard) {
-                loginCard.classList.remove('shake');
+                safeClassList(loginCard, 'remove', 'shake');
                 void loginCard.offsetWidth;
-                loginCard.classList.add('shake');
+                safeClassList(loginCard, 'add', 'shake');
                 loginCard.addEventListener('animationend', () => {
-                    loginCard.classList.remove('shake');
+                    safeClassList(loginCard, 'remove', 'shake');
                 }, { once: true });
             }
             // 根据后端返回的 code/状态映射中文提示
@@ -195,16 +215,17 @@ async function handleLogin(e) {
         // 通知 SW 清理 API 缓存，避免授权瞬间取到旧的公开数据
         try { navigator.serviceWorker && navigator.serviceWorker.controller && navigator.serviceWorker.controller.postMessage({ type: 'MANUAL_REFRESH' }); } catch {}
         
-        const authOverlay = document.getElementById('auth-overlay');
-        authOverlay.classList.remove('opacity-100');
-        authOverlay.classList.add('opacity-0', 'pointer-events-none');
+        const authOverlay = safeGetElementById('auth-overlay');
+        safeClassList(authOverlay, 'remove', 'opacity-100');
+        safeClassList(authOverlay, 'add', 'opacity-0');
+        safeClassList(authOverlay, 'add', 'pointer-events-none');
         
-        const appContainer = document.getElementById('app-container');
-        appContainer.classList.add('opacity-100');
+        const appContainer = safeGetElementById('app-container');
+        safeClassList(appContainer, 'add', 'opacity-100');
         
         // 清除任何加载状态
         if (elements.contentGrid) {
-            elements.contentGrid.innerHTML = '';
+            safeSetInnerHTML(elements.contentGrid, '');
         }
         
         initializeRouter();
@@ -222,7 +243,7 @@ async function handleLogin(e) {
  * 设置密码输入框的显示/隐藏切换
  */
 function setupPasswordToggle() {
-    const wrapper = document.querySelector('.password-wrapper');
+    const wrapper = safeQuerySelector('.password-wrapper');
     if (!wrapper) return;
     
     const icon = wrapper.querySelector('.password-toggle-icon');
@@ -231,8 +252,8 @@ function setupPasswordToggle() {
     const closedEye = icon.querySelector('.eye-closed');
     
     // 初始化眼睛图标状态
-    openEye.style.display = 'block';
-    closedEye.style.display = 'none';
+    safeSetStyle(openEye, 'display', 'block');
+    safeSetStyle(closedEye, 'display', 'none');
     
     icon.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -240,15 +261,15 @@ function setupPasswordToggle() {
         const isPassword = input.type === 'password';
         input.type = isPassword ? 'text' : 'password';
         
-        openEye.style.display = isPassword ? 'none' : 'block';
-        closedEye.style.display = isPassword ? 'block' : 'none';
+        safeSetStyle(openEye, 'display', isPassword ? 'none' : 'block');
+        safeSetStyle(closedEye, 'display', isPassword ? 'block' : 'none');
         
         // 点击时的视觉反馈
         const originalColor = icon.style.color;
-        icon.style.color = 'white';
+        safeSetStyle(icon, 'color', 'white');
         
         setTimeout(() => {
-            icon.style.color = originalColor || '';
+            safeSetStyle(icon, 'color', originalColor || '');
         }, 200);
     });
 }
@@ -257,8 +278,8 @@ function setupPasswordToggle() {
  * 设置设置页面的开关事件监听
  */
 export function setupSettingsToggles() {
-    const aiEnabledToggle = document.getElementById('ai-enabled');
-    const passwordEnabledToggle = document.getElementById('password-enabled');
+    const aiEnabledToggle = safeGetElementById('ai-enabled');
+    const passwordEnabledToggle = safeGetElementById('password-enabled');
 
     if(aiEnabledToggle) {
         aiEnabledToggle.addEventListener('change', (e) => toggleAIFields(e.target.checked));
@@ -273,8 +294,8 @@ export function setupSettingsToggles() {
  * @param {boolean} isEnabled - 是否启用AI功能
  */
 export function toggleAIFields(isEnabled) {
-    const fields = document.getElementById('ai-fields');
-    if (fields) fields.style.display = isEnabled ? 'block' : 'none';
+    const fields = safeGetElementById('ai-fields');
+    if (fields) safeSetStyle(fields, 'display', isEnabled ? 'block' : 'none');
 }
 
 /**
@@ -282,8 +303,8 @@ export function toggleAIFields(isEnabled) {
  * @param {boolean} isEnabled - 是否启用密码功能
  */
 export function togglePasswordFields(isEnabled) {
-    const fields = document.getElementById('password-fields');
-    if (fields) fields.style.display = isEnabled ? 'block' : 'none';
+    const fields = safeGetElementById('password-fields');
+    if (fields) safeSetStyle(fields, 'display', isEnabled ? 'block' : 'none');
 }
 
 /**
@@ -291,7 +312,7 @@ export function togglePasswordFields(isEnabled) {
  * @param {string} token - 认证令牌
  */
 export function setAuthToken(token) {
-    localStorage.setItem(AUTH_TOKEN_KEY, token);
+    localStorage.setItem(AUTH.TOKEN_KEY, token);
     clearAuthHeadersCache(); // 清除认证头缓存
 }
 
@@ -300,14 +321,14 @@ export function setAuthToken(token) {
  * @returns {string|null} 认证令牌
  */
 export function getAuthToken() {
-    return localStorage.getItem(AUTH_TOKEN_KEY);
+    return localStorage.getItem(AUTH.TOKEN_KEY);
 }
 
 /**
  * 从本地存储移除认证令牌
  */
 export function removeAuthToken() {
-    localStorage.removeItem(AUTH_TOKEN_KEY);
+    localStorage.removeItem(AUTH.TOKEN_KEY);
     clearAuthHeadersCache(); // 清除认证头缓存
 }
 
@@ -383,25 +404,19 @@ async function loadBackgroundWithRetry(authBackground) {
             if (backgroundUrl) {
                 // 异步预加载图片，不阻塞UI
                 preloadImage(backgroundUrl).then(() => {
-                    authBackground.style.backgroundImage = `url(${backgroundUrl})`;
-                    authBackground.classList.remove('fallback');
-                    authBackground.classList.add('opacity-50');
+                    safeSetStyle(authBackground, 'backgroundImage', `url(${backgroundUrl})`);
+                    safeClassList(authBackground, 'remove', 'fallback');
+                    safeClassList(authBackground, 'add', 'opacity-50');
                 }).catch((error) => {
                     // 预加载失败，保持备用背景
-                    // 减少背景图片预加载失败日志输出，只在开发模式下输出
-                    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                        console.debug('背景图片预加载失败，使用备用背景:', error.message);
-                    }
+                    authLogger.debug('背景图片预加载失败，使用备用背景', { error: error.message });
                     // 可以在这里添加用户友好的提示
                 });
                 return;
             }
         } catch (error) {
             // 静默处理加载错误，但记录日志
-            // 减少背景图片加载失败日志输出，只在开发模式下输出
-        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-            console.debug('背景图片加载失败:', error.message);
-        }
+            authLogger.debug('背景图片加载失败', { error: error.message });
         }
         
         // 如果不是最后一次尝试，等待后重试
@@ -411,10 +426,7 @@ async function loadBackgroundWithRetry(authBackground) {
     }
     
     // 所有尝试都失败，保持备用背景
-    // 减少背景图片加载失败日志输出，只在开发模式下输出
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        console.debug('背景图片加载失败，使用备用背景');
-    }
+    authLogger.debug('背景图片加载失败，使用备用背景');
 }
 
 /**
@@ -437,8 +449,8 @@ function preloadImage(url) {
  */
 function useFallbackBackground(authBackground) {
     // 清除之前的背景图片
-    authBackground.style.backgroundImage = '';
+    safeSetStyle(authBackground, 'backgroundImage', '');
     // 添加备用背景类
-    authBackground.classList.add('fallback');
-    authBackground.classList.add('opacity-50');
+    safeClassList(authBackground, 'add', 'fallback');
+    safeClassList(authBackground, 'add', 'opacity-50');
 }

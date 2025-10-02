@@ -1,38 +1,47 @@
 // frontend/js/ui.js
 
-import { elements, state, stateManager } from './state.js';
-import { importWithRetry } from './utils.js';
+import { state, stateManager } from './state.js';
 import * as api from './api.js';
 import { getAllViewed } from './indexeddb-helper.js';
 import { applyMasonryLayout, triggerMasonryUpdate } from './masonry.js';
+import { MATH, UI } from './constants.js';
+import { uiLogger } from './logger.js';
+import { createProgressCircle, createPlayButton, createGridIcon, createMasonryIcon, createSortArrow } from './svg-utils.js';
+import { elements } from './dom-elements.js';
+import { safeSetInnerHTML, safeClassList, safeSetStyle, safeCreateElement, safeGetElementById, safeQuerySelectorAll } from './dom-utils.js';
 
-// 重新导出 elements 以供其他模块使用
+// 重新导出 elements 以保持向后兼容
 export { elements };
 
 /**
  * 安全地创建DOM元素并设置其属性和内容
  */
 function createElement(tag, { classes = [], attributes = {}, textContent = '', children = [] } = {}) {
-	const el = document.createElement(tag);
-	if (classes.length) el.classList.add(...classes);
-	for (const [key, value] of Object.entries(attributes)) el.setAttribute(key, value);
-	if (textContent) el.textContent = textContent;
-	if (children.length) el.append(...children);
-	return el;
+	return safeCreateElement(tag, { classes, attributes, textContent, children });
 }
 
 /**
  * 格式化时间显示
  */
 function formatTime(timestamp) {
-	if (!timestamp) return '';
-	const diff = Date.now() - Number(timestamp);
-	if (diff < 60 * 1000) return '刚刚';
-	if (diff < 60 * 60 * 1000) return `${Math.floor(diff / (60 * 1000))}分钟前`;
-	if (diff < 24 * 60 * 60 * 1000) return `${Math.floor(diff / (60 * 60 * 1000))}小时前`;
-	if (diff < 30 * 24 * 60 * 60 * 1000) return `${Math.floor(diff / (24 * 60 * 60 * 1000))}天前`;
-	if (diff < 12 * 30 * 24 * 60 * 60 * 1000) return `${Math.floor(diff / (30 * 24 * 60 * 60 * 1000))}个月前`;
-	return `${Math.floor(diff / (12 * 30 * 24 * 60 * 60 * 1000))}年前`;
+	// 显式类型检查和转换 - 避免隐式转换导致的错误
+	if (timestamp == null || timestamp === '') return '';
+
+	const timestampNum = typeof timestamp === 'number' ? timestamp :
+	                    typeof timestamp === 'string' ? parseInt(timestamp, 10) :
+	                    Number(timestamp);
+
+	if (isNaN(timestampNum) || timestampNum <= 0) return '';
+
+	const diff = Date.now() - timestampNum;
+	const { SECOND, MINUTE, HOUR, DAY, MONTH, YEAR } = UI.TIME_FORMAT;
+
+	if (diff < MINUTE) return '刚刚';
+	if (diff < HOUR) return `${Math.floor(diff / MINUTE)}分钟前`;
+	if (diff < DAY) return `${Math.floor(diff / HOUR)}小时前`;
+	if (diff < MONTH) return `${Math.floor(diff / DAY)}天前`;
+	if (diff < YEAR) return `${Math.floor(diff / MONTH)}个月前`;
+	return `${Math.floor(diff / YEAR)}年前`;
 }
 
 /**
@@ -46,7 +55,7 @@ export async function sortAlbumsByViewed() {
 	if (currentSort !== 'smart') return;
 	const viewedAlbumsData = await getAllViewed();
 	const viewedAlbumPaths = viewedAlbumsData.map(item => item.path);
-	const albumElements = Array.from(document.querySelectorAll('.album-link'));
+	const albumElements = Array.from(safeQuerySelectorAll('.album-link'));
 	albumElements.sort((a, b) => {
 		const viewedA = viewedAlbumPaths.includes(a.dataset.path);
 		const viewedB = viewedAlbumPaths.includes(b.dataset.path);
@@ -70,11 +79,14 @@ export function renderBreadcrumb(path) {
 		const questionMarkIndex = hash.indexOf('?');
 		sortParam = questionMarkIndex !== -1 ? hash.substring(questionMarkIndex) : '';
 	}
-	const breadcrumbNav = document.getElementById('breadcrumb-nav');
+	const breadcrumbNav = elements.breadcrumbNav;
 	if (!breadcrumbNav) return;
 	let breadcrumbLinks = breadcrumbNav.querySelector('#breadcrumb-links');
 	if (!breadcrumbLinks) {
-		breadcrumbNav.innerHTML = '';
+		// XSS安全修复：使用DOM操作替代innerHTML
+		while (breadcrumbNav.firstChild) {
+			breadcrumbNav.removeChild(breadcrumbNav.firstChild);
+		}
 		breadcrumbLinks = createElement('div', { classes: ['flex-1', 'min-w-0'], attributes: { id: 'breadcrumb-links' } });
 		const sortContainer = createElement('div', { classes: ['flex-shrink-0', 'ml-4'], attributes: { id: 'sort-container' } });
 		breadcrumbNav.append(breadcrumbLinks, sortContainer);
@@ -91,10 +103,13 @@ export function renderBreadcrumb(path) {
 			container.appendChild(createElement('a', { classes: ['text-purple-400', 'hover:text-purple-300'], attributes: { href: `#/${encodeURIComponent(currentPath)}${sortParam}` }, textContent: decodeURIComponent(part) }));
 		}
 	});
-	breadcrumbLinks.innerHTML = '';
+	// XSS安全修复：使用DOM操作替代innerHTML
+	while (breadcrumbLinks.firstChild) {
+		breadcrumbLinks.removeChild(breadcrumbLinks.firstChild);
+	}
 	breadcrumbLinks.appendChild(container);
 	setTimeout(() => {
-		const sortContainer = document.getElementById('sort-container');
+		const sortContainer = elements.sortContainer;
 		if (sortContainer) {
 			// 不清空容器，避免闪烁
 			let toggleWrap = sortContainer.querySelector('#layout-toggle-wrap');
@@ -114,22 +129,33 @@ export function renderBreadcrumb(path) {
 			if (!sortWrapper) {
 				sortWrapper = document.createElement('div');
 				sortWrapper.id = 'sort-wrapper';
-				sortWrapper.style.display = 'inline-block';
-				sortWrapper.style.position = 'relative';
+				safeSetStyle(sortWrapper, {
+					display: 'inline-block',
+					position: 'relative'
+				});
 				sortContainer.appendChild(sortWrapper);
 			}
 			// 没有媒体文件时才显示排序下拉
 			checkIfHasMediaFiles(path)
 				.then(hasMedia => {
 					if (!hasMedia) {
-						sortWrapper.innerHTML = '';
+						// XSS安全修复：使用DOM操作替代innerHTML
+						while (sortWrapper.firstChild) {
+							sortWrapper.removeChild(sortWrapper.firstChild);
+						}
 						renderSortDropdown();
 					} else {
-						sortWrapper.innerHTML = '';
+						// XSS安全修复：使用DOM操作替代innerHTML
+						while (sortWrapper.firstChild) {
+							sortWrapper.removeChild(sortWrapper.firstChild);
+						}
 					}
 				})
 				.catch(() => {
-					sortWrapper.innerHTML = '';
+					// XSS安全修复：使用DOM操作替代innerHTML
+					while (sortWrapper.firstChild) {
+						sortWrapper.removeChild(sortWrapper.firstChild);
+					}
 					renderSortDropdown();
 				});
 		}
@@ -165,37 +191,34 @@ export function displayAlbum(album) {
 export function displayStreamedMedia(type, mediaData, index, showTimestamp) {
 	const isVideo = type === 'video';
 	// 使用精确的宽高比，避免布局偏移
-	const aspectRatio = (mediaData.height && mediaData.width) 
-		? mediaData.width / mediaData.height 
-		: (isVideo ? 16/9 : 1); // 视频默认 16:9，图片默认 1:1
+	const aspectRatio = (mediaData.height && mediaData.width)
+		? mediaData.width / mediaData.height
+		: (isVideo ? UI.ASPECT_RATIO.VIDEO_DEFAULT : UI.ASPECT_RATIO.IMAGE_DEFAULT);
 	const timeText = showTimestamp ? formatTime(mediaData.mtime) : '';
 	
 	// 占位层 - 添加最小高度确保布局稳定性
 	const placeholderClasses = ['image-placeholder','absolute','inset-0'];
 	if (!mediaData.height || !mediaData.width) {
-		placeholderClasses.push('min-h-[200px]'); // 未知尺寸时的最小高度
+		placeholderClasses.push(`min-h-[${UI.LAYOUT.UNKNOWN_ASPECT_RATIO_MIN_HEIGHT}]`); // 未知尺寸时的最小高度
 	}
 	const kids = [createElement('div', { classes: placeholderClasses })];
 	// 加载覆盖层（含SVG进度环，慢网速下更可见）
 	const loadingOverlay = createElement('div', { classes: ['loading-overlay'] });
 	const progressHolder = createElement('div');
-	progressHolder.innerHTML = `
-		<svg class="progress-circle" viewBox="0 0 36 36" aria-hidden="true">
-			<circle class="progress-circle-track" cx="18" cy="18" r="16" stroke-width="4"></circle>
-			<circle class="progress-circle-bar" cx="18" cy="18" r="16" stroke-width="4"></circle>
-		</svg>
-	`;
+
+	// 使用统一SVG工具创建进度圈
+	const svg = createProgressCircle();
+	progressHolder.appendChild(svg);
 	loadingOverlay.append(progressHolder);
 	kids.push(loadingOverlay);
 	if (isVideo) {
 		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': mediaData.thumbnailUrl, alt: '视频缩略图' } }));
 		const overlay = createElement('div', { classes: ['video-thumbnail-overlay'] });
-		const playBtn = createElement('div', { classes: ['video-play-button'] });
-		playBtn.innerHTML = `
-			<svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true">
-				<path d="M24 18v28l24-14-24-14z"></path>
-			</svg>
-		`;
+	const playBtn = createElement('div', { classes: ['video-play-button'] });
+
+	// 使用统一SVG工具创建播放按钮
+	const playSvg = createPlayButton();
+	playBtn.appendChild(playSvg);
 		overlay.append(playBtn);
 		kids.push(overlay);
 	} else {
@@ -206,9 +229,9 @@ export function displayStreamedMedia(type, mediaData, index, showTimestamp) {
 	const containerStyle = `aspect-ratio: ${aspectRatio}; min-height: 150px;`;
 	const relativeDiv = createElement('div', { 
 		classes: ['relative','w-full','h-full'], 
-		attributes: { 
+		attributes: {
 			style: containerStyle,
-			'data-aspect-ratio': aspectRatio.toFixed(3),
+			'data-aspect-ratio': aspectRatio.toFixed(MATH.ASPECT_RATIO_PRECISION),
 			'data-original-width': mediaData.width || 0,
 			'data-original-height': mediaData.height || 0
 		}, 
@@ -232,12 +255,11 @@ export function displaySearchMedia(result, index) {
 	if (isVideo) {
 		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': result.thumbnailUrl, alt: `视频缩略图：${result.name}` } }));
 		const overlay = createElement('div', { classes: ['video-thumbnail-overlay'] });
-		const playBtn = createElement('div', { classes: ['video-play-button'] });
-		playBtn.innerHTML = `
-			<svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true">
-				<path d="M24 18v28l24-14-24-14z"></path>
-			</svg>
-		`;
+	const playBtn = createElement('div', { classes: ['video-play-button'] });
+
+	// 使用统一SVG工具创建播放按钮
+	const playSvg = createPlayButton();
+	playBtn.appendChild(playSvg);
 		overlay.append(playBtn);
 		kids.push(overlay);
 		// 信息覆盖层：与相册一致，置于封面内部
@@ -324,7 +346,7 @@ export function renderSearchGrid(results, currentPhotoCount) {
  * 渲染排序下拉菜单（安全 DOM）
  */
 export function renderSortDropdown() {
-	const sortContainer = document.getElementById('sort-container');
+	const sortContainer = elements.sortContainer;
 	if (!sortContainer) return;
 
 	// 确保稳定结构：布局切换器 + 分割线 + 排序 wrapper
@@ -336,9 +358,9 @@ export function renderSortDropdown() {
 	}
 
 	// 无论按钮是新建的还是已存在的，都要确保可见
-	if (toggleWrap && !toggleWrap.classList.contains('visible')) {
+	if (toggleWrap && !safeClassList(toggleWrap, 'contains', 'visible')) {
 		requestAnimationFrame(() => {
-			toggleWrap.classList.add('visible');
+			safeClassList(toggleWrap, 'add', 'visible');
 		});
 	}
 	if (!sortContainer.querySelector('.layout-divider')) {
@@ -350,12 +372,16 @@ export function renderSortDropdown() {
 	if (!sortWrapper) {
 		sortWrapper = document.createElement('div');
 		sortWrapper.id = 'sort-wrapper';
-		sortWrapper.style.position = 'relative';
-		sortWrapper.style.display = 'inline-block';
+		safeSetStyle(sortWrapper, {
+			position: 'relative',
+			display: 'inline-block'
+		});
 		sortContainer.appendChild(sortWrapper);
 	}
-	// 清空并在 wrapper 中渲染
-	sortWrapper.innerHTML = '';
+	// XSS安全修复：使用DOM操作替代innerHTML
+	while (sortWrapper.firstChild) {
+		sortWrapper.removeChild(sortWrapper.firstChild);
+	}
 	const sortOptions = { smart: '🧠 智能', name: '📝 名称', mtime: '📅 日期', viewed_desc: '👁️ 访问' };
 	const hash = window.location.hash;
 	const questionMarkIndex = hash.indexOf('?');
@@ -385,8 +411,10 @@ export function renderSortDropdown() {
 	const sortDisplay = createElement('span', { attributes: { id: 'sort-display' }, textContent: getSortDisplayText(currentSort) });
     const iconContainer = createElement('div', { classes: ['w-3','h-3','sm:w-4','sm:h-4','text-gray-400', 'transition-transform', 'duration-200'] });
     const isAscending = currentSort.endsWith('_asc');
-    const arrowPath = isAscending ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7';
-    iconContainer.innerHTML = `<svg class="w-full h-full" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${arrowPath}"></path></svg>`;
+
+    // 使用统一SVG工具创建排序箭头
+    const svg = createSortArrow(isAscending);
+    iconContainer.appendChild(svg);
 
 	const sortButton = createElement('button', { 
         classes: ['bg-gray-800','border','border-gray-700','text-white','text-sm','rounded-lg','focus:ring-purple-500','focus:border-purple-500','block','w-20','p-1.5','sm:p-2.5','transition-colors','hover:border-purple-500','cursor-pointer','flex','items-center','justify-between'], 
@@ -401,9 +429,9 @@ export function renderSortDropdown() {
 
 	sortButton.addEventListener('click', (e) => { 
         e.stopPropagation(); 
-        const isHidden = sortDropdown.classList.toggle('hidden');
+        const isHidden = safeClassList(sortDropdown, 'toggle', 'hidden');
         sortButton.setAttribute('aria-expanded', !isHidden);
-        iconContainer.classList.toggle('rotate-180', !isHidden);
+        safeClassList(iconContainer, 'toggle', 'rotate-180', !isHidden);
     });
 
 	dropdownOptions.forEach(option => {
@@ -416,13 +444,13 @@ export function renderSortDropdown() {
             const newHash = `${window.location.hash.split('?')[0]}?sort=${newSort}`;
 			
             sortDisplay.textContent = getSortDisplayText(newSort);
-//*            iconContainer.classList.toggle('rotate-180', newSort.endsWith('_asc'));*/
+			// iconContainer.classList.toggle('rotate-180', newSort.endsWith('_asc'));
 
-			dropdownOptions.forEach(opt => opt.classList.remove('bg-purple-600'));
-			option.classList.add('bg-purple-600');
-			sortDropdown.classList.add('hidden');
+			dropdownOptions.forEach(opt => safeClassList(opt, 'remove', 'bg-purple-600'));
+			safeClassList(option, 'add', 'bg-purple-600');
+			safeClassList(sortDropdown, 'add', 'hidden');
             sortButton.setAttribute('aria-expanded', 'false');
-            iconContainer.classList.remove('rotate-180');
+            safeClassList(iconContainer, 'remove', 'rotate-180');
 
 			if (window.location.hash !== newHash) window.location.hash = newHash;
 		});
@@ -430,40 +458,58 @@ export function renderSortDropdown() {
 
 	document.addEventListener('click', (e) => {
 		if (!sortButton.contains(e.target) && !sortDropdown.contains(e.target)) {
-            sortDropdown.classList.add('hidden');
+            safeClassList(sortDropdown, 'add', 'hidden');
             sortButton.setAttribute('aria-expanded', 'false');
-            iconContainer.classList.remove('rotate-180');
+            safeClassList(iconContainer, 'remove', 'rotate-180');
         }
 	});
 }
 
 /**
  * 仅渲染布局切换按钮到现有的 sort-container（搜索页用）
+ * 修复：避免重复创建按钮导致事件绑定失效
  */
 export function renderLayoutToggleOnly() {
-    const sortContainer = document.getElementById('sort-container');
+    const sortContainer = elements.sortContainer;
     if (!sortContainer) return;
+
+    // 检查是否已经存在布局切换按钮
+    const existingToggle = sortContainer.querySelector('#layout-toggle-wrap');
+    if (existingToggle) {
+        // 如果按钮已经存在，只需要确保它可见
+        ensureLayoutToggleVisible();
+        return;
+    }
 
     // 使用requestAnimationFrame确保时序正确
     requestAnimationFrame(() => {
-        sortContainer.innerHTML = '';
-        const toggle = createLayoutToggle();
-        sortContainer.appendChild(toggle.container);
-
-        // 分割线
-        const divider = document.createElement('div');
-        divider.className = 'layout-divider';
-        sortContainer.appendChild(divider);
-
-        // 强制重新计算布局
-        sortContainer.offsetHeight;
-
-        // 在下一帧触发动画，确保按钮可见
-        requestAnimationFrame(() => {
-            if (toggle.container && !toggle.container.classList.contains('visible')) {
-                toggle.container.classList.add('visible');
+        try {
+            const toggle = createLayoutToggle();
+            if (!toggle || !toggle.container) {
+                uiLogger.warn('创建布局切换按钮失败');
+                return;
             }
-        });
+
+            sortContainer.appendChild(toggle.container);
+
+            // 分割线
+            const divider = document.createElement('div');
+            divider.className = 'layout-divider';
+            sortContainer.appendChild(divider);
+
+            // 强制重新计算布局
+            sortContainer.offsetHeight;
+
+            // 在下一帧触发动画，确保按钮可见
+            requestAnimationFrame(() => {
+                if (toggle.container && !safeClassList(toggle.container, 'contains', 'visible')) {
+                    safeClassList(toggle.container, 'add', 'visible');
+                }
+            });
+
+        } catch (error) {
+            uiLogger.error('渲染布局切换按钮出错', error);
+        }
     });
 }
 
@@ -472,16 +518,17 @@ export function renderLayoutToggleOnly() {
  * 用于修复按钮显示状态的问题
  */
 export function ensureLayoutToggleVisible() {
-    const sortContainer = document.getElementById('sort-container');
+    const sortContainer = elements.sortContainer;
     if (!sortContainer) return;
 
     const toggleWrap = sortContainer.querySelector('#layout-toggle-wrap');
-    if (toggleWrap && !toggleWrap.classList.contains('visible')) {
+    if (toggleWrap && !safeClassList(toggleWrap, 'contains', 'visible')) {
         requestAnimationFrame(() => {
-            toggleWrap.classList.add('visible');
+            safeClassList(toggleWrap, 'add', 'visible');
         });
     }
 }
+
 
 /**
  * 根据内容长度动态调整滚动优化策略
@@ -490,7 +537,7 @@ export function ensureLayoutToggleVisible() {
 export function adjustScrollOptimization(path) {
     // 使用requestAnimationFrame确保在DOM更新后执行
     requestAnimationFrame(() => {
-        const contentGrid = document.getElementById('content-grid');
+        const contentGrid = elements.contentGrid;
         if (!contentGrid) return;
 
         const gridItems = contentGrid.querySelectorAll('.grid-item');
@@ -507,15 +554,16 @@ export function adjustScrollOptimization(path) {
         const body = document.body;
 
         // 移除之前的类
-        body.classList.remove('has-short-content', 'has-long-content');
+        safeClassList(body, 'remove', 'has-short-content');
+        safeClassList(body, 'remove', 'has-long-content');
 
         // 根据内容高度判断并添加相应类
         if (totalContentHeight > viewportHeight * 1.2) {
             // 内容高度超过视口高度的120%，认为是长内容
-            body.classList.add('has-long-content');
+            safeClassList(body, 'add', 'has-long-content');
         } else {
             // 内容较少，一页能显示完
-            body.classList.add('has-short-content');
+            safeClassList(body, 'add', 'has-short-content');
         }
     });
 }
@@ -533,31 +581,59 @@ export async function checkIfHasMediaFiles(path) {
 	}
 }
 
-// Moved from createLayoutToggle to be accessible by subscriber
+// 从 createLayoutToggle 移动出来，便于订阅者访问
+function createLayoutIcon(kind) {
+	// 根据布局类型返回对应的 SVG 图标
+	return kind === 'grid' ? createGridIcon() : createMasonryIcon();
+}
+
+// 保持向后兼容的函数名，返回布局图标的 HTML 字符串
 function iconHtml(kind) {
-	// 使用内嵌 SVG，匹配系统图标视觉（描边2px、圆角矩形/四格）
-	if (kind === 'grid') {
-		return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>`;
-	}
-	// masonry：两大两小交错
-	return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="10" height="8" rx="2"/><rect x="15" y="3" width="6" height="6" rx="2"/><rect x="3" y="13" width="6" height="8" rx="2"/><rect x="11" y="13" width="10" height="8" rx="2"/></svg>`;
+	return createLayoutIcon(kind).outerHTML;
 }
 
 /**
- * Initializes UI-related state subscriptions.
+ * 初始化与 UI 相关的状态订阅
  */
 export function initializeUI() {
     stateManager.subscribe(['layoutMode'], () => {
         applyLayoutMode();
-        
-        const btn = document.getElementById('layout-toggle-btn');
+
+        const btn = elements.layoutToggleBtn;
         if (btn) {
-            const isGrid = state.get('layoutMode') === 'grid';
-            btn.innerHTML = `${iconHtml(isGrid ? 'grid' : 'masonry')}<span class="layout-tooltip" style="margin-left:4px;">${isGrid ? '瀑布流布局' : '网格布局'}</span>`;
-            btn.setAttribute('aria-pressed', isGrid ? 'true' : 'false');
+            updateLayoutToggleButton(btn);
         }
     });
 }
+
+/**
+ * 更新布局切换按钮的显示状态
+ * @param {HTMLElement} btn - 按钮元素
+ */
+function updateLayoutToggleButton(btn) {
+    try {
+        const isGrid = state.layoutMode === 'grid';
+
+        // XSS安全修复：使用安全的DOM操作替代innerHTML
+        safeSetInnerHTML(btn, ''); // 清空现有内容
+
+        // 添加图标
+        const icon = createLayoutIcon(isGrid ? 'grid' : 'masonry');
+        btn.appendChild(icon);
+
+        // 添加工具提示文本
+        const tooltipSpan = document.createElement('span');
+        tooltipSpan.className = 'layout-tooltip';
+        safeSetStyle(tooltipSpan, 'marginLeft', '4px');
+        tooltipSpan.textContent = isGrid ? '瀑布流布局' : '网格布局';
+        btn.appendChild(tooltipSpan);
+
+        btn.setAttribute('aria-pressed', isGrid ? 'true' : 'false');
+    } catch (error) {
+        uiLogger.error('更新布局切换按钮出错', error);
+    }
+}
+
 
 /**
  * 创建布局切换按钮（网格/瀑布）
@@ -566,31 +642,42 @@ function createLayoutToggle() {
 	const wrap = createElement('div', { attributes: { id: 'layout-toggle-wrap' }, classes: ['relative','inline-flex','items-center','mr-2'] });
 	const btn = createElement('button', {
 		classes: ['bg-gray-800','border','border-gray-700','text-white','text-sm','rounded-lg','focus:ring-purple-500','focus:border-purple-500','px-2.5','py-1.5','transition-colors','hover:border-purple-500','cursor-pointer','flex','items-center','gap-1'],
-		attributes: { id: 'layout-toggle-btn', type: 'button', 'aria-pressed': state.get('layoutMode') === 'grid' ? 'true' : 'false' }
+		attributes: { id: 'layout-toggle-btn', type: 'button', 'aria-pressed': state.layoutMode === 'grid' ? 'true' : 'false' }
 	});
-	// 提供的图标 (数据URL)
-	// The long data URLs for icons were removed as they are no longer used.
-	// The new `iconHtml` function provides the SVG content directly.
-	function iconHtml(kind) {
-		// 使用内嵌 SVG，匹配系统图标视觉（描边2px、圆角矩形/四格）
-		if (kind === 'grid') {
-			return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>`;
-		}
-		// masonry：两大两小交错
-		return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="10" height="8" rx="2"/><rect x="15" y="3" width="6" height="6" rx="2"/><rect x="3" y="13" width="6" height="8" rx="2"/><rect x="11" y="13" width="10" height="8" rx="2"/></svg>`;
-	}
-	function updateLabel() { // This is now only for initial setup
-		const isGrid = state.get('layoutMode') === 'grid';
-		btn.innerHTML = `${iconHtml(isGrid ? 'grid' : 'masonry')}<span class="layout-tooltip" style="margin-left:4px;">${isGrid ? '瀑布流布局' : '网格布局'}</span>`;
+	function updateLabel() { // 仅用于初始设置
+		const isGrid = state.layoutMode === 'grid';
+
+		// XSS安全修复：使用安全的DOM操作替代innerHTML
+		safeSetInnerHTML(btn, ''); // 清空现有内容
+
+		// 添加图标
+		const icon = createLayoutIcon(isGrid ? 'grid' : 'masonry');
+		btn.appendChild(icon);
+
+		// 添加工具提示文本
+		const tooltipSpan = document.createElement('span');
+		tooltipSpan.className = 'layout-tooltip';
+		safeSetStyle(tooltipSpan, 'marginLeft', '4px');
+		tooltipSpan.textContent = isGrid ? '瀑布流布局' : '网格布局';
+		btn.appendChild(tooltipSpan);
+
 		btn.setAttribute('aria-pressed', isGrid ? 'true' : 'false');
 	}
-	btn.addEventListener('click', () => {
-		const current = state.get('layoutMode');
-		const next = current === 'grid' ? 'masonry' : 'grid';
-		state.update('layoutMode', next); // This now triggers the subscription
-		try { localStorage.setItem('sg_layout_mode', next); } catch {}
-	});
-	updateLabel(); // Set initial state
+	// 绑定点击事件，确保事件绑定可靠
+	const clickHandler = () => {
+		try {
+			const current = state.layoutMode;
+			const next = current === 'grid' ? 'masonry' : 'grid';
+			state.update('layoutMode', next);
+			try { localStorage.setItem('sg_layout_mode', next); } catch {}
+		} catch (error) {
+			uiLogger.error('切换布局模式出错', error);
+		}
+	};
+
+	btn.addEventListener('click', clickHandler);
+
+	updateLabel(); // 设置初始状态
 	wrap.appendChild(btn);
 	return { container: wrap, button: btn };
 }
@@ -601,25 +688,27 @@ function createLayoutToggle() {
 export function applyLayoutMode() {
 	const grid = elements.contentGrid;
 	if (!grid) return;
-	const mode = state.get('layoutMode');
+	const mode = state.layoutMode;
 	if (mode === 'grid') {
-		grid.classList.remove('masonry-mode');
-		grid.classList.add('grid-mode');
+		safeClassList(grid, 'remove', 'masonry-mode');
+		safeClassList(grid, 'add', 'grid-mode');
 		// 清除瀑布流产生的内联样式
 		Array.from(grid.children).forEach(item => {
-			item.style.position = '';
-			item.style.width = '';
-			item.style.left = '';
-			item.style.top = '';
+			safeSetStyle(item, {
+				position: '',
+				width: '',
+				left: '',
+				top: ''
+			});
 		});
-		grid.style.height = '';
+		safeSetStyle(grid, 'height', '');
 		// 清理瀑布流写入的高度，避免影响网格模式布局
-		Array.from(grid.children).forEach(item => { item.style.height = ''; });
+		Array.from(grid.children).forEach(item => { safeSetStyle(item, 'height', ''); });
 		// 统一网格卡片纵横比（可按需改为 1/1 或 16/9）
-		grid.style.setProperty('--grid-aspect', '1/1');
+		safeSetStyle(grid, '--grid-aspect', '1/1');
 	} else {
-		grid.classList.remove('grid-mode');
-		grid.classList.add('masonry-mode');
+		safeClassList(grid, 'remove', 'grid-mode');
+		safeClassList(grid, 'add', 'masonry-mode');
 		requestAnimationFrame(() => {
 			applyMasonryLayout();
 			triggerMasonryUpdate();

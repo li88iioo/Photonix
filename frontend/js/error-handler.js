@@ -6,13 +6,47 @@
  */
 
 import { showNotification } from './utils.js';
+import { createModuleLogger } from './logger.js';
+import { safeSetInnerHTML } from './dom-utils.js';
+import { escapeHtml } from './security.js';
 
-// 错误类型枚举
+const errorLogger = createModuleLogger('ErrorHandler');
+
+// 错误类型枚举 - 扩展分类以提升可观测性
 export const ErrorTypes = {
+    // 网络相关
     NETWORK: 'network',
+    NETWORK_TIMEOUT: 'network_timeout',
+    NETWORK_OFFLINE: 'network_offline',
+
+    // API相关
     API: 'api',
+    API_AUTHENTICATION: 'api_authentication',
+    API_PERMISSION: 'api_permission',
+    API_NOT_FOUND: 'api_not_found',
+    API_RATE_LIMIT: 'api_rate_limit',
+    API_SERVER_ERROR: 'api_server_error',
+    API_VALIDATION: 'api_validation',
+
+    // 应用相关
     VALIDATION: 'validation',
     PERMISSION: 'permission',
+    STORAGE: 'storage',
+    CONFIGURATION: 'configuration',
+
+    // 第三方服务
+    SERVICE_UNAVAILABLE: 'service_unavailable',
+    EXTERNAL_API: 'external_api',
+
+    // 用户操作
+    USER_CANCEL: 'user_cancel',
+    INVALID_INPUT: 'invalid_input',
+
+    // 系统相关
+    RUNTIME: 'runtime',
+    RESOURCE_LOAD: 'resource_load',
+    COMPATIBILITY: 'compatibility',
+
     UNKNOWN: 'unknown'
 };
 
@@ -70,7 +104,7 @@ class ErrorHandler {
                     return; // 忽略这些资源加载错误
                 }
                 
-                console.warn(`Resource failed to load: ${src}`);
+                errorLogger.warn('Resource failed to load', { src });
                 // 不再触发错误处理器，避免不必要的网络请求
             }
         }, true);
@@ -133,10 +167,8 @@ class ErrorHandler {
             this.errorLog.pop();
         }
 
-        // 控制台输出（开发模式）
-        if (process.env.NODE_ENV === 'development' || window.location.hostname === 'localhost') {
-            console.error('Error handled:', errorInfo);
-        }
+        // 生产环境安全修复：条件化console输出
+        errorLogger.error('Error handled', errorInfo);
 
         // 可选：发送到远程日志服务
         this.sendToRemoteLog(errorInfo);
@@ -163,8 +195,7 @@ class ErrorHandler {
                 showNotification(userMessage, 'warning', 5000);
                 break;
             case ErrorSeverity.LOW:
-                // 低级别错误仅记录，不打扰用户
-                console.warn('低级别错误:', message);
+                errorLogger.warn('低级别错误', { message });
                 break;
         }
 
@@ -227,7 +258,7 @@ class ErrorHandler {
         // 创建模态框显示关键错误
         const modal = document.createElement('div');
         modal.className = 'fixed inset-0 z-[9999] bg-black bg-opacity-75 flex items-center justify-center';
-        modal.innerHTML = `
+        safeSetInnerHTML(modal, `
             <div class="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md mx-4">
                 <div class="flex items-center mb-4">
                     <div class="flex-shrink-0">
@@ -240,7 +271,7 @@ class ErrorHandler {
                     </div>
                 </div>
                 <div class="mb-4">
-                    <p class="text-sm text-gray-700 dark:text-gray-300">${message}</p>
+                    <p class="text-sm text-gray-700 dark:text-gray-300">${message ? escapeHtml(message) : '发生未知错误'}</p>
                 </div>
                 <div class="flex justify-end space-x-3">
                     <button id="error-reload" class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700">
@@ -251,7 +282,7 @@ class ErrorHandler {
                     </button>
                 </div>
             </div>
-        `;
+        `);
 
         document.body.appendChild(modal);
 
@@ -310,18 +341,19 @@ class ErrorHandler {
      * 暂时禁用以避免不必要的网络请求
      */
     async sendToRemoteLog(errorInfo) {
-        // 暂时禁用远程日志功能
+        // 暂时禁用远程日志功能 - 避免不必要的网络请求
         return;
-        
+
+        // 未来启用时可以取消注释下面的代码：
+        /*
         // 只在生产环境发送
         if (process.env.NODE_ENV !== 'production') return;
 
         try {
             // 这里可以集成第三方错误监控服务
             // 如 Sentry, LogRocket, Bugsnag 等
-            
+
             // 示例：发送到自定义端点
-            /*
             await fetch('/api/errors', {
                 method: 'POST',
                 headers: {
@@ -329,11 +361,11 @@ class ErrorHandler {
                 },
                 body: JSON.stringify(errorInfo)
             });
-            */
         } catch (error) {
-            // 静默处理日志发送失败
-            console.warn('发送错误日志失败:', error);
+            // 生产环境安全修复：条件化console输出
+            errorLogger.warn('发送错误日志失败', error);
         }
+        */
     }
 
     /**
@@ -349,6 +381,176 @@ class ErrorHandler {
     clearErrorLog() {
         this.errorLog = [];
     }
+
+    /**
+     * 创建网络错误
+     * @param {string} message - 错误消息
+     * @param {object} context - 上下文信息
+     * @returns {Error} 标准化的网络错误
+     */
+    createNetworkError(message, context = {}) {
+        return this.createError(ErrorTypes.NETWORK, message, ErrorSeverity.MEDIUM, {
+            ...context,
+            category: 'network'
+        });
+    }
+
+    /**
+     * 创建网络超时错误
+     * @param {string} message - 错误消息
+     * @param {object} context - 上下文信息
+     * @returns {Error} 标准化的超时错误
+     */
+    createTimeoutError(message, context = {}) {
+        return this.createError(ErrorTypes.NETWORK_TIMEOUT, message, ErrorSeverity.MEDIUM, {
+            ...context,
+            category: 'network',
+            timeout: true
+        });
+    }
+
+    /**
+     * 创建API错误
+     * @param {string} message - 错误消息
+     * @param {number} status - HTTP状态码
+     * @param {object} context - 上下文信息
+     * @returns {Error} 标准化的API错误
+     */
+    createApiError(message, status = 0, context = {}) {
+        let type = ErrorTypes.API;
+        let severity = ErrorSeverity.MEDIUM;
+
+        // 根据状态码确定具体类型和严重程度
+        switch (status) {
+            case 401:
+                type = ErrorTypes.API_AUTHENTICATION;
+                severity = ErrorSeverity.HIGH;
+                break;
+            case 403:
+                type = ErrorTypes.API_PERMISSION;
+                severity = ErrorSeverity.HIGH;
+                break;
+            case 404:
+                type = ErrorTypes.API_NOT_FOUND;
+                severity = ErrorSeverity.MEDIUM;
+                break;
+            case 429:
+                type = ErrorTypes.API_RATE_LIMIT;
+                severity = ErrorSeverity.MEDIUM;
+                break;
+            case 500:
+            case 502:
+            case 503:
+                type = ErrorTypes.API_SERVER_ERROR;
+                severity = ErrorSeverity.HIGH;
+                break;
+            case 400:
+            case 422:
+                type = ErrorTypes.API_VALIDATION;
+                severity = ErrorSeverity.LOW;
+                break;
+        }
+
+        return this.createError(type, message, severity, {
+            ...context,
+            category: 'api',
+            status,
+            httpStatus: status
+        });
+    }
+
+    /**
+     * 创建验证错误
+     * @param {string} message - 错误消息
+     * @param {object} context - 上下文信息
+     * @returns {Error} 标准化的验证错误
+     */
+    createValidationError(message, context = {}) {
+        return this.createError(ErrorTypes.VALIDATION, message, ErrorSeverity.LOW, {
+            ...context,
+            category: 'validation'
+        });
+    }
+
+    /**
+     * 创建存储错误
+     * @param {string} message - 错误消息
+     * @param {object} context - 上下文信息
+     * @returns {Error} 标准化的存储错误
+     */
+    createStorageError(message, context = {}) {
+        return this.createError(ErrorTypes.STORAGE, message, ErrorSeverity.MEDIUM, {
+            ...context,
+            category: 'storage'
+        });
+    }
+
+    /**
+     * 创建配置错误
+     * @param {string} message - 错误消息
+     * @param {object} context - 上下文信息
+     * @returns {Error} 标准化的配置错误
+     */
+    createConfigurationError(message, context = {}) {
+        return this.createError(ErrorTypes.CONFIGURATION, message, ErrorSeverity.HIGH, {
+            ...context,
+            category: 'configuration'
+        });
+    }
+
+    /**
+     * 创建资源加载错误
+     * @param {string} message - 错误消息
+     * @param {object} context - 上下文信息
+     * @returns {Error} 标准化的资源加载错误
+     */
+    createResourceLoadError(message, context = {}) {
+        return this.createError(ErrorTypes.RESOURCE_LOAD, message, ErrorSeverity.MEDIUM, {
+            ...context,
+            category: 'resource'
+        });
+    }
+
+    /**
+     * 创建兼容性错误
+     * @param {string} message - 错误消息
+     * @param {object} context - 上下文信息
+     * @returns {Error} 标准化的兼容性错误
+     */
+    createCompatibilityError(message, context = {}) {
+        return this.createError(ErrorTypes.COMPATIBILITY, message, ErrorSeverity.MEDIUM, {
+            ...context,
+            category: 'compatibility',
+            userAgent: navigator.userAgent
+        });
+    }
+
+    /**
+     * 通用错误创建方法
+     * @param {string} type - 错误类型
+     * @param {string} message - 错误消息
+     * @param {string} severity - 错误严重程度
+     * @param {object} context - 上下文信息
+     * @returns {Error} 标准化的错误对象
+     */
+    createError(type, message, severity = ErrorSeverity.MEDIUM, context = {}) {
+        const error = new Error(message);
+        error.type = type;
+        error.severity = severity;
+        error.context = {
+            ...context,
+            timestamp: Date.now(),
+            url: window.location.href,
+            userAgent: navigator.userAgent
+        };
+
+        // 添加堆栈跟踪（如果支持）
+        if (Error.captureStackTrace) {
+            Error.captureStackTrace(error, this.createError);
+        }
+
+        return error;
+    }
 }
 
 // 创建全局错误处理器实例
@@ -359,5 +561,140 @@ export const handleError = (error, options) => errorHandler.handleError(error, o
 export const getErrorLog = () => errorHandler.getErrorLog();
 export const clearErrorLog = () => errorHandler.clearErrorLog();
 
+// 导出错误工厂方法
+export const createNetworkError = (message, context) => errorHandler.createNetworkError(message, context);
+export const createTimeoutError = (message, context) => errorHandler.createTimeoutError(message, context);
+export const createApiError = (message, status, context) => errorHandler.createApiError(message, status, context);
+export const createValidationError = (message, context) => errorHandler.createValidationError(message, context);
+export const createStorageError = (message, context) => errorHandler.createStorageError(message, context);
+export const createConfigurationError = (message, context) => errorHandler.createConfigurationError(message, context);
+export const createResourceLoadError = (message, context) => errorHandler.createResourceLoadError(message, context);
+export const createCompatibilityError = (message, context) => errorHandler.createCompatibilityError(message, context);
+
+// 导出通用错误创建方法
+export const createError = (type, message, severity, context) => errorHandler.createError(type, message, severity, context);
+
 // 导出错误处理器实例
 export default errorHandler;
+
+/**
+ * 异步操作错误边界包装器
+ * 为异步操作提供统一的错误处理和重试机制
+ */
+export class AsyncErrorBoundary {
+    constructor(options = {}) {
+        this.maxRetries = options.maxRetries || 3;
+        this.retryDelay = options.retryDelay || 1000;
+        this.backoffMultiplier = options.backoffMultiplier || 2;
+        this.onError = options.onError || null;
+        this.onRetry = options.onRetry || null;
+    }
+
+    /**
+     * 执行异步操作，自动处理错误和重试
+     * @param {Function} operation - 要执行的异步操作函数
+     * @param {object} context - 错误上下文信息
+     * @returns {Promise} 操作结果
+     */
+    async execute(operation, context = {}) {
+        let lastError;
+
+        for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+            try {
+                return await operation();
+            } catch (error) {
+                lastError = error;
+
+                // 调用错误回调
+                if (this.onError) {
+                    this.onError(error, { ...context, attempt: attempt + 1 });
+                }
+
+                // 如果不是最后一次尝试，进行重试
+                if (attempt < this.maxRetries) {
+                    const delay = this.retryDelay * Math.pow(this.backoffMultiplier, attempt);
+
+                    // 调用重试回调
+                    if (this.onRetry) {
+                        this.onRetry(error, { ...context, attempt: attempt + 1, delay });
+                    }
+
+                    await this.delay(delay);
+                }
+            }
+        }
+
+        // 所有重试都失败，抛出最后一次错误
+        throw lastError;
+    }
+
+    /**
+     * 延迟执行
+     * @param {number} ms - 延迟毫秒数
+     */
+    delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+}
+
+/**
+ * 创建异步操作包装器
+ * @param {object} options - 配置选项
+ * @returns {AsyncErrorBoundary} 错误边界实例
+ */
+export function createAsyncBoundary(options = {}) {
+    return new AsyncErrorBoundary(options);
+}
+
+/**
+ * 统一的异步操作执行器
+ * @param {Function} operation - 异步操作函数
+ * @param {object} options - 执行选项
+ * @returns {Promise} 操作结果
+ */
+export async function executeAsync(operation, options = {}) {
+    const {
+        maxRetries = 3,
+        retryDelay = 1000,
+        context = {},
+        errorType = ErrorTypes.UNKNOWN,
+        errorSeverity = ErrorSeverity.MEDIUM,
+        onError,
+        onRetry
+    } = options;
+
+    const boundary = createAsyncBoundary({
+        maxRetries,
+        retryDelay,
+        onError: onError || ((error, ctx) => {
+            errorLogger.warn(`异步操作失败 (尝试 ${ctx.attempt})`, {
+                error: error.message,
+                context: ctx
+            });
+        }),
+        onRetry: onRetry || ((error, ctx) => {
+            errorLogger.info(`重试异步操作 (${ctx.attempt}/${maxRetries + 1})`, {
+                delay: ctx.delay,
+                context: ctx
+            });
+        })
+    });
+
+    try {
+        return await boundary.execute(operation, context);
+    } catch (error) {
+        // 使用统一错误处理器处理最终失败
+        const handledError = errorHandler.handleError(error, {
+            type: errorType,
+            severity: errorSeverity,
+            context: {
+                ...context,
+                operation: operation.name || 'anonymous',
+                maxRetries,
+                finalAttempt: true
+            }
+        });
+
+        throw handledError;
+    }
+}

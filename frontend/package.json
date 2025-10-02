@@ -1,18 +1,28 @@
 {
-  "name": "frontend",
+  "name": "photonix-frontend",
   "version": "1.0.0",
-  "description": "",
+  "description": "Photonix - 一个属于你的私人写真集前端应用",
   "main": "js/main.js",
+  "homepage": ".",
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=7.0.0"
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "tailwindcss -i ./style.css -o ./output.css --minify && npm run build-js && npx workbox-cli injectManifest workbox-config.js",
-    "build-js": "npx esbuild js/main.js --bundle --minify --format=esm --splitting --outdir=js/dist"
+    "build": "npm run build:css && npm run build:js && npm run build:sw",
+    "build:css": "tailwindcss -i ./style.css -o ./output.css --minify",
+    "build:js": "npx esbuild js/main.js --bundle --minify --format=esm --splitting --outdir=js/dist",
+    "build:js:dev": "npx esbuild js/main.js --bundle --format=esm --splitting --outdir=js/dist --sourcemap --source-root=/js",
+    "build:sw": "npx workbox-cli injectManifest workbox-config.js",
+    "dev": "npm run build:css && npm run build:js:dev",
+    "watch:css": "tailwindcss -i ./style.css -o ./output.css --watch",
+    "clean": "rm -rf js/dist output.css sw.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "hls.js": "^1.6.11",
+    "hls.js": "^1.6.13",
     "nanostores": "^1.0.1"
   },
   "devDependencies": {

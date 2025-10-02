@@ -1,7 +1,9 @@
 // frontend/js/virtual-scroll.js
 
-import { elements } from './ui.js';
 import { calculateMasonryLayout } from './masonry.js';
+import { getVirtualScrollConfig } from './constants.js';
+import { performanceLogger } from './logger.js';
+import { safeSetInnerHTML, safeSetStyle, safeClassList } from './dom-utils.js';
 
 /**
  * 高性能虚拟滚动系统
@@ -11,26 +13,30 @@ import { calculateMasonryLayout } from './masonry.js';
 class VirtualScroller {
     constructor(container, options = {}) {
         this.container = container;
-        this.buffer = options.buffer || 10; // 缓冲区大小
-        this.maxPoolSize = options.maxPoolSize || 60; // 复用池最大容量
+
+        // 从配置获取默认值
+        const vsConfig = getVirtualScrollConfig('');
+
+        this.buffer = options.buffer || getVirtualScrollConfig('DEFAULT_BUFFER_SIZE'); // 缓冲区大小
+        this.maxPoolSize = options.maxPoolSize || getVirtualScrollConfig('DEFAULT_MAX_POOL_SIZE'); // 复用池最大容量
         this.items = [];
         this.visibleItems = new Map(); // 当前渲染的项目
         this.measurementCache = new Map(); // 测量缓存
         this.layoutCache = new Map(); // 布局缓存
         this.nodePool = []; // 节点复用池
-        
+
         // 滚动状态
         this.scrollTop = 0;
         this.viewportHeight = 0;
         this.startIndex = 0;
         this.endIndex = 0;
-        
+
         // 两阶段渲染相关
         this.measurementContainer = null;
         this.isMeasuring = false;
-        this.estimatedItemHeight = options.estimatedItemHeight || 300;
+        this.estimatedItemHeight = options.estimatedItemHeight || getVirtualScrollConfig('DEFAULT_ESTIMATED_HEIGHT');
         this.renderCallback = options.renderCallback || this.defaultRenderCallback;
-        
+
         // UI优化相关
         this.performanceMetrics = {
             renderTime: 0,
@@ -38,12 +44,15 @@ class VirtualScroller {
             lastFrameTime: 0
         };
         this.fpsSamples = [];
-        this.performanceWindow = 30;
+        this.performanceWindow = getVirtualScrollConfig('PERFORMANCE_WINDOW');
         this.lastBufferAdjust = 0;
+
+        // 可视化选项配置
+        const defaultVisualOptions = getVirtualScrollConfig('VISUAL_OPTIONS');
         this.visualOptions = {
-            showLoadingAnimation: options.showLoadingAnimation !== false,
-            smoothScrolling: options.smoothScrolling !== false,
-            enableAnimations: options.enableAnimations !== false
+            showLoadingAnimation: options.showLoadingAnimation !== undefined ? options.showLoadingAnimation : defaultVisualOptions.showLoadingAnimation,
+            smoothScrolling: options.smoothScrolling !== undefined ? options.smoothScrolling : defaultVisualOptions.smoothScrolling,
+            enableAnimations: options.enableAnimations !== undefined ? options.enableAnimations : defaultVisualOptions.enableAnimations
         };
         
         // UI元素
@@ -60,27 +69,33 @@ class VirtualScroller {
     init() {
         // 创建视口容器
         this.viewport = document.createElement('div');
-        this.viewport.style.position = 'relative';
-        this.viewport.style.width = '100%';
-        this.viewport.style.height = '100%';
-        this.viewport.style.overflow = 'hidden';
+        safeSetStyle(this.viewport, {
+            position: 'relative',
+            width: '100%',
+            height: '100%',
+            overflow: 'hidden'
+        });
         
         // 创建哨兵元素（撑开滚动条）
         this.sentinel = document.createElement('div');
-        this.sentinel.style.position = 'absolute';
-        this.sentinel.style.top = '0';
-        this.sentinel.style.left = '0';
-        this.sentinel.style.width = '100%';
-        this.sentinel.style.pointerEvents = 'none';
+        safeSetStyle(this.sentinel, {
+            position: 'absolute',
+            top: '0',
+            left: '0',
+            width: '100%',
+            pointerEvents: 'none'
+        });
         
         // 创建测量容器（屏幕外）
         this.measurementContainer = document.createElement('div');
-        this.measurementContainer.style.position = 'absolute';
-        this.measurementContainer.style.top = '-9999px';
-        this.measurementContainer.style.left = '-9999px';
-        this.measurementContainer.style.width = this.container.offsetWidth + 'px';
-        this.measurementContainer.style.visibility = 'hidden';
-        this.measurementContainer.style.pointerEvents = 'none';
+        safeSetStyle(this.measurementContainer, {
+            position: 'absolute',
+            top: '-9999px',
+            left: '-9999px',
+            width: this.container.offsetWidth + 'px',
+            visibility: 'hidden',
+            pointerEvents: 'none'
+        });
         
         // 组装DOM结构
         this.container.appendChild(this.viewport);
@@ -103,18 +118,18 @@ class VirtualScroller {
         if (this.visualOptions.showLoadingAnimation) {
             this.loadingIndicator = document.createElement('div');
             this.loadingIndicator.className = 'virtual-scroll-loading';
-            this.loadingIndicator.innerHTML = `
+            safeSetInnerHTML(this.loadingIndicator, `
                 <div class="loading-spinner"></div>
                 <div class="loading-text">正在加载...</div>
-            `;
-            this.loadingIndicator.style.display = 'none';
+            `);
+            safeSetStyle(this.loadingIndicator, 'display', 'none');
             this.container.appendChild(this.loadingIndicator);
         }
         
         // 创建进度条
         this.progressBar = document.createElement('div');
         this.progressBar.className = 'virtual-scroll-progress';
-        this.progressBar.innerHTML = '<div class="virtual-scroll-progress-bar"></div>';
+        safeSetInnerHTML(this.progressBar, '<div class="virtual-scroll-progress-bar"></div>');
         this.progressBarInner = this.progressBar.querySelector('.virtual-scroll-progress-bar');
         document.body.appendChild(this.progressBar);
     }
@@ -128,7 +143,7 @@ class VirtualScroller {
         this.boundHandleResize = this.handleResize.bind(this);
         
         // 将容器设为可滚动，避免监听 window 产生的多余重排
-        this.container.style.overflowY = 'auto';
+        safeSetStyle(this.container, 'overflowY', 'auto');
         this.container.addEventListener('scroll', this.boundHandleScroll, { passive: true });
         window.addEventListener('resize', this.boundHandleResize);
     }
@@ -138,7 +153,7 @@ class VirtualScroller {
      */
     setItems(items) {
         if (!Array.isArray(items)) {
-            console.warn('VirtualScroller: setItems 需要数组参数');
+            performanceLogger.warn('VirtualScroller: setItems 需要数组参数');
             return;
         }
         
@@ -176,7 +191,7 @@ class VirtualScroller {
             totalHeight = measuredHeight + (unmeasuredCount * this.estimatedItemHeight);
         }
         
-        this.sentinel.style.height = totalHeight + 'px';
+        safeSetStyle(this.sentinel, 'height', totalHeight + 'px');
     }
     
     /**
@@ -208,7 +223,7 @@ class VirtualScroller {
         let currentTop = 0;
         
         // 如果缓存不足，回退到线性搜索
-        if (this.measurementCache.size < this.items.length * 0.5) {
+        if (this.measurementCache.size < this.items.length * getVirtualScrollConfig('CACHE_THRESHOLD_RATIO')) {
             return this.linearSearchStartIndex(targetTop);
         }
         
@@ -234,7 +249,7 @@ class VirtualScroller {
         let right = this.items.length - 1;
         
         // 如果缓存不足，回退到线性搜索
-        if (this.measurementCache.size < this.items.length * 0.5) {
+        if (this.measurementCache.size < this.items.length * getVirtualScrollConfig('CACHE_THRESHOLD_RATIO')) {
             return this.linearSearchEndIndex(targetBottom, startIndex);
         }
         
@@ -320,17 +335,19 @@ class VirtualScroller {
         
         try {
             // 清空测量容器
-            this.measurementContainer.innerHTML = '';
+            safeSetInnerHTML(this.measurementContainer, '');
             
             // 创建测量用的DOM元素
             const measurementElements = [];
             for (const index of itemsToMeasure) {
                 const item = this.items[index];
                 const element = document.createElement('div');
-                element.style.position = 'absolute';
-                element.style.top = '0';
-                element.style.left = '0';
-                element.style.width = '100%';
+                safeSetStyle(element, {
+                    position: 'absolute',
+                    top: '0',
+                    left: '0',
+                    width: '100%'
+                });
                 
                 // 渲染项目内容
                 this.renderCallback(item, element, index);
@@ -365,16 +382,25 @@ class VirtualScroller {
                 setTimeout(() => {
                     let changed = false;
                     for (const { index, element } of measurementElements) {
-                        const rect = element.getBoundingClientRect();
                         const cached = this.measurementCache.get(index);
-                        if (cached && Math.abs((rect.height || 0) - (cached.height || 0)) >= 1) {
-                            this.measurementCache.set(index, {
-                                height: rect.height,
-                                top: cached.top,
-                                left: cached.left,
-                                width: rect.width
-                            });
-                            changed = true;
+                        if (cached) {
+                            // 避免重复调用getBoundingClientRect，使用更高效的属性访问
+                            const currentHeight = element.offsetHeight;
+                            const currentWidth = element.offsetWidth;
+
+                            // 检查高度或宽度是否有显著变化（>=1px）
+                            const heightChanged = Math.abs((currentHeight || 0) - (cached.height || 0)) >= 1;
+                            const widthChanged = Math.abs((currentWidth || 0) - (cached.width || 0)) >= 1;
+
+                            if (heightChanged || widthChanged) {
+                                this.measurementCache.set(index, {
+                                    height: currentHeight,
+                                    top: cached.top,    // 位置通常不变
+                                    left: cached.left,  // 位置通常不变
+                                    width: currentWidth
+                                });
+                                changed = true;
+                            }
                         }
                     }
                     if (changed) {
@@ -385,7 +411,7 @@ class VirtualScroller {
             }
             
         } catch (error) {
-            console.error('测量项目失败:', error);
+            performanceLogger.error('测量项目失败', error);
         } finally {
             this.isMeasuring = false;
         }
@@ -404,7 +430,7 @@ class VirtualScroller {
             
             return layoutInfo;
         } catch (error) {
-            console.error('瀑布流布局计算失败:', error);
+            performanceLogger.error('瀑布流布局计算失败', error);
             
             // 降级到简单的垂直布局
             const layoutInfo = {};
@@ -454,7 +480,7 @@ class VirtualScroller {
         for (const [index, element] of this.visibleItems) {
             if (index < startIndex || index >= endIndex) {
                 if (this.visualOptions.enableAnimations) {
-                    element.classList.add('virtual-scroll-item-exit');
+                    safeClassList(element, 'add', 'virtual-scroll-item-exit');
                     setTimeout(() => {
                         element.remove();
                         this.releaseNode(element);
@@ -479,29 +505,32 @@ class VirtualScroller {
                 // 应用缓存的布局信息
                 if (this.measurementCache.has(i)) {
                     const measurement = this.measurementCache.get(i);
-                    element.style.top = measurement.top + 'px';
-                    element.style.left = measurement.left + 'px';
-                    element.style.width = measurement.width + 'px';
-                    element.style.minHeight = '';
+                    safeSetStyle(element, {
+                        top: measurement.top + 'px',
+                        left: measurement.left + 'px',
+                        width: measurement.width + 'px',
+                        minHeight: ''
+                    });
                 } else {
                     // 使用预估位置
                     const estimatedTop = i * this.estimatedItemHeight;
-                    element.style.top = estimatedTop + 'px';
-                    // 为未测量项提供占位高度，减少布局抖动
-                    element.style.minHeight = this.estimatedItemHeight + 'px';
+                    safeSetStyle(element, {
+                        top: estimatedTop + 'px',
+                        minHeight: this.estimatedItemHeight + 'px'
+                    });
                 }
                 
                 // 渲染项目内容
-                element.innerHTML = '';
+                safeSetInnerHTML(element, '');
                 this.renderCallback(item, element, i);
                 batchFragment.appendChild(element);
                 this.visibleItems.set(i, element);
                 
                 // 添加进入动画
                 if (this.visualOptions.enableAnimations) {
-                    element.classList.add('virtual-scroll-item-enter');
+                    safeClassList(element, 'add', 'virtual-scroll-item-enter');
                     requestAnimationFrame(() => {
-                        element.classList.add('virtual-scroll-item-enter-active');
+                        safeClassList(element, 'add', 'virtual-scroll-item-enter-active');
                     });
                 }
             }
@@ -542,7 +571,7 @@ class VirtualScroller {
         try {
             element.removeAttribute('style');
             element.className = '';
-            element.innerHTML = '';
+            safeSetInnerHTML(element, '');
         } catch {}
         if (this.nodePool.length < this.maxPoolSize) {
             this.nodePool.push(element);
@@ -554,7 +583,7 @@ class VirtualScroller {
      */
     showLoadingAnimation() {
         if (this.loadingIndicator) {
-            this.loadingIndicator.style.display = 'flex';
+            safeSetStyle(this.loadingIndicator, 'display', 'flex');
         }
     }
     
@@ -563,7 +592,7 @@ class VirtualScroller {
      */
     hideLoadingAnimation() {
         if (this.loadingIndicator) {
-            this.loadingIndicator.style.display = 'none';
+            safeSetStyle(this.loadingIndicator, 'display', 'none');
         }
     }
     
@@ -574,7 +603,7 @@ class VirtualScroller {
         if (this.progressBar && this.items.length > 0) {
             const progress = (this.scrollTop / (this.sentinel.offsetHeight - this.viewportHeight)) * 100;
             if (this.progressBarInner) {
-                this.progressBarInner.style.width = `${Math.min(100, Math.max(0, progress))}%`;
+                safeSetStyle(this.progressBarInner, 'width', `${Math.min(100, Math.max(0, progress))}%`);
             }
         }
     }
@@ -646,8 +675,10 @@ class VirtualScroller {
      */
     defaultRenderCallback(item, element, index) {
         element.className = 'virtual-item';
-        element.style.height = '300px';
-        element.style.border = '1px solid #ccc';
+        safeSetStyle(element, {
+            height: '300px',
+            border: '1px solid #ccc'
+        });
         element.textContent = `Item ${index}`;
     }
     
@@ -665,7 +696,7 @@ class VirtualScroller {
         
         // 清理DOM
         if (this.viewport) {
-            this.viewport.innerHTML = '';
+            safeSetInnerHTML(this.viewport, '');
         }
         if (this.sentinel) {
             this.sentinel.remove();

@@ -1,6 +1,11 @@
 // frontend/js/masonry.js
 
-import { elements } from './ui.js';
+import { elements } from './dom-elements.js';
+import { getMasonryBreakpoints, getMasonryColumnsConfig, getMasonryConfig, VIRTUAL_SCROLL } from './constants.js';
+import { createModuleLogger } from './logger.js';
+import { safeSetInnerHTML, safeSetStyle, safeClassList } from './dom-utils.js';
+
+const masonryLogger = createModuleLogger('Masonry');
 
 // 动态导入懒加载模块以避免循环依赖
 let lazyloadModule = null;
@@ -27,19 +32,21 @@ let globalImageObserverRef = null;
  */
 export function getMasonryColumns() {
     const width = window.innerWidth;
+    const breakpoints = getMasonryBreakpoints();
+    const columns = getMasonryColumnsConfig();
 
     // 超大屏优先（从大到小判断）
-    if (width >= 3840) return 12; // 4K+：12列
-    if (width >= 2560) return 10; // 2.5K/2K 宽（2560/3440 等）：10列
-    if (width >= 1920) return 8;  // 1080p 及以上：8列
+    if (width >= breakpoints['4k']) return columns['4k'];     // 4K+：12列
+    if (width >= breakpoints['2_5k']) return columns['2_5k']; // 2.5K/2K 宽：10列
+    if (width >= breakpoints['1080p']) return columns['1080p']; // 1080p 及以上：8列
 
     // 常规断点
-    if (width >= 1536) return 6;  // 2xl：6列
-    if (width >= 1280) return 5;  // xl：5列
-    if (width >= 1024) return 4;  // lg：4列
-    if (width >= 768) return 3;   // md：3列
-    if (width >= 640) return 2;   // sm：2列
-    return 2;                     // 默认（移动端）：2列
+    if (width >= breakpoints['2xl']) return columns['2xl'];   // 2xl：6列
+    if (width >= breakpoints['xl']) return columns['xl'];     // xl：5列
+    if (width >= breakpoints['lg']) return columns['lg'];     // lg：4列
+    if (width >= breakpoints['md']) return columns['md'];     // md：3列
+    if (width >= breakpoints['sm']) return columns['sm'];     // sm：2列
+    return columns['default'];                                 // 默认（移动端）：2列
 }
 
 // 全局记录每列高度，用于瀑布流布局计算
@@ -54,7 +61,7 @@ let layoutScheduleTimer = null;
 let virtualScroller = null;
 
 // 虚拟滚动阈值（当项目数量超过此值时启用虚拟滚动）
-const VIRTUAL_SCROLL_THRESHOLD = 100;
+// 使用统一的VIRTUAL_SCROLL配置常量
 
 /**
  * 增量瀑布流布局
@@ -63,7 +70,7 @@ const VIRTUAL_SCROLL_THRESHOLD = 100;
  */
 export function applyMasonryLayoutIncremental(newItems) {
     const { contentGrid } = elements;
-    if (!contentGrid.classList.contains('masonry-mode')) return;
+    if (!safeClassList(contentGrid, 'contains', 'masonry-mode')) return;
     if (!newItems || newItems.length === 0) return;
     if (isLayingOut) return; // 正在布局时丢弃本次请求，避免重入
 
@@ -71,7 +78,7 @@ export function applyMasonryLayoutIncremental(newItems) {
     try {
 
         const numColumns = getMasonryColumns();
-        const columnGap = 16;  // 列间距
+        const columnGap = getMasonryConfig('COLUMN_GAP');  // 列间距
 
         // 如果是首次加载或列数变化，重置所有列高度并重新布局
         if (!masonryColumnHeights.length || contentGrid.children.length === newItems.length) {
@@ -83,14 +90,16 @@ export function applyMasonryLayoutIncremental(newItems) {
                 const minColumnIndex = masonryColumnHeights.indexOf(Math.min(...masonryColumnHeights));
                 
                 // 设置项目位置和尺寸
-                item.style.position = 'absolute';
-                item.style.width = `${itemWidth}px`;
-                item.style.left = `${minColumnIndex * (itemWidth + columnGap)}px`;
-                item.style.top = `${masonryColumnHeights[minColumnIndex]}px`;
-                
+                safeSetStyle(item, {
+                    position: 'absolute',
+                    width: `${itemWidth}px`,
+                    left: `${minColumnIndex * (itemWidth + columnGap)}px`,
+                    top: `${masonryColumnHeights[minColumnIndex]}px`
+                });
+
                 // 更新列高度
                 const actualItemHeight = getExpectedItemHeight(item, itemWidth);
-                item.style.height = `${actualItemHeight}px`;
+                safeSetStyle(item, 'height', `${actualItemHeight}px`);
                 masonryColumnHeights[minColumnIndex] += actualItemHeight + columnGap;
             });
         } else {
@@ -100,14 +109,16 @@ export function applyMasonryLayoutIncremental(newItems) {
                 const minColumnIndex = masonryColumnHeights.indexOf(Math.min(...masonryColumnHeights));
 
                 // 设置项目位置和尺寸
-                item.style.position = 'absolute';
-                item.style.width = `${itemWidth}px`;
-                item.style.left = `${minColumnIndex * (itemWidth + columnGap)}px`;
-                item.style.top = `${masonryColumnHeights[minColumnIndex]}px`;
+                safeSetStyle(item, {
+                    position: 'absolute',
+                    width: `${itemWidth}px`,
+                    left: `${minColumnIndex * (itemWidth + columnGap)}px`,
+                    top: `${masonryColumnHeights[minColumnIndex]}px`
+                });
 
                 // 更新列高度
                 const actualItemHeight = getExpectedItemHeight(item, itemWidth);
-                item.style.height = `${actualItemHeight}px`;
+                safeSetStyle(item, 'height', `${actualItemHeight}px`);
                 masonryColumnHeights[minColumnIndex] += actualItemHeight + columnGap;
             });
 
@@ -117,11 +128,11 @@ export function applyMasonryLayoutIncremental(newItems) {
                 if (!document.querySelector('.lazy-image[style*="opacity"]')) {
                     triggerVisibleImagesLazyLoad();
                 }
-            }, 200);
+            }, getMasonryConfig('LAZY_LOAD_DELAY'));
         }
         
         // 设置容器高度为最高列的高度
-        contentGrid.style.height = `${Math.max(...masonryColumnHeights)}px`;
+        safeSetStyle(contentGrid, 'height', `${Math.max(...masonryColumnHeights)}px`);
     } finally {
         isLayingOut = false;
     }
@@ -133,7 +144,7 @@ export function applyMasonryLayoutIncremental(newItems) {
  */
 export function applyMasonryLayout() {
     const { contentGrid } = elements;
-    if (!contentGrid.classList.contains('masonry-mode')) return;
+    if (!safeClassList(contentGrid, 'contains', 'masonry-mode')) return;
     if (isLayingOut) return; // 避免重入
 
     const items = Array.from(contentGrid.children);
@@ -142,7 +153,7 @@ export function applyMasonryLayout() {
     isLayingOut = true;
     try {
         const numColumns = getMasonryColumns();
-        const columnGap = 16;
+        const columnGap = getMasonryConfig('COLUMN_GAP');
 
         // 重置列高度并全量布局
         masonryColumnHeights = Array(numColumns).fill(0);
@@ -150,28 +161,30 @@ export function applyMasonryLayout() {
             const itemWidth = (contentGrid.offsetWidth - (numColumns - 1) * columnGap) / numColumns;
             const minColumnIndex = masonryColumnHeights.indexOf(Math.min(...masonryColumnHeights));
 
-            item.style.position = 'absolute';
-            item.style.width = `${itemWidth}px`;
-            item.style.left = `${minColumnIndex * (itemWidth + columnGap)}px`;
-            item.style.top = `${masonryColumnHeights[minColumnIndex]}px`;
+            safeSetStyle(item, {
+                position: 'absolute',
+                width: `${itemWidth}px`,
+                left: `${minColumnIndex * (itemWidth + columnGap)}px`,
+                top: `${masonryColumnHeights[minColumnIndex]}px`
+            });
 
             const actualItemHeight = getExpectedItemHeight(item, itemWidth);
-            item.style.height = `${actualItemHeight}px`;
+            safeSetStyle(item, 'height', `${actualItemHeight}px`);
             masonryColumnHeights[minColumnIndex] += actualItemHeight + columnGap;
         });
 
-        contentGrid.style.height = `${Math.max(...masonryColumnHeights)}px`;
+        safeSetStyle(contentGrid, 'height', `${Math.max(...masonryColumnHeights)}px`);
 
         // 重要修复：在虚拟滚动模式下触发可见图片的懒加载（优化调用）
         // 延迟执行，避免和IntersectionObserver冲突
         setTimeout(() => {
-            const hasVirtualScrollMode = contentGrid.classList.contains('virtual-scroll-mode');
+            const hasVirtualScrollMode = safeClassList(contentGrid, 'contains', 'virtual-scroll-mode');
             const hasUnloadedImages = contentGrid.querySelector('.lazy-image:not(.loaded)');
 
             if (hasVirtualScrollMode && hasUnloadedImages) {
                 triggerVisibleImagesLazyLoad();
             }
-        }, 300);
+        }, getMasonryConfig('LAYOUT_DELAY'));
     } finally {
         isLayingOut = false;
     }
@@ -206,7 +219,7 @@ function getElementHeight(element) {
         
         if (isNaN(height) || height === 0) {
             // 如果还是无法获取，使用预估高度
-            height = 300;
+            height = getMasonryConfig('DEFAULT_ITEM_HEIGHT');
         }
     }
     
@@ -236,7 +249,7 @@ export function calculateMasonryLayout(container, elements) {
     }
     
     const numColumns = getMasonryColumns();
-    const columnGap = 16;  // 列间距
+    const columnGap = getMasonryConfig('COLUMN_GAP');  // 列间距
     const containerWidth = container.offsetWidth;
     const itemWidth = (containerWidth - (numColumns - 1) * columnGap) / numColumns;
     
@@ -283,7 +296,7 @@ export function initializeVirtualScroll(items, renderCallback) {
     if (!contentGrid) return;
 
     // 如果项目数量超过阈值，启用虚拟滚动
-    if (items.length > VIRTUAL_SCROLL_THRESHOLD) {
+    if (items.length > VIRTUAL_SCROLL.THRESHOLD) {
         if (!virtualScroller) {
             // 动态导入VirtualScroller以避免循环依赖
             import('./virtual-scroll.js').then(({ VirtualScroller }) => {
@@ -294,7 +307,7 @@ export function initializeVirtualScroll(items, renderCallback) {
                     renderCallback: enhancedRenderCallback
                 });
                 virtualScroller.setItems(items);
-                contentGrid.classList.add('virtual-scroll-mode');
+                safeClassList(contentGrid, 'add', 'virtual-scroll-mode');
 
                 // 为虚拟滚动器添加滚动事件监听，触发可见图片的懒加载
                 setupVirtualScrollLazyLoading();
@@ -313,7 +326,7 @@ export function initializeVirtualScroll(items, renderCallback) {
             });
         } else {
             virtualScroller.setItems(items);
-            contentGrid.classList.add('virtual-scroll-mode');
+            safeClassList(contentGrid, 'add', 'virtual-scroll-mode');
 
             // 重新设置项目时也确保懒加载系统被初始化
             setTimeout(() => {
@@ -338,7 +351,7 @@ export function initializeVirtualScroll(items, renderCallback) {
             virtualScroller.destroy();
             virtualScroller = null;
         }
-        contentGrid.classList.remove('virtual-scroll-mode');
+        safeClassList(contentGrid, 'remove', 'virtual-scroll-mode');
         return false;
     }
 }
@@ -436,7 +449,7 @@ const virtualScrollLazyLoader = {
      * 智能预测加载区域
      */
     getPredictedLoadArea(viewportHeight, scrollTop) {
-        const baseBuffer = 200; // 基础缓冲区
+        const baseBuffer = getMasonryConfig('BASE_BUFFER_SIZE'); // 基础缓冲区
         const scrollVelocity = Math.abs(window.scrollVelocity || 0);
 
         // 根据滚动速度调整缓冲区大小
@@ -483,7 +496,7 @@ const virtualScrollLazyLoader = {
             if (!contentGrid) return;
 
             // 检查是否处于虚拟滚动模式
-            const isVirtualScroll = contentGrid.classList.contains('virtual-scroll-mode');
+            const isVirtualScroll = safeClassList(contentGrid, 'contains', 'virtual-scroll-mode');
             if (!isVirtualScroll) return;
 
             // 获取懒加载模块
@@ -514,11 +527,9 @@ const virtualScrollLazyLoader = {
 
                 // 只处理完全可见的图片
                 if (imgTop >= visibleTop && imgBottom <= visibleBottom) {
-                    if (img.dataset.src && !img.classList.contains('loaded') && img.dataset.thumbStatus !== 'processing') {
+                    if (img.dataset.src && !safeClassList(img, 'contains', 'loaded') && img.dataset.thumbStatus !== 'processing') {
                         // 减少虚拟滚动备用日志输出，只在开发模式下输出
-                        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                            console.debug('虚拟滚动备用：触发图片懒加载', img.dataset.src);
-                        }
+                        masonryLogger.debug('虚拟滚动备用：触发图片懒加载', { src: img.dataset.src });
                         requestLazyImage(img);
                         this.processedImages.add(imgId);
                         processedCount++;
@@ -535,7 +546,7 @@ const virtualScrollLazyLoader = {
             }
 
         } catch (error) {
-            console.error('虚拟滚动懒加载触发失败:', error);
+            masonryLogger.error('虚拟滚动懒加载触发失败', error);
         } finally {
             this.isProcessing = false;
         }
@@ -614,8 +625,10 @@ function renderMediaForVirtualScroll(type, mediaData, element, index) {
 
     // 设置基本的项目样式
     element.className = 'photo-item virtual-item group block bg-gray-800 rounded-lg overflow-hidden cursor-pointer';
-    element.style.position = 'absolute';
-    element.style.aspectRatio = aspectRatio;
+    safeSetStyle(element, {
+        position: 'absolute',
+        aspectRatio: aspectRatio
+    });
 
     // 设置尺寸数据
     element.setAttribute('data-width', mediaData.width || 0);
@@ -625,13 +638,13 @@ function renderMediaForVirtualScroll(type, mediaData, element, index) {
     // 创建相对定位的容器
     const relativeDiv = document.createElement('div');
     relativeDiv.className = 'relative w-full h-full';
-    relativeDiv.style.aspectRatio = aspectRatio;
+    safeSetStyle(relativeDiv, 'aspectRatio', aspectRatio);
 
     // 创建占位层
     const placeholder = document.createElement('div');
     placeholder.className = 'image-placeholder absolute inset-0';
     if (!mediaData.height || !mediaData.width) {
-        placeholder.classList.add('min-h-[200px]');
+        safeClassList(placeholder, 'add', 'min-h-[200px]');
     }
     relativeDiv.appendChild(placeholder);
 
@@ -639,12 +652,12 @@ function renderMediaForVirtualScroll(type, mediaData, element, index) {
     const loadingOverlay = document.createElement('div');
     loadingOverlay.className = 'loading-overlay';
     const progressHolder = document.createElement('div');
-    progressHolder.innerHTML = `
+    safeSetInnerHTML(progressHolder, `
         <svg class="progress-circle" viewBox="0 0 36 36" aria-hidden="true">
             <circle class="progress-circle-track" cx="18" cy="18" r="16" stroke-width="4"></circle>
             <circle class="progress-circle-bar" cx="18" cy="18" r="16" stroke-width="4"></circle>
         </svg>
-    `;
+    `);
     loadingOverlay.appendChild(progressHolder);
     relativeDiv.appendChild(loadingOverlay);
 
@@ -657,12 +670,12 @@ function renderMediaForVirtualScroll(type, mediaData, element, index) {
 
     // 设置图片事件监听器
     img.onload = () => {
-        img.classList.add('loaded');
+        safeClassList(img, 'add', 'loaded');
         triggerMasonryUpdate();
     };
 
     img.onerror = () => {
-        img.classList.add('error');
+        safeClassList(img, 'add', 'error');
         triggerMasonryUpdate();
     };
 
@@ -671,7 +684,7 @@ function renderMediaForVirtualScroll(type, mediaData, element, index) {
     // 重要：将新渲染的图片添加到 Intersection Observer 中
     // 延迟一点时间确保DOM已经渲染完成
     setTimeout(async () => {
-        if (!img._observed && img.classList.contains('lazy-image')) {
+        if (!img._observed && safeClassList(img, 'contains', 'lazy-image')) {
             try {
                 // 获取懒加载模块中的全局观察器
                 if (!globalImageObserverRef) {
@@ -681,7 +694,7 @@ function renderMediaForVirtualScroll(type, mediaData, element, index) {
                 globalImageObserverRef.observe(img);
                 img._observed = true;
             } catch (error) {
-                console.warn('添加图片到Intersection Observer失败:', error);
+                masonryLogger.warn('添加图片到Intersection Observer失败', error);
             }
         }
     }, 10);
@@ -692,11 +705,11 @@ function renderMediaForVirtualScroll(type, mediaData, element, index) {
         overlay.className = 'video-thumbnail-overlay';
         const playBtn = document.createElement('div');
         playBtn.className = 'video-play-button';
-        playBtn.innerHTML = `
+        safeSetInnerHTML(playBtn, `
             <svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true">
                 <path d="M24 18v28l24-14-24-14z"></path>
             </svg>
-        `;
+        `);
         overlay.appendChild(playBtn);
         relativeDiv.appendChild(overlay);
     }

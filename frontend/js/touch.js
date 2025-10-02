@@ -3,6 +3,8 @@
  * 一个帮助类，用于管理 DOM 元素上的滑动收拾。
  * 新增了对"滑动后不放"手势的支持，以实现快速连续翻页。
  */
+
+import { safeSetStyle } from './dom-utils.js';
 export class SwipeHandler {
     /**
      * @param {HTMLElement} element 要监听滑动的元素。
@@ -180,8 +182,10 @@ export function enablePinchZoom(img, container) {
 
     if (!img || !container) return () => {};
 
-    img.style.transformOrigin = 'center center';
-    img.style.touchAction = 'none';
+    safeSetStyle(img, {
+        transformOrigin: 'center center',
+        touchAction: 'none'
+    });
     try { container.dataset.isZoomed = '0'; } catch {}
 
     function getDistance(touches) {
@@ -189,7 +193,7 @@ export function enablePinchZoom(img, container) {
         return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
     }
     function applyTransform() {
-        img.style.transform = `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`;
+        safeSetStyle(img, 'transform', `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`);
     }
     function clampPan() {
         const rect = img.getBoundingClientRect();
@@ -261,8 +265,10 @@ export function enablePinchZoom(img, container) {
         container.removeEventListener('touchstart', onTouchStart, { passive: false });
         container.removeEventListener('touchmove', onTouchMove, { passive: false });
         container.removeEventListener('touchend', onTouchEnd, { passive: true });
-        img.style.transform = '';
-        img.style.touchAction = '';
+        safeSetStyle(img, {
+            transform: '',
+            touchAction: ''
+        });
         try { delete container.dataset.isZoomed; } catch {}
     };
 }

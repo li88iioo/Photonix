@@ -5,7 +5,12 @@
  * 提供渐进式加载、智能骨架屏和错误状态处理
  */
 
-import { elements, state } from './state.js';
+import { state } from './state.js';
+import { elements } from './dom-elements.js';
+import { createModuleLogger } from './logger.js';
+import { safeSetInnerHTML, safeGetElementById, safeClassList, safeSetStyle } from './dom-utils.js';
+
+const loadingLogger = createModuleLogger('LoadingStates');
 
 /**
  * 加载状态管理器
@@ -24,7 +29,7 @@ class LoadingStateManager {
      */
     showErrorState(title, message, actions = []) {
         // 清理虚拟滚动器
-        const scroller = state.get('virtualScroller');
+        const scroller = state.virtualScroller;
         if (scroller) {
             scroller.destroy();
             state.update('virtualScroller', null);
@@ -32,15 +37,15 @@ class LoadingStateManager {
 
         // 隐藏无限滚动加载器
         // 【优化】隐藏无限滚动加载器 - 避免重排抖动
-        const loaderContainer = document.getElementById('infinite-scroll-loader-container');
-        if (loaderContainer) loaderContainer.classList.remove('visible');
+        const loaderContainer = safeGetElementById('infinite-scroll-loader-container');
+        if (loaderContainer) safeClassList(loaderContainer, 'remove', 'visible');
 
         // 确保移除虚拟滚动与瀑布流模式，避免空状态被重排
         if (elements.contentGrid) {
-            elements.contentGrid.classList.remove('virtual-scroll-mode');
-            elements.contentGrid.classList.remove('masonry-mode');
-            elements.contentGrid.classList.remove('grid-mode');
-            elements.contentGrid.style.height = 'auto';
+            safeClassList(elements.contentGrid, 'remove', 'virtual-scroll-mode');
+            safeClassList(elements.contentGrid, 'remove', 'masonry-mode');
+            safeClassList(elements.contentGrid, 'remove', 'grid-mode');
+            safeSetStyle(elements.contentGrid, 'height', 'auto');
         }
 
         const errorHTML = `
@@ -55,14 +60,14 @@ class LoadingStateManager {
                     <div class="error-pulse"></div>
                 </div>
                 <div class="error-content">
-                    <h2 class="error-title">${title}</h2>
-                    ${message ? `<p class="error-message">${message}</p>` : ''}
+                    <h2 class="error-title">${title ? title.replace(/[<>]/g, '') : ''}</h2>
+                    ${message ? `<p class="error-message">${message.replace(/[<>]/g, '')}</p>` : ''}
                     ${actions.length > 0 ? `
                         <div class="error-actions">
                             ${actions.map((action, index) => `
-                                <button class="error-btn ${action.primary ? 'error-btn-primary' : 'error-btn-secondary'}" 
-                                        data-action="${action.onClick}" data-index="${index}">
-                                    ${action.text}
+                                <button class="error-btn ${action.primary ? 'error-btn-primary' : 'error-btn-secondary'}"
+                                        data-action="${action.onClick ? action.onClick.toString().replace(/[<>]/g, '') : ''}" data-index="${index}">
+                                    ${action.text ? action.text.replace(/[<>]/g, '') : ''}
                                 </button>
                             `).join('')}
                         </div>
@@ -72,7 +77,7 @@ class LoadingStateManager {
         `;
 
         if (elements.contentGrid) {
-            elements.contentGrid.innerHTML = errorHTML;
+            safeSetInnerHTML(elements.contentGrid, errorHTML);
 
             // 添加事件监听器
             const buttons = elements.contentGrid.querySelectorAll('.error-btn');
@@ -82,10 +87,7 @@ class LoadingStateManager {
                     e.stopPropagation();
                     // 使用 currentTarget 确保获取到按钮元素本身
                     const action = e.currentTarget.dataset.action;
-                    // 减少错误按钮日志输出，只在开发模式下输出
-                    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                        console.debug('Error button clicked:', action);
-                    }
+                    loadingLogger.debug('Error button clicked', { action });
                     if (action === 'reload') {
                         window.location.reload();
                     } else if (action === 'home') {
@@ -106,7 +108,7 @@ class LoadingStateManager {
      */
     showEmptyState(title, message, actions = []) {
         // 清理虚拟滚动器
-        const scroller = state.get('virtualScroller');
+        const scroller = state.virtualScroller;
         if (scroller) {
             scroller.destroy();
             state.update('virtualScroller', null);
@@ -114,15 +116,15 @@ class LoadingStateManager {
 
         // 隐藏无限滚动加载器
         // 【优化】隐藏无限滚动加载器 - 避免重排抖动
-        const loaderContainer = document.getElementById('infinite-scroll-loader-container');
-        if (loaderContainer) loaderContainer.classList.remove('visible');
+        const loaderContainer = safeGetElementById('infinite-scroll-loader-container');
+        if (loaderContainer) safeClassList(loaderContainer, 'remove', 'visible');
 
         // 确保移除虚拟滚动与瀑布流模式，避免空状态被重排
         if (elements.contentGrid) {
-            elements.contentGrid.classList.remove('virtual-scroll-mode');
-            elements.contentGrid.classList.remove('masonry-mode');
-            elements.contentGrid.classList.remove('grid-mode');
-            elements.contentGrid.style.height = 'auto';
+            safeClassList(elements.contentGrid, 'remove', 'virtual-scroll-mode');
+            safeClassList(elements.contentGrid, 'remove', 'masonry-mode');
+            safeClassList(elements.contentGrid, 'remove', 'grid-mode');
+            safeSetStyle(elements.contentGrid, 'height', 'auto');
         }
 
         const emptyHTML = `
@@ -141,14 +143,14 @@ class LoadingStateManager {
                     </div>
                 </div>
                 <div class="empty-content">
-                    <h2 class="empty-title">${title}</h2>
-                    ${message ? `<p class="empty-message">${message}</p>` : ''}
+                    <h2 class="empty-title">${title ? title.replace(/[<>]/g, '') : ''}</h2>
+                    ${message ? `<p class="empty-message">${message.replace(/[<>]/g, '')}</p>` : ''}
                     ${actions.length > 0 ? `
                         <div class="empty-actions">
                             ${actions.map((action, index) => `
-                                <button class="empty-btn ${action.primary ? 'empty-btn-primary' : 'empty-btn-secondary'}" 
-                                        data-action="${action.onClick}" data-index="${index}">
-                                    ${action.text}
+                                <button class="empty-btn ${action.primary ? 'empty-btn-primary' : 'empty-btn-secondary'}"
+                                        data-action="${action.onClick ? action.onClick.toString().replace(/[<>]/g, '') : ''}" data-index="${index}">
+                                    ${action.text ? action.text.replace(/[<>]/g, '') : ''}
                                 </button>
                             `).join('')}
                         </div>
@@ -158,7 +160,7 @@ class LoadingStateManager {
         `;
 
         if (elements.contentGrid) {
-            elements.contentGrid.innerHTML = emptyHTML;
+            safeSetInnerHTML(elements.contentGrid, emptyHTML);
 
             // 添加事件监听器
             const buttons = elements.contentGrid.querySelectorAll('.empty-btn');
@@ -168,10 +170,7 @@ class LoadingStateManager {
                     e.stopPropagation();
                     // 使用 currentTarget 确保获取到按钮元素本身
                     const action = e.currentTarget.dataset.action;
-                    // 减少空状态按钮日志输出，只在开发模式下输出
-                    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                        console.debug('Empty button clicked:', action);
-                    }
+                    loadingLogger.debug('Empty button clicked', { action });
                     if (action === 'reload') {
                         window.location.reload();
                     } else if (action === 'home') {
@@ -229,13 +228,14 @@ export function showSkeletonGrid(preferredCount) {
         const grid = elements.contentGrid;
         if (!grid) return;
         // 仅在 App 可见时渲染骨架，避免登录页布局被撑开
-        const appVisible = document.getElementById('app-container')?.classList.contains('opacity-100');
+        const appContainer = safeGetElementById('app-container');
+        const appVisible = appContainer && safeClassList(appContainer, 'contains', 'opacity-100');
         if (!appVisible) return;
         // 统一加载态样式：网格页面的 loading 全部使用瀑布流样式
-        grid.classList.remove('grid-mode');
-        grid.classList.add('masonry-mode');
+        safeClassList(grid, 'remove', 'grid-mode');
+        safeClassList(grid, 'add', 'masonry-mode');
         // 注入一次骨架动画样式（无需重新构建CSS）
-        if (!document.getElementById('skeleton-style')) {
+        if (!safeGetElementById('skeleton-style')) {
             const style = document.createElement('style');
             style.id = 'skeleton-style';
             style.textContent = `
@@ -299,7 +299,7 @@ export function showSkeletonGrid(preferredCount) {
         const gap = isSmall ? 12 : 16;        // 与样式中的 --gap 对齐
         const minCol = isSmall ? 160 : 210;   // 与样式中的 --min-col 对齐
 
-        // 估算列数：与 grid-template-columns: repeat(auto-fit, minmax(minCol,1fr)) 保持一致
+        // 估算列数：根据容器宽度动态计算网格列数
         const columns = Math.max(1, Math.floor((containerWidth + gap) / (minCol + gap)));
 
         // 推算单卡尺寸（保持与 aspect-ratio: 2/3 一致）
@@ -322,26 +322,38 @@ export function showSkeletonGrid(preferredCount) {
             align-content: start;
         `;
         
-        const skeletons = new Array(count).fill(0).map(() => (
-            '<div class="skeleton-card"></div>'
-        )).join('');
-        
-        grid.innerHTML = `<div id="skeleton-grid" class="skeleton-grid" style="${gridStyle}">${skeletons}</div>`;
+        // XSS安全修复：使用安全的DOM操作替代innerHTML
+        const skeletonGrid = document.createElement('div');
+        skeletonGrid.id = 'skeleton-grid';
+        skeletonGrid.className = 'skeleton-grid';
+        // 注意：cssText设置保持原样，因为这是批量设置CSS样式的特殊情况
+        // 可以通过safeSetStyle函数逐步替换，但保持原有逻辑更安全
+        skeletonGrid.style.cssText = gridStyle; // 使用安全的CSS样式设置
+
+        // 创建骨架卡片
+        for (let i = 0; i < count; i++) {
+            const skeletonCard = document.createElement('div');
+            skeletonCard.className = 'skeleton-card';
+            skeletonGrid.appendChild(skeletonCard);
+        }
+
+        safeSetInnerHTML(grid, ''); // 清空现有内容
+        grid.appendChild(skeletonGrid);
 
         // 计算骨架栅格的总高度，并覆盖 content-grid 的最小高度，避免出现额外留白可滚动区域
         const totalSkeletonHeight = rows * cardHeight + Math.max(0, rows - 1) * gap;
         const desiredMinHeight = Math.max(totalSkeletonHeight, availableHeight);
-        grid.style.minHeight = `${desiredMinHeight}px`;
+        safeSetStyle(grid, 'minHeight', `${desiredMinHeight}px`);
 
         // 再次校准：实际渲染高度可能与理论值有差异（字体/滚动条/过渡等导致）
         // 使用下一帧测量骨架容器高度，收敛 min-height，消除“可向下滚动的大段留白”
         requestAnimationFrame(() => {
-            const skeletonEl = document.getElementById('skeleton-grid');
+            const skeletonEl = safeGetElementById('skeleton-grid');
             if (!skeletonEl) return;
             const actualHeight = Math.ceil(skeletonEl.getBoundingClientRect().height);
             if (Number.isFinite(actualHeight) && actualHeight > 0) {
                 const clamped = Math.max(availableHeight, actualHeight);
-                grid.style.minHeight = `${clamped}px`;
+                safeSetStyle(grid, 'minHeight', `${clamped}px`);
             }
         });
     } catch {}
@@ -352,7 +364,7 @@ export function showSkeletonGrid(preferredCount) {
  */
 export function showEmptySearchResults(query) {
     // 【优化】隐藏无限滚动加载器 - 避免重排抖动
-    if (elements.infiniteScrollLoader) elements.infiniteScrollLoader.classList.remove('visible');
+    if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'remove', 'visible');
 
     loadingStateManager.showEmptyState(
         `没有找到与"${query}"相关的相册或图片。请尝试其他关键词。`,
@@ -372,7 +384,7 @@ export function showEmptySearchResults(query) {
  */
 export function showEmptyAlbum() {
     // 【优化】隐藏无限滚动加载器 - 避免重排抖动
-    if (elements.infiniteScrollLoader) elements.infiniteScrollLoader.classList.remove('visible');
+    if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'remove', 'visible');
 
     loadingStateManager.showEmptyState(
         '这个相册还没有任何图片或视频',
@@ -397,7 +409,7 @@ export function showEmptyAlbum() {
 */
 export function showIndexBuildingError() {
     // 【优化】隐藏无限滚动加载器 - 避免重排抖动
-    if (elements.infiniteScrollLoader) elements.infiniteScrollLoader.classList.remove('visible');
+    if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'remove', 'visible');
 
     loadingStateManager.showErrorState(
         '搜索功能暂时不可用，索引正在后台构建中，请稍后再试',

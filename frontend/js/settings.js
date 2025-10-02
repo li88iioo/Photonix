@@ -1,10 +1,101 @@
 // frontend/js/settings.js
 
-import { state, syncState, validateSyncState, cleanupSyncState } from './state.js';
-import { fetchSettings, saveSettings, waitForSettingsUpdate } from './api.js';
+import { state, syncState, validateSyncState } from './state.js';
+import { fetchSettings, saveSettings, waitForSettingsUpdate, fetchAvailableModels } from './api.js';
 import { showNotification } from './utils.js';
-import { getAuthToken } from './auth.js';
+import { getAuthToken, removeAuthToken } from './auth.js';
+import { UI, NETWORK, SETTINGS, isDevelopment } from './constants.js';
+import { createModuleLogger } from './logger.js';
+import { safeSetInnerHTML, safeSetStyle, safeClassList, safeGetElementById, safeQuerySelector, safeGetStyle } from './dom-utils.js';
+import {
+    generateStatusCardHTML,
+    generateDetailItemHTML} from './ui-components.js';
 
+const settingsLogger = createModuleLogger('Settings');
+
+let modelFetchTimer = null;
+let modelFetchAbortController = null;
+let lastModelFetchSignature = null;
+
+
+/**
+ * 智能API地址补全
+ * 根据用户输入自动补全API路径
+ */
+function setupApiUrlAutoComplete() {
+    const aiUrlInput = card.querySelector('#ai-url');
+    if (!aiUrlInput) return;
+
+    // 编辑时重置模型缓存，避免使用旧签名
+    aiUrlInput.addEventListener('input', () => {
+        lastModelFetchSignature = null;
+        if (modelFetchTimer) {
+            clearTimeout(modelFetchTimer);
+            modelFetchTimer = null;
+        }
+    });
+
+    // 仅在失去焦点时触发补全，避免重复追加
+    aiUrlInput.addEventListener('blur', (event) => {
+        autoCompleteApiUrl(event.target);
+        attemptModelFetch('blur');
+    });
+}
+
+/**
+ * 执行API地址自动补全
+ * @param {HTMLInputElement} inputElement - 输入框元素
+ */
+function autoCompleteApiUrl(inputElement) {
+    const value = inputElement.value.trim();
+
+    // 如果为空，不进行补全
+    if (!value) {
+        return;
+    }
+
+    // 以#结尾：强制使用输入地址，不补全
+    if (value.endsWith('#')) {
+        inputElement.value = value.slice(0, -1);
+        return;
+    }
+
+    // 幂等保护：若已包含聊天资源路径则不再追加
+    const alreadyHasChat = /\/chat\/completions\/?$/i.test(value) || /\/v\d+\/chat\/completions\/?$/i.test(value);
+    if (alreadyHasChat) {
+        return;
+    }
+
+    // Gemini 地址不做补全（由后端处理版本）
+    if (isGeminiApiUrl(value)) {
+        return;
+    }
+
+    // 规范化去除末尾多余斜杠（用于拼接判断）
+    const sanitized = value.replace(/\/+$/, '');
+    const endsWithSlash = value.endsWith('/');
+    const versionIncluded = /\/v\d+(?:[a-z]*)\/?$/i.test(sanitized);
+
+    // 规则：
+    // - 无尾斜杠基地址 → /v1/chat/completions
+    // - 有尾斜杠基地址 → /chat/completions
+    // - 末尾已带版本段（如 /v1）→ /chat/completions
+    if (versionIncluded) {
+        inputElement.value = `${sanitized}/chat/completions`;
+        return;
+    }
+
+    if (endsWithSlash) {
+        inputElement.value = `${sanitized}/chat/completions`;
+        return;
+    }
+
+    inputElement.value = `${sanitized}/v1/chat/completions`;
+}
+
+function isGeminiApiUrl(value = '') {
+    return /generativelanguage\.googleapis\.com/i.test(value);
+}
 
 /**
  * 获取状态表数据
@@ -26,7 +117,7 @@ async function fetchStatusTables() {
         const data = await response.json();
         return data.data;
     } catch (error) {
-        console.error('获取状态表数据失败:', error);
+        settingsLogger.error('获取状态表数据失败', error);
         throw error;
     }
 }
@@ -36,6 +127,8 @@ async function fetchStatusTables() {
  */
 async function triggerSync(type, options = {}) {
     try {
+        // 前端不再进行权限检查，交给后端处理
+
         // 使用状态管理类设置静默模式
         syncState.setSilentMode(options.silent);
         const isSilentMode = syncState.isSilent;
@@ -49,7 +142,7 @@ async function triggerSync(type, options = {}) {
             showProgressUpdate(type, true);
         }
 
-        // 开始实时监控（静默模式也需要监控进度）
+        // 恢复实时监控，使用优化的低频率模式
         startRealtimeMonitoring(type);
 
         const token = getAuthToken();
@@ -84,9 +177,7 @@ async function triggerSync(type, options = {}) {
 
         return data;
     } catch (error) {
-        console.error(`触发${type}补全失败:`, error);
-        // 静默模式下仍然显示错误通知，确保用户知道失败了
-        showNotification(`补全失败: ${error.message}`, 'error');
+        // 静默处理错误，不输出日志
         throw error;
     } finally {
         // 非静默模式隐藏加载状态
@@ -134,13 +225,12 @@ async function triggerCleanup(type) {
 
         return data;
     } catch (error) {
-        console.error(`触发${type}同步失败:`, error);
-        showNotification(`同步失败: ${error.message}`, 'error');
+        // 静默处理错误，不输出日志
         throw error;
     } finally {
         // 隐藏加载状态
         showPodLoading(type, false);
-        setTimeout(() => showProgressUpdate(type, false), 2000); // 延迟2秒隐藏进度更新指示器
+        setTimeout(() => showProgressUpdate(type, false), UI.PROGRESS_UPDATE_DELAY); // 延迟隐藏进度更新指示器
     }
 }
 
@@ -149,12 +239,12 @@ async function triggerCleanup(type) {
  */
 async function triggerThumbnailBatchSync(options = {}) {
     try {
+        // 前端不再进行权限检查，交给后端处理
+
         // 静默模式下不输出启动日志
         // 注释掉批量补全日志以减少控制台噪音
         // if (!options.silent) {
-        //     console.debug('[批量补全] 启动缩略图批量补全，启用循环模式');
         // }
-        // console.debug('[批量补全] 接收到的参数:', options);
 
         // 验证状态设置
         validateSyncState();
@@ -165,12 +255,11 @@ async function triggerThumbnailBatchSync(options = {}) {
         headers['Content-Type'] = 'application/json';
 
         const requestBody = {
-            limit: 1000,
+            limit: NETWORK.MAX_RETRY_ATTEMPTS * 1000,
             loop: options.loop || false,
             silent: options.silent || false
         };
         
-        // console.debug('[批量补全] 发送的请求体:', requestBody);
 
         const response = await fetch('/api/thumbnail/batch', {
             method: 'POST',
@@ -198,8 +287,7 @@ async function triggerThumbnailBatchSync(options = {}) {
 
         return data;
     } catch (error) {
-        console.error('触发缩略图批量补全失败:', error);
-        showNotification(`批量补全失败: ${error.message}`, 'error');
+        // 静默处理错误，不输出日志
         throw error;
     }
 }
@@ -236,13 +324,12 @@ async function resyncThumbnails() {
 
         return data;
     } catch (error) {
-        console.error('缩略图状态重同步失败:', error);
-        showNotification(`重同步失败: ${error.message}`, 'error');
+        // 静默处理错误，不输出日志
         throw error;
     } finally {
         // 隐藏加载状态
         showPodLoading('thumbnail', false);
-        setTimeout(() => showProgressUpdate('thumbnail', false), 2000);
+        setTimeout(() => showProgressUpdate('thumbnail', false), UI.PROGRESS_UPDATE_DELAY);
     }
 }
 
@@ -250,9 +337,9 @@ async function resyncThumbnails() {
  * 显示/隐藏信息环加载状态
  */
 function showPodLoading(type, show) {
-    const loadingElement = document.getElementById(`${type}-loading`);
+    const loadingElement = safeGetElementById(`${type}-loading`);
     if (loadingElement) {
-        loadingElement.classList.toggle('active', show);
+        safeClassList(loadingElement, 'toggle', 'active', show);
     }
 }
 
@@ -260,9 +347,9 @@ function showPodLoading(type, show) {
  * 显示/隐藏进度更新指示器
  */
 function showProgressUpdate(type, show) {
-    const updateElement = document.getElementById(`${type}-progress-update`);
+    const updateElement = safeGetElementById(`${type}-progress-update`);
     if (updateElement) {
-        updateElement.classList.toggle('active', show);
+        safeClassList(updateElement, 'toggle', 'active', show);
     }
 }
 
@@ -273,21 +360,21 @@ function updateStatusRealtime(type, data) {
     const prefix = type;
 
     // 更新百分比
-    const percentElement = document.getElementById(`${prefix}-percent`);
+    const percentElement = safeGetElementById(`${prefix}-percent`);
     if (percentElement && data.percent !== undefined) {
         percentElement.textContent = `${data.percent}%`;
 
         // 更新进度环
-        const progressCircle = document.querySelector(`[data-type="${type}"] .status-chart-progress-front`);
+        const progressCircle = safeQuerySelector(`[data-type="${type}"] .status-chart-progress-front`);
         if (progressCircle) {
             const progressOffset = 329 - (329 * data.percent / 100);
-            progressCircle.style.strokeDashoffset = progressOffset;
+            safeSetStyle(progressCircle, 'strokeDashoffset', progressOffset);
         }
     }
 
     // 更新状态信息
     if (data.status) {
-        const statusElement = document.getElementById(`${prefix}-status`);
+        const statusElement = safeGetElementById(`${prefix}-status`);
         if (statusElement) {
             const statusClass = getStatusClass(data.status);
             statusElement.className = `status-detail-value ${statusClass}`;
@@ -299,7 +386,7 @@ function updateStatusRealtime(type, data) {
     const fields = ['processed', 'fts', 'total', 'files', 'unprocessed', 'sourceTotal'];
     fields.forEach(field => {
         if (data[field] !== undefined) {
-            const element = document.getElementById(`${prefix}-${field}`);
+            const element = safeGetElementById(`${prefix}-${field}`);
             if (element) {
                 element.textContent = data[field];
 
@@ -316,7 +403,7 @@ function updateStatusRealtime(type, data) {
     // 更新缩略图状态统计
     if (data.stats && Array.isArray(data.stats)) {
         data.stats.forEach(stat => {
-            const element = document.getElementById(`${prefix}-${stat.status}`);
+            const element = safeGetElementById(`${prefix}-${stat.status}`);
             if (element) {
                 const statusClass = getStatusClass(stat.status);
                 element.className = `status-detail-value ${statusClass}`;
@@ -327,14 +414,14 @@ function updateStatusRealtime(type, data) {
 
     // 更新时间戳
     if (data.lastUpdated) {
-        const timeElement = document.getElementById(`${prefix}-last-updated`);
+        const timeElement = safeGetElementById(`${prefix}-last-updated`);
         if (timeElement) {
             timeElement.textContent = new Date(data.lastUpdated).toLocaleString();
         }
     }
 
     if (data.lastSync) {
-        const syncElement = document.getElementById(`${prefix}-last-sync`);
+        const syncElement = safeGetElementById(`${prefix}-last-sync`);
         if (syncElement) {
             syncElement.textContent = new Date(data.lastSync).toLocaleString();
         }
@@ -349,7 +436,6 @@ function startRealtimeMonitoring(type) {
     syncState.startMonitoring(type);
 
     // 验证监控开始状态
-    // console.debug('[监控开始] 实时监控已启动，类型:', type);
     validateSyncState();
     
     // 设置定期更新
@@ -384,7 +470,17 @@ function startRealtimeMonitoring(type) {
                     let percent = 0;
                     if (type === 'index') {
                         const totalItems = statusData.itemsStats?.reduce((sum, stat) => sum + stat.count, 0) || 0;
-                        percent = totalItems > 0 ? Math.round((statusData.processedFiles / totalItems) * 100) : 0;
+                        if (totalItems > 0) {
+                            if (statusData.status === 'complete') {
+                                // 索引完成时，显示100%
+                                percent = 100;
+                            } else {
+                                // 其他状态使用原来的逻辑
+                                percent = Math.round((statusData.processedFiles / totalItems) * 100);
+                            }
+                        } else {
+                            percent = 0;
+                        }
                     } else if (type === 'thumbnail') {
                         // 使用源文件总数进行准确的进度计算
                         const sourceTotal = statusData.sourceTotal || statusData.total || 0;
@@ -414,14 +510,13 @@ function startRealtimeMonitoring(type) {
                 }
             }
         } catch (error) {
-            console.error('实时监控更新失败:', error);
+            // 静默处理监控错误，不输出日志
         }
-    }, 2000); // 每2秒更新一次
+    }, type === 'index' ? 2000 : 10000); // 索引使用2秒间隔，其他类型使用10秒
 
     // 30秒后停止监控
     const timeoutId = setTimeout(() => {
-        console.debug('[监控结束] 30秒监控时间到，停止监控');
-        // 使用状态管理类停止监控
+        // 静默停止监控，不输出日志
         syncState.stopMonitoring();
 
         // 验证监控停止状态
@@ -453,179 +548,244 @@ function getIconSVG(iconName) {
 /**
  * 渲染索引状态
  */
+/**
+ * 计算索引进度百分比
+ * @param {Object} statusData - 状态数据
+ * @param {number} totalItems - 总项目数
+ * @returns {number} 进度百分比
+ */
+function calculateIndexProgress(statusData, totalItems) {
+    if (totalItems === 0) return 0;
+
+    if (statusData.status === 'complete') {
+        return 100;
+    }
+
+    return Math.round((statusData.processedFiles / totalItems) * 100);
+}
+
+/**
+ * 生成索引状态详情网格HTML
+ * @param {Object} statusData - 状态数据
+ * @param {Object} computedData - 计算后的数据
+ * @returns {string} 详情网格HTML
+ */
+function generateIndexDetailsHTML(statusData, computedData) {
+    const { statusClass, totalItems } = computedData;
+
+    return [
+        generateDetailItemHTML('状态', getStatusDisplayName(statusData.status), 'index-status', statusClass),
+        generateDetailItemHTML('已处理', statusData.status === 'complete' ? totalItems : (statusData.processedFiles || 0), 'index-processed', 'status-success'),
+        generateDetailItemHTML('FTS索引', statusData.ftsCount || 0, 'index-fts', 'status-success'),
+        generateDetailItemHTML('总文件', totalItems, 'index-total')
+    ].join('');
+}
+
+/**
+ * 渲染索引状态
+ * @param {Object} statusData - 状态数据
+ */
 function renderIndexStatus(statusData) {
-    const container = document.getElementById('index-status');
+    const container = safeGetElementById('index-status');
     if (!container) return;
 
+    // 计算基础数据
     const statusClass = getStatusClass(statusData.status);
     const totalItems = statusData.itemsStats?.reduce((sum, stat) => sum + stat.count, 0) || 0;
-    const processedPercent = totalItems > 0 ? Math.round((statusData.processedFiles / totalItems) * 100) : 0;
+    const processedPercent = calculateIndexProgress(statusData, totalItems);
 
-    let html = `
-        <div class="status-card-new">
-            <div class="status-pod-loading" id="index-loading">
-                <div class="spinner"></div>
-            </div>
-            <div class="card-header-new">
-                <h3 class="card-title-new">索引详细信息</h3>
-                <span class="status-badge-new ${statusClass}" id="index-percent">${processedPercent}%</span>
-            </div>
-            <div class="linear-progress">
-                <div class="linear-progress-bar" id="index-progress-bar" style="width: ${processedPercent}%;"></div>
-            </div>
-            <div class="details-grid-new">
-                <div class="detail-item-new">
-                    <span class="detail-label-new">状态</span>
-                    <span class="detail-value-new ${statusClass}" id="index-status">${getStatusDisplayName(statusData.status)}</span>
-                </div>
-                <div class="detail-item-new">
-                    <span class="detail-label-new">已处理</span>
-                    <span class="detail-value-new status-success" id="index-processed">${statusData.processedFiles || 0}</span>
-                </div>
-                <div class="detail-item-new">
-                    <span class="detail-label-new">FTS索引</span>
-                    <span class="detail-value-new status-success" id="index-fts">${statusData.ftsCount || 0}</span>
-                </div>
-                <div class="detail-item-new">
-                    <span class="detail-label-new">总文件</span>
-                    <span class="detail-value-new" id="index-total">${totalItems}</span>
-                </div>
-            </div>
-            <div class="card-footer-new">
-                <span class="timestamp-new" id="index-last-updated">最后更新: ${statusData.lastUpdated ? new Date(statusData.lastUpdated).toLocaleString() : '从未'}</span>
-            </div>
-        </div>
-    `;
+    // 生成详情网格
+    const computedData = { statusClass, totalItems };
+    const detailsHTML = generateIndexDetailsHTML(statusData, computedData);
 
-    container.innerHTML = html;
+    // 生成操作按钮
+    const actions = [{
+        action: 'sync',
+        type: 'index',
+        label: '重建索引',
+        icon: getIconSVG('vortexSync')
+    }];
+
+    // 使用通用UI组件生成完整HTML
+    const html = generateStatusCardHTML({
+        loadingId: 'index-loading',
+        title: '索引详细信息',
+        badgeId: 'index-percent',
+        percent: processedPercent,
+        statusClass,
+        progressId: 'index-progress-bar',
+        detailsHTML,
+        timestampId: 'index-last-updated',
+        timestampLabel: '最后更新',
+        timestamp: statusData.lastUpdated,
+        actions
+    });
+
+    safeSetInnerHTML(container, html);
 }
 
 /**
  * 渲染缩略图状态
  */
-function renderThumbnailStatus(statusData) {
-    const container = document.getElementById('thumbnail-status');
-    if (!container) return;
-
-    // 调试：输出接收到的数据（开发模式下）
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        console.debug('renderThumbnailStatus received:', statusData);
-    }
-
-    // 获取源媒体文件总数
-    const sourceTotal = statusData.sourceTotal || 0;
-
-    // 获取缩略图状态统计
-    const total = statusData.total || 0;
+/**
+ * 计算缩略图成功数量
+ * @param {Object} statusData - 状态数据
+ * @returns {number} 成功数量
+ */
+function calculateThumbnailSuccessCount(statusData) {
     const stats = statusData.stats || [];
-
-    // 计算成功生成的缩略图数量
     const successStates = ['exists', 'complete'];
-    let actualSuccessCount = 0;
 
     if (stats.length > 0) {
-        actualSuccessCount = stats.reduce((sum, stat) => {
+        return stats.reduce((sum, stat) => {
             return successStates.includes(stat.status) ? sum + stat.count : sum;
         }, 0);
-    } else if (statusData.fileSystemStats?.actualFiles) {
-        // 使用文件系统统计作为fallback
-        actualSuccessCount = statusData.fileSystemStats.actualFiles;
-        console.debug('使用文件系统统计作为fallback:', actualSuccessCount);
     }
 
-    // 计算完成百分比，确保不会出现除零错误
+    // 使用文件系统统计作为fallback
+    if (statusData.fileSystemStats?.actualFiles) {
+        settingsLogger.debug('使用文件系统统计作为fallback', {
+            actualFiles: statusData.fileSystemStats.actualFiles
+        });
+        return statusData.fileSystemStats.actualFiles;
+    }
+
+    return 0;
+}
+
+/**
+ * 生成状态指示器HTML
+ * @param {Object} statusData - 状态数据
+ * @returns {string} 状态指示器HTML
+ */
+function generateStatusIndicator(statusData) {
+    if (statusData.autoFixed) {
+        return '<span class="status-indicator status-success">已自动修复</span>';
+    }
+    if (statusData.usedFallback) {
+        return '<span class="status-indicator status-warning">使用文件系统数据</span>';
+    }
+    if (statusData.error) {
+        return '<span class="status-indicator status-error">数据获取失败</span>';
+    }
+    return '';
+}
+
+/**
+ * 生成缩略图详情网格HTML
+ * @param {Object} statusData - 状态数据
+ * @param {Object} computedData - 计算后的数据
+ * @returns {string} 详情网格HTML
+ */
+function generateThumbnailDetailsHTML(statusData, computedData) {
+    const { stats, sourceTotal, total, actualSuccessCount } = computedData;
+
+    const detailItems = [];
+
+    if (stats.length > 0) {
+        stats.forEach(stat => {
+            const statusClass = getStatusClass(stat.status);
+            const displayName = getStatusDisplayName(stat.status);
+            detailItems.push(generateDetailItemHTML(displayName, stat.count, `thumbnail-${stat.status}`, statusClass));
+        });
+    } else {
+        detailItems.push(generateDetailItemHTML('已生成', actualSuccessCount, 'thumbnail-exists', 'status-success'));
+    }
+
+    detailItems.push(generateDetailItemHTML('源文件总数', sourceTotal, 'thumbnail-source-total'));
+    detailItems.push(generateDetailItemHTML('数据库记录', total, 'thumbnail-total'));
+
+    if (statusData.fileSystemStats) {
+        detailItems.push(generateDetailItemHTML('实际文件', statusData.fileSystemStats.actualFiles));
+    }
+
+    return detailItems.join('');
+}
+
+
+/**
+ * 渲染缩略图状态
+ * @param {Object} statusData - 状态数据
+ */
+function renderThumbnailStatus(statusData) {
+    const container = safeGetElementById('thumbnail-status');
+    if (!container) return;
+
+    settingsLogger.debug('renderThumbnailStatus接收数据', statusData);
+
+    // 计算基础数据
+    const sourceTotal = statusData.sourceTotal || 0;
+    const total = statusData.total || 0;
+    const stats = statusData.stats || [];
+    const actualSuccessCount = calculateThumbnailSuccessCount(statusData);
     const completedPercent = sourceTotal > 0 ? Math.round((actualSuccessCount / sourceTotal) * 100) : 0;
 
-    // 状态指示器
-    let statusIndicator = '';
-    if (statusData.autoFixed) {
-        statusIndicator = '<span class="status-indicator status-success">已自动修复</span>';
-    } else if (statusData.usedFallback) {
-        statusIndicator = '<span class="status-indicator status-warning">使用文件系统数据</span>';
-    } else if (statusData.error) {
-        statusIndicator = '<span class="status-indicator status-error">数据获取失败</span>';
-    }
+    // 生成状态指示器
+    const statusIndicator = generateStatusIndicator(statusData);
 
-    // 计算缺失数量
+    // 计算状态样式
     const missingCount = stats.find(stat => stat.status === 'missing')?.count || 0;
     const statusClass = missingCount > 0 ? getStatusClass('pending') : getStatusClass('complete');
 
-    let html = `
-        <div class="status-card-new">
-            <div class="status-pod-loading" id="thumbnail-loading">
-                <div class="spinner"></div>
-            </div>
-            <div class="card-header-new">
-                <h3 class="card-title-new">缩略图详细信息 ${statusIndicator}</h3>
-                <span class="status-badge-new ${statusClass}" id="thumbnail-percent">${completedPercent}%</span>
-            </div>
-            <div class="linear-progress">
-                <div class="linear-progress-bar" id="thumbnail-progress-bar" style="width: ${completedPercent}%;"></div>
-            </div>
-            <div class="details-grid-new">
-                ${stats.length > 0 ? stats.map(stat => {
-                    const statusClass = getStatusClass(stat.status);
-                    const displayName = getStatusDisplayName(stat.status);
-                    return `
-                        <div class="detail-item-new">
-                            <span class="detail-label-new">${displayName}</span>
-                            <span class="detail-value-new ${statusClass}" id="thumbnail-${stat.status}">${stat.count}</span>
-                        </div>
-                    `;
-                }).join('') : `
-                    <div class="detail-item-new">
-                        <span class="detail-label-new">已生成</span>
-                        <span class="detail-value-new status-success" id="thumbnail-exists">${actualSuccessCount}</span>
-                    </div>
-                `}
-                <div class="detail-item-new">
-                    <span class="detail-label-new">源文件总数</span>
-                    <span class="detail-value-new" id="thumbnail-source-total">${sourceTotal}</span>
-                </div>
-                <div class="detail-item-new">
-                    <span class="detail-label-new">数据库记录</span>
-                    <span class="detail-value-new" id="thumbnail-total">${total}</span>
-                </div>
-                ${statusData.fileSystemStats ? `
-                    <div class="detail-item-new">
-                        <span class="detail-label-new">实际文件</span>
-                        <span class="detail-value-new">${statusData.fileSystemStats.actualFiles}</span>
-                    </div>
-                ` : ''}
-            </div>
-            <div class="card-footer-new">
-                <span class="timestamp-new" id="thumbnail-last-sync">最后同步: ${statusData.lastSync ? new Date(statusData.lastSync).toLocaleString() : '从未'}</span>
-                <div class="actions-new">
-                    <button class="sync-btn" data-action="sync" data-type="thumbnail">
-                        ${getIconSVG('magicSync')}
-                        <span>补全</span>
-                    </button>
-                    <button class="sync-btn" data-action="resync" data-type="thumbnails">
-                        ${getIconSVG('vortexSync')}
-                        <span>重同步</span>
-                    </button>
-                    <button class="sync-btn" data-action="cleanup" data-type="thumbnail">
-                        ${getIconSVG('sweepClean')}
-                        <span>清理</span>
-                    </button>
-                </div>
-            </div>
-        </div>
-    `;
+    // 生成详情网格
+    const computedData = { stats, sourceTotal, total, actualSuccessCount };
+    const detailsHTML = generateThumbnailDetailsHTML(statusData, computedData);
 
-    container.innerHTML = html;
+    // 生成操作按钮
+    const actions = [
+        {
+            action: 'sync',
+            type: 'thumbnail',
+            label: '补全',
+            icon: getIconSVG('magicSync')
+        },
+        {
+            action: 'resync',
+            type: 'thumbnails',
+            label: '重同步',
+            icon: getIconSVG('vortexSync')
+        },
+        {
+            action: 'cleanup',
+            type: 'thumbnail',
+            label: '清理',
+            icon: getIconSVG('sweepClean')
+        }
+    ];
+
+    // 使用通用UI组件生成完整HTML
+    const html = generateStatusCardHTML({
+        loadingId: 'thumbnail-loading',
+        title: `缩略图详细信息 ${statusIndicator}`,
+        badgeId: 'thumbnail-percent',
+        percent: completedPercent,
+        statusClass,
+        progressId: 'thumbnail-progress-bar',
+        detailsHTML,
+        timestampId: 'thumbnail-last-sync',
+        timestampLabel: '最后同步',
+        timestamp: statusData.lastSync,
+        actions
+    });
+
+    safeSetInnerHTML(container, html);
 }
 
 /**
  * 渲染HLS状态
  */
 function renderHlsStatus(statusData) {
-    const container = document.getElementById('hls-status');
+    const container = safeGetElementById('hls-status');
     if (!container) return;
 
     const totalVideos = statusData.totalVideos || 0;
     const processedVideos = statusData.processedVideos || 0;
-    const completedPercent = totalVideos > 0 ? Math.round((processedVideos / totalVideos) * 100) : 100;
+    const failedVideos = statusData.failedVideos || 0;
+    const skippedVideos = statusData.skippedVideos || 0;
+    const totalProcessed = statusData.totalProcessed || 0;
+    
+    // 使用总处理数计算进度，而不是只计算成功的
+    const completedPercent = totalVideos > 0 ? Math.round((totalProcessed / totalVideos) * 100) : 100;
     const statusClass = getStatusClass(statusData.status || 'complete');
 
     let html = `
@@ -646,12 +806,24 @@ function renderHlsStatus(statusData) {
                     <span class="detail-value-new ${statusClass}">${getStatusDisplayName(statusData.status || 'complete')}</span>
                 </div>
                 <div class="detail-item-new">
-                    <span class="detail-label-new">已处理</span>
+                    <span class="detail-label-new">成功</span>
                     <span class="detail-value-new status-success">${processedVideos}</span>
+                </div>
+                <div class="detail-item-new">
+                    <span class="detail-label-new">失败</span>
+                    <span class="detail-value-new status-error">${failedVideos}</span>
+                </div>
+                <div class="detail-item-new">
+                    <span class="detail-label-new">跳过</span>
+                    <span class="detail-value-new status-warning">${skippedVideos}</span>
                 </div>
                 <div class="detail-item-new">
                     <span class="detail-label-new">总视频</span>
                     <span class="detail-value-new">${totalVideos}</span>
+                </div>
+                <div class="detail-item-new">
+                    <span class="detail-label-new">已处理</span>
+                    <span class="detail-value-new status-info">${totalProcessed}</span>
                 </div>
             </div>
             <div class="card-footer-new">
@@ -670,7 +842,7 @@ function renderHlsStatus(statusData) {
         </div>
     `;
 
-    container.innerHTML = html;
+    safeSetInnerHTML(container, html);
 }
 
 /**
@@ -727,9 +899,9 @@ async function loadStatusTables() {
 
     // 只在容器为空时显示加载状态，避免重复显示
     containers.forEach(id => {
-        const container = document.getElementById(id);
+        const container = safeGetElementById(id);
         if (container && !container.innerHTML.trim()) {
-            container.innerHTML = '<div class="status-loading"><div class="spinner"></div></div>';
+            safeSetInnerHTML(container, '<div class="status-loading"><div class="spinner"></div></div>');
         }
     });
 
@@ -739,9 +911,7 @@ async function loadStatusTables() {
         renderIndexStatus(statusData.index);
 
         // 调试缩略图数据（开发模式下）
-        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-            console.debug('Frontend thumbnail data:', statusData.thumbnail);
-        }
+        settingsLogger.debug('Frontend缩略图数据', statusData.thumbnail);
 
         renderThumbnailStatus(statusData.thumbnail);
         renderHlsStatus(statusData.hls);
@@ -750,9 +920,15 @@ async function loadStatusTables() {
     } catch (error) {
         // 显示错误状态
         containers.forEach(id => {
-            const container = document.getElementById(id);
+            const container = safeGetElementById(id);
             if (container) {
-                container.innerHTML = `<div class="status-loading" style="color: var(--red-400);">加载失败: ${error.message}</div>`;
+                // XSS安全修复：使用安全的DOM操作替代innerHTML
+                safeSetInnerHTML(container, ''); // 清空内容
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'status-loading';
+                safeSetStyle(errorDiv, 'color', 'var(--red-400)');
+                errorDiv.textContent = `加载失败: ${error.message}`;
+                container.appendChild(errorDiv);
             }
         });
         showNotification('加载状态表失败', 'error');
@@ -764,7 +940,7 @@ async function loadStatusTables() {
  */
 function setupSyncButtonListeners() {
     // 使用事件委托处理所有状态操作按钮
-    const settingsCard = document.getElementById('settings-card');
+    const settingsCard = safeGetElementById('settings-card');
     if (!settingsCard) return;
 
     // 移除之前的监听器（如果存在）
@@ -772,6 +948,241 @@ function setupSyncButtonListeners() {
     
     // 添加事件委托监听器
     settingsCard.addEventListener('click', handleStatusButtonClick);
+}
+
+/**
+ * 更新按钮可用性状态
+ * 基于密码设置状态控制按钮是否可点击
+ */
+function updateButtonStates() {
+    try {
+        // 节流控制，避免频繁调用
+        const now = Date.now();
+        if (now - lastButtonStateUpdate < SETTINGS.BUTTON_STATE_UPDATE_THROTTLE) {
+            return; // 跳过本次调用
+        }
+        lastButtonStateUpdate = now;
+
+        // 检查DOM元素是否已加载
+        if (!card) {
+            settingsLogger.debug('设置卡片未加载，跳过按钮状态更新');
+            return;
+        }
+
+        // 检查用户是否已设置访问密码
+        // 注意：这里检查的是用户实际设置的密码状态，而非系统配置开关
+        const hasPassword = initialSettings?.hasPassword || false;
+
+        // 获取ADMIN_SECRET配置状态
+        const isAdminSecretConfigured = initialSettings?.isAdminSecretConfigured || false;
+
+        // 获取所有需要控制的按钮（在设置模态框内部查找）
+        const syncButtons = card.querySelectorAll('.sync-btn[data-action]');
+
+        if (syncButtons.length === 0) {
+            settingsLogger.debug('未找到需要控制的按钮，跳过更新');
+            return;
+        }
+
+        syncButtons.forEach(button => {
+            try {
+                const action = button.dataset.action;
+                const type = button.dataset.type;
+
+                // 确保必要的属性存在
+                if (!action || !type) {
+                    settingsLogger.debug('按钮缺少必要属性', { action, type, buttonClass: button.className });
+                    return;
+                }
+
+                // 确保按钮仍然在DOM中
+                if (!button.isConnected) {
+                    settingsLogger.debug('按钮已从DOM中移除，跳过更新');
+                    return;
+                }
+
+                if (!hasPassword) {
+                    // 未设置访问密码时，显示通知并保持按钮可用（让用户点击时能看到提示）
+                    button.disabled = false;
+                    safeSetStyle(button, {
+                        opacity: '1',
+                        cursor: 'pointer',
+                        filter: 'none'
+                    });
+                    button.setAttribute('aria-disabled', 'false');
+                    safeClassList(button, 'remove', 'disabled');
+                } else {
+                    // 已设置密码时，正常启用按钮
+                    button.disabled = false;
+                    safeSetStyle(button, {
+                        opacity: '1',
+                        cursor: 'pointer',
+                        filter: 'none'
+                    });
+                    button.setAttribute('aria-disabled', 'false');
+                    safeClassList(button, 'remove', 'disabled');
+                }
+
+                // 设置正常的提示信息
+                let tooltipText = '';
+                if (type === 'index' && action === 'sync') {
+                    tooltipText = '重建搜索索引';
+                } else if (type === 'thumbnail') {
+                    if (action === 'sync') tooltipText = '补全缺失的缩略图';
+                    else if (action === 'resync') tooltipText = '重新同步缩略图状态';
+                    else if (action === 'cleanup') tooltipText = '清理失效的缩略图文件';
+                } else if (type === 'hls') {
+                    if (action === 'sync') tooltipText = '补全缺失的HLS流';
+                    else if (action === 'cleanup') tooltipText = '清理HLS缓存';
+                }
+                button.title = tooltipText;
+            } catch (buttonError) {
+                settingsLogger.warn('更新单个按钮状态失败', {
+                    error: buttonError?.message,
+                    buttonClass: button?.className,
+                    action: button?.dataset?.action,
+                    type: button?.dataset?.type
+                });
+            }
+        });
+
+        settingsLogger.debug('按钮状态已更新', {
+            hasPassword,
+            isAdminSecretConfigured,
+            totalButtons: syncButtons.length
+        });
+
+        // 添加用户友好的状态提示（只在必要时显示）
+        if (!hasPassword && syncButtons.length > 0) {
+            // 静默处理，不输出过多日志
+        }
+
+        // 只在开发环境下输出详细状态信息
+        if (isDevelopment()) {
+            const buttonStates = Array.from(syncButtons).map(button => ({
+                action: button.dataset.action,
+                type: button.dataset.type,
+                disabled: button.disabled,
+                pointerEvents: safeGetStyle(button, 'pointerEvents'),
+                cursor: safeGetStyle(button, 'cursor')
+            }));
+            settingsLogger.debug('按钮状态详情', buttonStates);
+        }
+
+        // 强制刷新按钮状态，确保样式生效
+        syncButtons.forEach(button => {
+            const currentDisplay = safeGetStyle(button, 'display');
+            safeSetStyle(button, 'display', currentDisplay);
+            button.offsetHeight; // 触发重绘
+        });
+
+    } catch (error) {
+        settingsLogger.error('更新按钮状态失败', {
+            error: error?.message || '未知错误',
+            stack: error?.stack,
+            cardExists: !!card,
+            initialSettings: !!initialSettings,
+            hasPassword: initialSettings?.hasPassword,
+            buttonCount: card ? card.querySelectorAll('.sync-btn[data-action]').length : 0
+        });
+    }
+}
+
+/**
+ * 处理重建索引的ADMIN_SECRET验证
+ */
+async function handleIndexRebuildWithAuth(type, action) {
+    try {
+        // 先发送普通请求检查权限，不带管理员密钥
+        const result = await triggerSync(type, { loop: false, silent: false });
+        // 如果成功，说明有权限且不需要管理员密钥
+        return;
+    } catch (error) {
+        // 直接检查用户是否设置了访问密码
+        const currentSettings = initialSettings || {};
+        const hasPassword = currentSettings.hasPassword || false;
+
+        if (!hasPassword) {
+            // 如果用户没有设置访问密码，绝对不弹出验证框
+            showNotification('需要先设置访问密码才能重建索引', 'warning');
+            return;
+        }
+
+        // 🎯 如果用户设置了访问密码，才可能弹出管理员密钥验证框
+        if (error.message.includes('需要管理员密钥验证') || error.message.includes('必须提供管理员密钥')) {
+            // 检查是否需要ADMIN_SECRET验证
+            const isAdminSecretConfigured = initialSettings?.isAdminSecretConfigured || false;
+
+            if (!isAdminSecretConfigured) {
+                // 如果没有配置ADMIN_SECRET，显示权限不足提示
+                showNotification('权限不足，无法重建索引', 'error');
+                return;
+            }
+
+            // 弹出管理员密钥验证框
+            return new Promise((resolve, reject) => {
+                showPasswordPrompt({
+                    useAdminSecret: true, // 使用管理员密钥模式
+            onConfirm: async (adminSecret) => {
+                try {
+                    // 使用管理员密钥调用重建API
+                    const result = await triggerSyncWithAuth(type, action, adminSecret);
+                    // 验证成功后显示成功通知
+                    showNotification('重建索引已启动', 'success');
+                    resolve(true); // 确保外层Promise被resolve
+                    return true; // 表示验证成功
+                } catch (error) {
+                    if (error.message.includes('401') || error.message.includes('管理员密钥错误')) {
+                        throw new Error('管理员密钥错误，请重新输入');
+                    } else {
+                        throw new Error('重建索引失败: ' + error.message);
+                    }
+                }
+            },
+                    onCancel: () => {
+                        showNotification('操作已取消', 'info');
+                        resolve(false);
+                    }
+                });
+            });
+        }
+
+        // 如果是其他权限错误（比如没有访问密码）
+        if (error.message.includes('权限不足') || error.message.includes('403')) {
+            showNotification('权限不足，无法重建索引', 'error');
+            return;
+        }
+
+        // 其他错误直接显示
+        showNotification('重建索引失败: ' + error.message, 'error');
+    }
+}
+
+/**
+ * 使用管理员密钥触发同步操作
+ */
+async function triggerSyncWithAuth(type, action, adminSecret) {
+    // 修正API路径，使用后端实际定义的路由
+    const response = await fetch(`/api/settings/sync/${type}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${getAuthToken()}`,
+            'X-Admin-Secret': adminSecret
+        },
+        body: JSON.stringify({
+            action: action,
+            adminSecret: adminSecret
+        })
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `操作失败: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data;
 }
 
 /**
@@ -784,6 +1195,15 @@ async function handleStatusButtonClick(event) {
     event.preventDefault();
     event.stopPropagation();
 
+    const currentSettings = initialSettings || {};
+    const hasPassword = currentSettings.hasPassword || false;
+
+    if (!hasPassword) {
+        // 未设置访问密码时，显示通知并阻止操作
+        showNotification('需要先设置访问密码才能使用这些功能', 'warning');
+        return;
+    }
+
     const action = button.dataset.action;
     const type = button.dataset.type;
 
@@ -792,27 +1212,42 @@ async function handleStatusButtonClick(event) {
     try {
         switch (action) {
             case 'sync':
+                // 检查是否是重建索引操作，需要特殊处理
+                const isIndexRebuild = type === 'index';
+
+                if (isIndexRebuild) {
+                    // 重建索引需要管理员密钥验证
+                    await handleIndexRebuildWithAuth(type, action);
+                    return;
+                }
+
                 // 缩略图补全默认启用循环模式，自动补全所有缺失文件
                 const isThumbnailSync = type === 'thumbnail';
-                // console.debug('[状态按钮] 点击事件:', { action, type, isThumbnailSync });
 
                 // 显示视觉反馈
                 showPodLoading(type, true);
                 showProgressUpdate(type, true);
 
-                // 禁用按钮防止重复点击
+                // 保存原始禁用状态，避免覆盖权限禁用
+                const originalDisabled = button.disabled;
                 const originalHTML = button.innerHTML;
-                button.disabled = true;
-                button.innerHTML = '<span>处理中...</span>';
+
+                // 只在按钮原本未禁用时才设置为处理中状态
+                if (!originalDisabled) {
+                    button.disabled = true;
+                    safeSetInnerHTML(button, '<span>处理中...</span>');
+                }
 
                 try {
                     if (isThumbnailSync) {
                         // 缩略图补全使用专门的批量补全API，支持循环模式
-                        // console.debug('[状态按钮] 调用缩略图批量补全，参数: {loop: true, silent: false}');
                         await triggerThumbnailBatchSync({
                             loop: true,
                             silent: false  // 改为非静默模式，显示通知
                         });
+                    } else if (type === 'index') {
+                        // 重建索引特殊处理
+                        await handleIndexRebuildWithAuth(type, action);
                     } else {
                         await triggerSync(type, {
                             loop: false,
@@ -824,54 +1259,86 @@ async function handleStatusButtonClick(event) {
                     showPodLoading(type, false);
                     setTimeout(() => showProgressUpdate(type, false), 2000);
 
-                    // 恢复按钮状态
-                    button.disabled = false;
-                    button.innerHTML = originalHTML;
+                    // 只恢复我们临时设置的禁用状态
+                    if (!originalDisabled) {
+                        button.disabled = false;
+                        safeSetInnerHTML(button, originalHTML);
+                    }
                 }
                 break;
             case 'cleanup':
-                // 禁用按钮防止重复点击
+                // 保存原始禁用状态，避免覆盖权限禁用
+                const cleanupOriginalDisabled = button.disabled;
                 const cleanupOriginalHTML = button.innerHTML;
-                button.disabled = true;
-                button.innerHTML = '<span>清理中...</span>';
+
+                // 只在按钮原本未禁用时才设置为处理中状态
+                if (!cleanupOriginalDisabled) {
+                    button.disabled = true;
+                    safeSetInnerHTML(button, '<span>清理中...</span>');
+                }
 
                 try {
                     await triggerCleanup(type);
+                } catch (error) {
+                    // 统一错误处理，避免双重通知
+                    throw error;
                 } finally {
                     // 恢复按钮状态
                     button.disabled = false;
-                    button.innerHTML = cleanupOriginalHTML;
+                    safeSetInnerHTML(button, cleanupOriginalHTML);
                 }
                 break;
             case 'resync':
                 if (type === 'thumbnails') {
-                    // 禁用按钮防止重复点击
+                    // 保存原始禁用状态，避免覆盖权限禁用
+                    const resyncOriginalDisabled = button.disabled;
                     const resyncOriginalHTML = button.innerHTML;
-                    button.disabled = true;
-                    button.innerHTML = '<span>重同步中...</span>';
+
+                    // 只在按钮原本未禁用时才设置为处理中状态
+                    if (!resyncOriginalDisabled) {
+                        button.disabled = true;
+                        safeSetInnerHTML(button, '<span>重同步中...</span>');
+                    }
 
                     try {
                         await resyncThumbnails();
+                    } catch (error) {
+                        // 统一错误处理，避免双重通知
+                        throw error;
                     } finally {
                         // 恢复按钮状态
                         button.disabled = false;
-                        button.innerHTML = resyncOriginalHTML;
+                        safeSetInnerHTML(button, resyncOriginalHTML);
                     }
                 }
                 break;
             default:
-                console.warn('未知的操作类型:', action);
+                settingsLogger.warn('未知的操作类型', { action });
         }
     } catch (error) {
-        console.error('状态操作失败:', error);
-        showNotification(`操作失败: ${error.message}`, 'error');
+        // 统一错误处理和用户友好的错误信息
+        let errorMessage = '操作失败';
+
+        if (error.message.includes('权限不足') || error.message.includes('403')) {
+            errorMessage = '权限不足，无法访问此资源';
+        } else if (error.message.includes('网络') || error.message.includes('fetch')) {
+            errorMessage = '网络连接失败，请检查网络连接';
+        } else if (error.message) {
+            errorMessage = error.message;
+        }
+
+        showNotification(errorMessage, 'error');
     }
 }
 
 // --- DOM元素 ---
-const modal = document.getElementById('settings-modal');           // 设置模态框
-const card = document.getElementById('settings-card');             // 设置卡片容器
-const settingsTemplate = document.getElementById('settings-form-template'); // 设置表单模板
+const modal = safeGetElementById('settings-modal');           // 设置模态框
+const card = safeGetElementById('settings-card');             // 设置卡片容器
+const settingsTemplate = safeGetElementById('settings-form-template'); // 设置表单模板
+
+// 按钮状态更新去重，避免频繁调用时的重复错误
+let lastButtonStateUpdate = 0;
+// 使用统一的配置常量
 
 let initialSettings = {};  // 初始设置状态，用于检测变更
 
@@ -879,7 +1346,6 @@ let initialSettings = {};  // 初始设置状态，用于检测变更
  * AI配置本地存储工具
  * 用于在本地存储中保存和获取AI相关设置
  */
-const AI_LOCAL_KEY = 'ai_settings';  // AI设置的本地存储键名
 
 /**
  * 获取本地存储的AI设置
@@ -887,7 +1353,7 @@ const AI_LOCAL_KEY = 'ai_settings';  // AI设置的本地存储键名
  */
 function getLocalAISettings() {
     try {
-        return JSON.parse(localStorage.getItem(AI_LOCAL_KEY)) || {};
+        return JSON.parse(localStorage.getItem(SETTINGS.AI_LOCAL_KEY)) || {};
     } catch { return {}; }
 }
 
@@ -896,22 +1362,8 @@ function getLocalAISettings() {
  * @param {Object} obj - 要保存的AI设置对象
  */
 function setLocalAISettings(obj) {
-    localStorage.setItem(AI_LOCAL_KEY, JSON.stringify(obj || {}));
+    localStorage.setItem(SETTINGS.AI_LOCAL_KEY, JSON.stringify(obj || {}));
 }
-
-/**
- * AI提示词默认值
- * 定义AI对话的默认提示模板
- */
-const DEFAULT_AI_PROMPT = `请你扮演这张照片中的人物，以第一人称的视角，对正在看照片的我说话。
-你的任务是：
-1.  仔细观察你的着装、姿态、表情和周围的环境。
-2.  基于这些观察，构思一个符合你当前人设和心境的对话。
-3.  你的话语可以是对我的邀请、提问，也可以是分享你此刻的感受或一个只属于我们之间的小秘密。
-4.  语言风格要自然、有代入感，就像我们正在面对面交流。
-5.  请直接开始对话，不要有任何前缀，比如“你好”或“嗨”。
-6.  总字数控制在80字以内。
-7.  中文回复。`;
 
 // --- 核心模态框函数 ---
 /**
@@ -920,11 +1372,11 @@ const DEFAULT_AI_PROMPT = `请你扮演这张照片中的人物，以第一人�
  */
 export async function showSettingsModal() {
     // 隐藏页面滚动条
-    document.body.classList.add('settings-open');
+    safeClassList(document.body, 'add', 'settings-open');
     
     // 显示加载状态
-    card.innerHTML = `<div style="display:flex;justify-content:center;align-items:center;height:100%;"><div class="spinner" style="width:3rem;height:3rem;"></div></div>`;
-    modal.classList.add('visible');
+    safeSetInnerHTML(card, `<div style="display:flex;justify-content:center;align-items:center;height:100%;"><div class="spinner" style="width:3rem;height:3rem;"></div></div>`);
+    safeClassList(modal, 'add', 'visible');
     
     try {
         // 获取服务器设置和本地AI设置
@@ -934,13 +1386,13 @@ export async function showSettingsModal() {
         // 合并设置，AI功能默认关闭
         settings.AI_ENABLED = (typeof localAI.AI_ENABLED !== 'undefined') ? localAI.AI_ENABLED : 'false';
         settings.AI_URL = localAI.AI_URL ?? ''; 
-        settings.AI_MODEL = localAI.AI_MODEL ?? 'gemini-2.0-flash'; 
-        settings.AI_PROMPT = localAI.AI_PROMPT ?? DEFAULT_AI_PROMPT; 
+        settings.AI_MODEL = localAI.AI_MODEL ?? 'gemini-1.5-flash'; 
+        settings.AI_PROMPT = localAI.AI_PROMPT ?? SETTINGS.DEFAULT_AI_PROMPT; 
         settings.AI_KEY = '';
 
         // 保存初始设置并渲染表单
         initialSettings = { ...settings, ...localAI };
-        card.innerHTML = settingsTemplate.innerHTML;
+        safeSetInnerHTML(card, settingsTemplate.innerHTML);
         requestAnimationFrame(() => {
             populateForm(settings);
             setupListeners();
@@ -949,9 +1401,16 @@ export async function showSettingsModal() {
             loadStatusTables();
         });
     } catch (error) {
-        // 显示错误信息
-        card.innerHTML = `<p style="color:var(--red-400);text-align:center;">加载失败: ${error.message}</p>`;
-        console.error("加载设置失败:", error);
+        // 显示错误信息 - XSS安全修复
+        safeSetInnerHTML(card, ''); // 清空内容
+        const errorP = document.createElement('p');
+        safeSetStyle(errorP, {
+            color: 'var(--red-400)',
+            textAlign: 'center'
+        });
+        errorP.textContent = `加载失败: ${error.message}`;
+        card.appendChild(errorP);
+        settingsLogger.error('加载设置失败', error);
     }
 }
 
@@ -960,11 +1419,11 @@ export async function showSettingsModal() {
  * 移除可见状态并在过渡动画结束后清空内容
  */
 function closeSettingsModal() {
-    modal.classList.remove('visible');
+    safeClassList(modal, 'remove', 'visible');
     // 恢复页面滚动条
-    document.body.classList.remove('settings-open');
+    safeClassList(document.body, 'remove', 'settings-open');
     modal.addEventListener('transitionend', () => {
-        card.innerHTML = '';
+        safeSetInnerHTML(card, '');
     }, { once: true });
 }
 
@@ -977,10 +1436,23 @@ function populateForm(settings) {
     card.querySelector('#password-enabled').checked = settings.PASSWORD_ENABLED === 'true';
     card.querySelector('#ai-enabled').checked = settings.AI_ENABLED === 'true';
     card.querySelector('#ai-url').value = settings.AI_URL || '';
+
+    // 🎯 智能API地址补全
+    setupApiUrlAutoComplete();
     card.querySelector('#ai-key').value = '';
     card.querySelector('#ai-model').value = settings.AI_MODEL || '';
     card.querySelector('#ai-prompt').value = settings.AI_PROMPT || '';
+
+    // 在设置加载完成后立即更新按钮状态，确保基于最新设置
     updateDynamicUI(settings.PASSWORD_ENABLED === 'true', settings.AI_ENABLED === 'true', settings.hasPassword);
+
+    // 立即更新按钮状态
+    updateButtonStates();
+
+    // 再次延迟更新，确保所有元素都加载完成
+    setTimeout(() => {
+        updateButtonStates();
+    }, 200);
 }
 
 /**
@@ -998,26 +1470,29 @@ function updateDynamicUI(isPasswordEnabled, isAiEnabled, hasPassword) {
 
     // 根据总开关决定是否显示密码设置组和AI设置组
     if (passwordSettingsGroup) {
-        passwordSettingsGroup.style.display = isPasswordEnabled ? 'block' : 'none';
+        safeSetStyle(passwordSettingsGroup, 'display', isPasswordEnabled ? 'block' : 'none');
     }
     if (apiSettingsGroup) {
-        apiSettingsGroup.style.display = isAiEnabled ? 'block' : 'none';
+        safeSetStyle(apiSettingsGroup, 'display', isAiEnabled ? 'block' : 'none');
     }
 
     // 检查是否应禁用敏感操作
     const shouldDisable = hasPassword && !initialSettings.isAdminSecretConfigured;
 
     // 更新密码启用开关的状态：只改变外观，不实际禁用，以确保change事件能被触发
-    passwordEnabledWrapper.classList.toggle('disabled', shouldDisable);
+    safeClassList(passwordEnabledWrapper, 'toggle', 'disabled', shouldDisable);
     passwordEnabledWrapper.title = shouldDisable ? '未配置超级管理员密码，无法更改此设置' : '';
 
     // 更新新密码输入框的状态
     if (isPasswordEnabled) {
         newPasswordInput.disabled = shouldDisable;
-        newPasswordWrapper.classList.toggle('disabled', shouldDisable);
+        safeClassList(newPasswordWrapper, 'toggle', 'disabled', shouldDisable);
         newPasswordWrapper.title = shouldDisable ? '未配置超级管理员密码，无法更改此设置' : '';
         newPasswordInput.placeholder = hasPassword ? '新密码' : '设置新密码';
     }
+
+    // 更新按钮可用性状态
+    updateButtonStates();
 }
 
 /**
@@ -1062,7 +1537,7 @@ async function handleSave() {
     if (needsAdmin) {
         if (!initialSettings.isAdminSecretConfigured) {
             showNotification('操作失败：未配置超级管理员密码', 'error');
-            saveBtn.classList.remove('loading');
+            safeClassList(saveBtn, 'remove', 'loading');
             saveBtn.disabled = false;
             return;
         }
@@ -1081,11 +1556,11 @@ async function handleSave() {
 
 async function executeSave(adminSecret = null) {
     const saveBtn = card.querySelector('.save-btn');
-    saveBtn.classList.add('loading');
+    safeClassList(saveBtn, 'add', 'loading');
     saveBtn.disabled = true;
 
     const newPassInput = card.querySelector('#new-password');
-    newPassInput.classList.remove('input-error');
+    safeClassList(newPassInput, 'remove', 'input-error');
 
     const isPasswordEnabled = card.querySelector('#password-enabled').checked;
     const newPasswordValue = newPassInput.value;
@@ -1095,8 +1570,8 @@ async function executeSave(adminSecret = null) {
         showNotification('请设置新密码以启用密码访问', 'error');
         card.querySelector('button[data-tab="security"]').click();
         newPassInput.focus();
-        newPassInput.classList.add('input-error');
-        saveBtn.classList.remove('loading');
+        safeClassList(newPassInput, 'add', 'input-error');
+        safeClassList(saveBtn, 'remove', 'loading');
         saveBtn.disabled = false;
         return false; // 修复：返回 false 表示操作失败
     }
@@ -1153,7 +1628,7 @@ async function executeSave(adminSecret = null) {
             for (const act of actions) {
                 switch (act) {
                     case 'enable_password':
-                        parts.push(status === 'success' ? '访问密码已设置' : status === 'timeout' ? '启用访问密码超时' : '启用访问密码失败');
+                        parts.push(status === 'success' ? '访问密码已设置，请重新登录' : status === 'timeout' ? '启用访问密码超时' : '启用访问密码失败');
                         break;
                     case 'disable_password':
                         parts.push(status === 'success' ? '访问密码已关闭' : status === 'timeout' ? '关闭访问密码超时' : '关闭访问密码失败');
@@ -1199,7 +1674,35 @@ async function executeSave(adminSecret = null) {
         // 立即更新state，确保设置实时生效
         state.update('aiEnabled', localAI.AI_ENABLED === 'true');
         state.update('passwordEnabled', settingsToSend.PASSWORD_ENABLED === 'true');
-        
+
+        // 设置保存成功后立即更新按钮状态
+        setTimeout(() => {
+            updateButtonStates();
+        }, 200);
+
+        // 处理密码访问状态变更
+        if (prevPasswordEnabled !== nextPasswordEnabled) {
+            if (settingsToSend.PASSWORD_ENABLED === 'true') {
+                // 启用密码访问：清除当前认证令牌，强制重新认证
+                removeAuthToken();
+
+                // 触发认证状态重新检查事件
+                window.dispatchEvent(new CustomEvent('auth:statusChanged', {
+                    detail: { passwordEnabled: true }
+                }));
+
+            } else {
+                // 关闭密码访问：清除认证令牌并触发状态更新
+                removeAuthToken();
+
+                // 触发认证状态重新检查事件
+                window.dispatchEvent(new CustomEvent('auth:statusChanged', {
+                    detail: { passwordEnabled: false }
+                }));
+
+            }
+        }
+
         // 触发设置变更事件，通知其他组件
         window.dispatchEvent(new CustomEvent('settingsChanged', {
             detail: {
@@ -1208,7 +1711,7 @@ async function executeSave(adminSecret = null) {
                 aiSettings: localAI
             }
         }));
-        
+
         // 延迟关闭设置模态框，让密码模态框先关闭
         setTimeout(closeSettingsModal, 1000);
         return true; // 新增：成功时返回 true
@@ -1217,10 +1720,10 @@ async function executeSave(adminSecret = null) {
         if (error.message.includes('密码')) {
             const oldPassInput = card.querySelector('#old-password');
             const target = (error.message.includes('旧密码') && oldPassInput) ? oldPassInput : newPassInput;
-            target.classList.add('input-error');
+            safeClassList(target, 'add', 'input-error');
             target.focus();
         }
-        saveBtn.classList.remove('loading');
+        safeClassList(saveBtn, 'remove', 'loading');
         checkForChanges();
         return false; // 新增：失败时返回 false
     }
@@ -1236,6 +1739,9 @@ function setupListeners() {
     const panels = card.querySelectorAll('.settings-tab-content');
     const passwordEnabledToggle = card.querySelector('#password-enabled');
     const aiEnabledToggle = card.querySelector('#ai-enabled');
+    const aiUrlInput = card.querySelector('#ai-url');
+    const aiKeyInput = card.querySelector('#ai-key');
+    const aiModelInput = card.querySelector('#ai-model');
     const newPasswordInput = card.querySelector('#new-password');
     const newPasswordWrapper = card.querySelector('#new-password-wrapper');
 
@@ -1251,19 +1757,19 @@ function setupListeners() {
     nav.addEventListener('click', e => {
         const btn = e.target.closest('button');
         if (!btn) return;
-        nav.querySelector('.active').classList.remove('active');
-        panels.forEach(p => p.classList.remove('active'));
-        btn.classList.add('active');
-        card.querySelector(`#${btn.dataset.tab}-settings-content`).classList.add('active');
+        safeClassList(nav.querySelector('.active'), 'remove', 'active');
+        panels.forEach(p => safeClassList(p, 'remove', 'active'));
+        safeClassList(btn, 'add', 'active');
+        safeClassList(card.querySelector(`#${btn.dataset.tab}-settings-content`), 'add', 'active');
 
         // 当切换到状态标签页时，重新加载状态表数据并隐藏footer
         if (btn.dataset.tab === 'status') {
             // 立即显示加载状态，避免空白
             const containers = ['index-status', 'thumbnail-status', 'hls-status'];
             containers.forEach(id => {
-                const container = document.getElementById(id);
+                const container = safeGetElementById(id);
                 if (container && !container.innerHTML.trim()) {
-                    container.innerHTML = '<div class="status-loading"><div class="spinner"></div></div>';
+                    safeSetInnerHTML(container, '<div class="status-loading"><div class="spinner"></div></div>');
                 }
             });
             
@@ -1271,13 +1777,13 @@ function setupListeners() {
             // 隐藏footer
             const footer = card.querySelector('.settings-footer');
             if (footer) {
-                footer.style.display = 'none';
+                safeSetStyle(footer, 'display', 'none');
             }
         } else {
             // 切换到其他标签页时显示footer
             const footer = card.querySelector('.settings-footer');
             if (footer) {
-                footer.style.display = '';
+                safeSetStyle(footer, 'display', '');
             }
         }
     });
@@ -1296,7 +1802,7 @@ function setupListeners() {
     // 新密码输入框的错误样式处理
     if(newPasswordInput) {
         newPasswordInput.addEventListener('input', () => {
-            newPasswordInput.classList.remove('input-error');
+            safeClassList(newPasswordInput, 'remove', 'input-error');
         });
     }
 
@@ -1322,9 +1828,121 @@ function setupListeners() {
     aiEnabledToggle.addEventListener('change', e => {
         updateDynamicUI(passwordEnabledToggle.checked, e.target.checked, initialSettings.hasPassword);
         checkForChanges(); // AI开关总是合法的，检查并更新保存按钮状态
+        attemptModelFetch('toggle');
     });
 
+    if (aiKeyInput) {
+        aiKeyInput.addEventListener('input', () => {
+            if (modelFetchTimer) clearTimeout(modelFetchTimer);
+            modelFetchTimer = setTimeout(() => attemptModelFetch('input'), 800);
+        });
+        aiKeyInput.addEventListener('blur', () => attemptModelFetch('blur'));
+    }
+
+    if (aiUrlInput) {
+        aiUrlInput.addEventListener('blur', () => attemptModelFetch('blur'));
+    }
+
+    if (aiModelInput) {
+        aiModelInput.addEventListener('focus', () => attemptModelFetch('focus'));
+    }
+
     setupPasswordToggles();
+}
+
+function attemptModelFetch(trigger = 'input') {
+    if (!card) return;
+    const aiEnabledToggle = card.querySelector('#ai-enabled');
+    if (aiEnabledToggle && !aiEnabledToggle.checked) return;
+
+    const aiUrlInput = card.querySelector('#ai-url');
+    const aiKeyInput = card.querySelector('#ai-key');
+    const aiModelInput = card.querySelector('#ai-model');
+    if (!aiUrlInput || !aiKeyInput || !aiModelInput) return;
+
+    const apiUrl = aiUrlInput.value.trim();
+    const apiKey = aiKeyInput.value.trim();
+    if (!apiUrl || !apiKey) return;
+
+    if (trigger === 'input' && apiKey.length < 8) {
+        return;
+    }
+
+    if (modelFetchTimer) clearTimeout(modelFetchTimer);
+    const delay = trigger === 'blur' || trigger === 'focus' || trigger === 'toggle' ? 0 : 600;
+    modelFetchTimer = setTimeout(() => fetchAndPopulateModels(apiUrl, apiKey), delay);
+}
+
+async function fetchAndPopulateModels(apiUrl, apiKey) {
+    const signature = `${apiUrl}::${apiKey}`;
+    if (signature === lastModelFetchSignature) {
+        return;
+    }
+
+    const aiModelInput = card.querySelector('#ai-model');
+    const datalist = card.querySelector('#ai-model-options');
+    if (!aiModelInput || !datalist) return;
+
+    const originalPlaceholder = aiModelInput.getAttribute('data-original-placeholder') || aiModelInput.placeholder;
+    aiModelInput.setAttribute('data-original-placeholder', originalPlaceholder);
+    aiModelInput.placeholder = '正在加载模型列表...';
+    aiModelInput.disabled = true;
+
+    if (modelFetchAbortController) {
+        modelFetchAbortController.abort();
+    }
+    modelFetchAbortController = new AbortController();
+
+    try {
+        const models = await fetchAvailableModels(apiUrl, apiKey, modelFetchAbortController.signal);
+        updateModelOptions(models);
+        lastModelFetchSignature = signature;
+
+        if (Array.isArray(models) && models.length > 0) {
+            const existing = models.find(model => model.id === aiModelInput.value);
+            if (!existing) {
+                aiModelInput.value = models[0].id;
+            }
+            showNotification(`已加载 ${models.length} 个可用模型`, 'success');
+        } else {
+            showNotification('未在当前 API 中找到可用的视觉模型，请手动填写模型名称', 'warning');
+        }
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            return;
+        }
+        lastModelFetchSignature = null;
+        showNotification(error?.message || '获取模型列表失败，请稍后重试', 'error');
+        updateModelOptions([]);
+    } finally {
+        aiModelInput.placeholder = aiModelInput.getAttribute('data-original-placeholder') || '';
+        aiModelInput.disabled = false;
+        modelFetchAbortController = null;
+    }
+}
+
+function updateModelOptions(models) {
+    const datalist = card.querySelector('#ai-model-options');
+    if (!datalist) return;
+
+    safeSetInnerHTML(datalist, '');
+
+    if (!Array.isArray(models) || models.length === 0) {
+        return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    models.forEach(model => {
+        const option = document.createElement('option');
+        option.value = model.id || model.name || '';
+        if (model.displayName && model.displayName !== option.value) {
+            option.label = model.displayName;
+        }
+        option.textContent = model.displayName || option.value;
+        fragment.appendChild(option);
+    });
+
+    datalist.appendChild(fragment);
 }
 
 /**
@@ -1339,18 +1957,18 @@ function setupPasswordToggles() {
         if (!input || !icon) return;
         const openEye = icon.querySelector('.eye-open');
         const closedEye = icon.querySelector('.eye-closed');
-        openEye.style.display = input.type === 'password' ? 'block' : 'none';
-        closedEye.style.display = input.type === 'password' ? 'none' : 'block';
+        safeSetStyle(openEye, 'display', input.type === 'password' ? 'block' : 'none');
+        safeSetStyle(closedEye, 'display', input.type === 'password' ? 'none' : 'block');
         icon.addEventListener('click', (e) => {
             e.stopPropagation();
             const isPassword = input.type === 'password';
             input.type = isPassword ? 'text' : 'password';
-            openEye.style.display = isPassword ? 'none' : 'block';
-            closedEye.style.display = isPassword ? 'block' : 'none';
-            const originalColor = icon.style.color;
-            icon.style.color = 'white';
+            safeSetStyle(openEye, 'display', isPassword ? 'none' : 'block');
+            safeSetStyle(closedEye, 'display', isPassword ? 'block' : 'none');
+            const originalColor = safeGetStyle(icon, 'color');
+            safeSetStyle(icon, 'color', 'white');
             setTimeout(() => {
-                icon.style.color = originalColor || '';
+                safeSetStyle(icon, 'color', originalColor || '');
             }, 200);
         });
     });
@@ -1363,7 +1981,7 @@ function setupPasswordToggles() {
  * @param {Object} param0 - 配置对象，包含onConfirm和onCancel回调
  */
 function showPasswordPrompt({ onConfirm, onCancel, useAdminSecret = false }) {
-    const template = document.getElementById('password-prompt-template');
+    const template = safeGetElementById('password-prompt-template');
     if (!template) return;
     const promptElement = template.content.cloneNode(true).firstElementChild;
     document.body.appendChild(promptElement);
@@ -1389,17 +2007,23 @@ function showPasswordPrompt({ onConfirm, onCancel, useAdminSecret = false }) {
     const cancelBtn = promptElement.querySelector('.cancel-btn');
     const toggleBtn = promptElement.querySelector('.password-toggle-btn');
 
+    // 跟踪关闭原因
+    let closeReason = 'cancel'; // 'cancel' 或 'success'
+
     /**
      * 关闭弹窗
      */
     const closePrompt = () => {
-        promptElement.classList.remove('active');
+        safeClassList(promptElement, 'remove', 'active');
         promptElement.addEventListener('transitionend', () => promptElement.remove(), { once: true });
-        if (onCancel) onCancel();
+        // 只有在取消情况下才调用onCancel
+        if (closeReason === 'cancel' && onCancel) {
+            onCancel();
+        }
     };
 
     requestAnimationFrame(() => {
-        promptElement.classList.add('active');
+        safeClassList(promptElement, 'add', 'active');
         input.focus();
     });
 
@@ -1407,41 +2031,42 @@ function showPasswordPrompt({ onConfirm, onCancel, useAdminSecret = false }) {
     toggleBtn.addEventListener('click', () => {
         const isPassword = input.type === 'password';
         input.type = isPassword ? 'text' : 'password';
-        toggleBtn.querySelector('.eye-open').style.display = isPassword ? 'none' : 'block';
-        toggleBtn.querySelector('.eye-closed').style.display = isPassword ? 'block' : 'none';
+        safeSetStyle(toggleBtn.querySelector('.eye-open'), 'display', isPassword ? 'none' : 'block');
+        safeSetStyle(toggleBtn.querySelector('.eye-closed'), 'display', isPassword ? 'block' : 'none');
         input.focus();
     });
 
     // 确认按钮逻辑
     confirmBtn.addEventListener('click', async () => {
-        inputGroup.classList.remove('error');
+        safeClassList(inputGroup, 'remove', 'error');
         errorMsg.textContent = '';
-        cardEl.classList.remove('shake');
+        safeClassList(cardEl, 'remove', 'shake');
         if (!input.value) {
             errorMsg.textContent = '密码不能为空。';
-            inputGroup.classList.add('error');
-            cardEl.classList.add('shake');
+            safeClassList(inputGroup, 'add', 'error');
+            safeClassList(cardEl, 'add', 'shake');
             input.focus();
             return;
         }
-        confirmBtn.classList.add('loading');
+        safeClassList(confirmBtn, 'add', 'loading');
         confirmBtn.disabled = true;
         cancelBtn.disabled = true;
         try {
             const success = await onConfirm(input.value);
             if (success === true) {
-                inputGroup.classList.add('success');
-                confirmBtn.classList.remove('loading');
+                safeClassList(inputGroup, 'add', 'success');
+                safeClassList(confirmBtn, 'remove', 'loading');
+                closeReason = 'success'; // 标记为成功关闭
                 setTimeout(closePrompt, 800);
             } else {
                 throw new Error("密码错误或验证失败");
             }
         } catch (err) {
-            confirmBtn.classList.remove('loading');
+            safeClassList(confirmBtn, 'remove', 'loading');
             confirmBtn.disabled = false;
             cancelBtn.disabled = false;
-            cardEl.classList.add('shake');
-            inputGroup.classList.add('error');
+            safeClassList(cardEl, 'add', 'shake');
+            safeClassList(inputGroup, 'add', 'error');
             errorMsg.textContent = err.message || '密码错误或验证失败';
             input.focus();
             input.select();
@@ -1450,7 +2075,7 @@ function showPasswordPrompt({ onConfirm, onCancel, useAdminSecret = false }) {
 
     // 输入框事件
     input.addEventListener('input', () => {
-        inputGroup.classList.remove('error');
+        safeClassList(inputGroup, 'remove', 'error');
         errorMsg.textContent = '';
     });
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') confirmBtn.click(); });

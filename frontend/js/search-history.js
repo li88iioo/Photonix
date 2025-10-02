@@ -1,12 +1,18 @@
 // frontend/js/search-history.js
 
+import { escapeHtml } from './security.js';
+import { createModuleLogger } from './logger.js';
+import { SEARCH_HISTORY } from './constants.js';
+import { safeSetInnerHTML, safeClassList } from './dom-utils.js';
+
+const searchLogger = createModuleLogger('SearchHistory');
+
 /**
  * 搜索历史管理模块
  * 负责搜索历史的存储、获取、显示和管理
  */
 
-const SEARCH_HISTORY_KEY = 'gallery_search_history';
-const MAX_HISTORY_ITEMS = 10;
+// 使用统一的SEARCH_HISTORY配置常量
 
 /**
  * 获取搜索历史
@@ -14,10 +20,10 @@ const MAX_HISTORY_ITEMS = 10;
  */
 export function getSearchHistory() {
     try {
-        const history = localStorage.getItem(SEARCH_HISTORY_KEY);
+        const history = localStorage.getItem(SEARCH_HISTORY.KEY);
         return history ? JSON.parse(history) : [];
     } catch (error) {
-        console.error('获取搜索历史失败:', error);
+        searchLogger.error('获取搜索历史失败', error);
         return [];
     }
 }
@@ -40,13 +46,13 @@ export function saveSearchHistory(query) {
         filteredHistory.unshift(trimmedQuery);
         
         // 限制历史记录数量
-        if (filteredHistory.length > MAX_HISTORY_ITEMS) {
-            filteredHistory.splice(MAX_HISTORY_ITEMS);
+        if (filteredHistory.length > SEARCH_HISTORY.MAX_ITEMS) {
+            filteredHistory.splice(SEARCH_HISTORY.MAX_ITEMS);
         }
         
-        localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(filteredHistory));
+        localStorage.setItem(SEARCH_HISTORY.KEY, JSON.stringify(filteredHistory));
     } catch (error) {
-        console.error('保存搜索历史失败:', error);
+        searchLogger.error('保存搜索历史失败', error);
     }
 }
 
@@ -55,9 +61,9 @@ export function saveSearchHistory(query) {
  */
 export function clearSearchHistory() {
     try {
-        localStorage.removeItem(SEARCH_HISTORY_KEY);
+        localStorage.removeItem(SEARCH_HISTORY.KEY);
     } catch (error) {
-        console.error('清除搜索历史失败:', error);
+        searchLogger.error('清除搜索历史失败', error);
     }
 }
 
@@ -69,9 +75,9 @@ export function removeSearchHistoryItem(query) {
     try {
         const history = getSearchHistory();
         const filteredHistory = history.filter(item => item !== query);
-        localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(filteredHistory));
+        localStorage.setItem(SEARCH_HISTORY.KEY, JSON.stringify(filteredHistory));
     } catch (error) {
-        console.error('删除搜索历史项失败:', error);
+        searchLogger.error('删除搜索历史项失败', error);
     }
 }
 
@@ -84,8 +90,8 @@ export function renderSearchHistory(searchInput, historyContainer) {
     const history = getSearchHistory();
     
     if (history.length === 0) {
-        historyContainer.innerHTML = '';
-        historyContainer.classList.add('hidden');
+        safeSetInnerHTML(historyContainer, '');
+        safeClassList(historyContainer, 'add', 'hidden');
         return;
     }
     
@@ -105,7 +111,7 @@ export function renderSearchHistory(searchInput, historyContainer) {
         </div>
     `).join('');
     
-    historyContainer.innerHTML = `
+    safeSetInnerHTML(historyContainer, `
         <div class="search-history-header flex items-center justify-between px-3 py-2 border-b border-gray-600">
             <span class="text-gray-400 text-xs">搜索历史</span>
             <button class="clear-history-btn text-gray-400 hover:text-red-400 text-xs px-2 py-1 rounded hover:bg-gray-700 transition-colors" title="清空所有历史">
@@ -113,9 +119,9 @@ export function renderSearchHistory(searchInput, historyContainer) {
             </button>
         </div>
         ${historyHtml}
-    `;
+    `);
     
-    historyContainer.classList.remove('hidden');
+    safeClassList(historyContainer, 'remove', 'hidden');
     
     // 绑定事件
     bindSearchHistoryEvents(searchInput, historyContainer);
@@ -134,7 +140,7 @@ function bindSearchHistoryEvents(searchInput, historyContainer) {
             const query = historyItem.querySelector('span').textContent;
             searchInput.value = query;
             searchInput.focus();
-            historyContainer.classList.add('hidden');
+            safeClassList(historyContainer, 'add', 'hidden');
             
             // 触发搜索
             const inputEvent = new Event('input', { bubbles: true });
@@ -159,21 +165,12 @@ function bindSearchHistoryEvents(searchInput, historyContainer) {
         if (clearBtn) {
             e.stopPropagation();
             clearSearchHistory();
-            historyContainer.classList.add('hidden');
+            safeClassList(historyContainer, 'add', 'hidden');
         }
     });
 }
 
-/**
- * HTML转义函数
- * @param {string} text - 要转义的文本
- * @returns {string} 转义后的文本
- */
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
+// escapeHtml函数已从security.js导入
 
 /**
  * 显示搜索历史
@@ -189,5 +186,5 @@ export function showSearchHistory(searchInput, historyContainer) {
  * @param {HTMLElement} historyContainer - 历史记录容器
  */
 export function hideSearchHistory(historyContainer) {
-    historyContainer.classList.add('hidden');
+    safeClassList(historyContainer, 'add', 'hidden');
 } 

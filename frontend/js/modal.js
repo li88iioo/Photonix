@@ -1,10 +1,15 @@
 // frontend/js/modal.js
 
-import { state, elements, backdrops } from './state.js';
+import { state, backdrops } from './state.js';
+import { elements } from './dom-elements.js';
 import { preloadNextImages, showNotification } from './utils.js';
 import { generateImageCaption } from './api.js';
 import Hls from 'hls.js'; // 引入 HLS.js
-import { SwipeHandler, enablePinchZoom } from './touch.js';
+import { enablePinchZoom } from './touch.js';
+import { createModuleLogger } from './logger.js';
+import { safeSetInnerHTML, safeSetStyle, safeClassList } from './dom-utils.js';
+
+const modalLogger = createModuleLogger('Modal');
 
 /**
  * 模态框管理模块
@@ -19,9 +24,9 @@ let activeVideoToken = 0; // 当前视频加载令牌，避免并发事件打架
  * 包括关闭按钮和AI控制容器
  */
 function hideModalControls() {
-    elements.modalClose.classList.add('opacity-0');
+    safeClassList(elements.modalClose, 'add', 'opacity-0');
     if (elements.aiControlsContainer) {
-        elements.aiControlsContainer.classList.add('opacity-0');
+        safeClassList(elements.aiControlsContainer, 'add', 'opacity-0');
     }
 }
 
@@ -30,9 +35,9 @@ function hideModalControls() {
  * 包括关闭按钮和AI控制容器
  */
 function showModalControls() {
-    elements.modalClose.classList.remove('opacity-0');
+    safeClassList(elements.modalClose, 'remove', 'opacity-0');
     if (elements.aiControlsContainer) {
-        elements.aiControlsContainer.classList.remove('opacity-0');
+        safeClassList(elements.aiControlsContainer, 'remove', 'opacity-0');
     }
 }
 
@@ -44,7 +49,16 @@ function createVideoSpinner() {
     const spinnerWrapper = document.createElement('div');
     spinnerWrapper.id = 'video-spinner';
     spinnerWrapper.className = 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 z-10 pointer-events-none';
-    spinnerWrapper.innerHTML = '<div class="spinner" style="width: 3rem; height: 3rem;"></div>';
+
+    // XSS安全修复：使用DOM操作替代innerHTML
+    const spinner = document.createElement('div');
+    spinner.className = 'spinner';
+    safeSetStyle(spinner, {
+        width: '3rem',
+        height: '3rem'
+    });
+    spinnerWrapper.appendChild(spinner);
+
     return spinnerWrapper;
 }
 
@@ -82,9 +96,9 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
     const activeBackdropElem = backdrops[state.activeBackdrop];
     const inactiveBackdropElem = backdrops[inactiveBackdropKey];
     
-    inactiveBackdropElem.style.backgroundImage = `url('${blurSource}')`;
-    activeBackdropElem.classList.remove('active-backdrop');
-    inactiveBackdropElem.classList.add('active-backdrop');
+    safeSetStyle(inactiveBackdropElem, 'backgroundImage', `url('${blurSource}')`);
+    safeClassList(activeBackdropElem, 'remove', 'active-backdrop');
+    safeClassList(inactiveBackdropElem, 'add', 'active-backdrop');
     state.activeBackdrop = inactiveBackdropKey;
 
     // 根据媒体类型和AI状态显示相应元素
@@ -92,15 +106,15 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
     const localAI = JSON.parse(localStorage.getItem('ai_settings') || '{}');
     const isAIEnabled = localAI.AI_ENABLED === 'true' || state.aiEnabled;
     const showAiElements = !isVideo && isAIEnabled;
-    elements.aiControlsContainer.classList.toggle('hidden', !showAiElements);
+    safeClassList(elements.aiControlsContainer, 'toggle', 'hidden', !showAiElements);
     
-    modalVideo.classList.toggle('hidden', !isVideo);
-    modalImg.classList.toggle('hidden', isVideo);
+    safeClassList(modalVideo, 'toggle', 'hidden', !isVideo);
+    safeClassList(modalImg, 'toggle', 'hidden', isVideo);
     
     if (isVideo) {
         const myToken = ++activeVideoToken;
-        navigationHint.classList.remove('show-hint');
-        navigationHint.style.display = 'none';
+        safeClassList(navigationHint, 'remove', 'show-hint');
+        safeSetStyle(navigationHint, 'display', 'none');
 
         const videoSpinner = createVideoSpinner();
         mediaPanel.appendChild(videoSpinner);
@@ -141,7 +155,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
         const onError = () => {
             if (myToken !== activeVideoToken) return cleanup();
             removeSpinnerAndUnbind();
-            console.error('HLS 或视频播放错误');
+            modalLogger.error('HLS 或视频播放错误');
         };
 
         const onCanPlay = () => {
@@ -170,9 +184,9 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
             let width = maxW;
             let height = width / aspect;
             if (height > maxH) { height = maxH; width = height * aspect; }
-            modalVideo.style.width = `${Math.round(width)}px`;
-            modalVideo.style.height = `${Math.round(height)}px`;
-            try { modalVideo.style.aspectRatio = `${vw}/${vh}`; } catch {}
+            safeSetStyle(modalVideo, 'width', `${Math.round(width)}px`);
+            safeSetStyle(modalVideo, 'height', `${Math.round(height)}px`);
+            try { safeSetStyle(modalVideo, 'aspectRatio', `${vw}/${vh}`); } catch {}
         };
 
         const onLoadedMetadata = () => {
@@ -191,16 +205,16 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
             hls.attachMedia(modalVideo);
             hls.on(Hls.Events.MANIFEST_PARSED, () => {
                 if (myToken !== activeVideoToken) return cleanup();
-                modalVideo.play().catch(e => console.warn('自动播放被阻止', e));
+                modalVideo.play().catch(e => modalLogger.warn('自动播放被阻止', e));
             });
             hls.on(Hls.Events.ERROR, (event, data) => {
                 if (data.fatal) {
                     switch(data.type) {
                         case Hls.ErrorTypes.NETWORK_ERROR:
-                            console.error('HLS 网络错误', data);
+                            modalLogger.error('HLS 网络错误', data);
                             // Fallback to direct playback on fatal network error
                             if (myToken === activeVideoToken) {
-                                console.warn('HLS 失败，回退到直接播放');
+                                modalLogger.warn('HLS 失败，回退到直接播放');
                                 // 仅销毁 HLS 实例，保留 playing/error 监听，用于移除加载圈
                                 if (state.hlsInstance) {
                                     try { state.hlsInstance.destroy(); } catch {}
@@ -218,15 +232,15 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
                                 modalVideo.addEventListener('canplay', onCanPlay, { once: true });
                                 modalVideo.addEventListener('loadeddata', onLoadedData, { once: true });
                                 modalVideo.addEventListener('timeupdate', onTimeUpdate, { once: true });
-                                modalVideo.play().catch(e => console.warn('回退自动播放被阻止', e));
+                                modalVideo.play().catch(e => modalLogger.warn('回退自动播放被阻止', e));
                             }
                             break;
                         case Hls.ErrorTypes.MEDIA_ERROR:
-                            console.error('HLS 媒体错误', data);
+                            modalLogger.error('HLS 媒体错误', data);
                             hls.recoverMediaError();
                             break;
                         default:
-                            console.error('HLS 致命错误，正在销毁', data);
+                            modalLogger.error('HLS 致命错误，正在销毁', data);
                             // 致命且无法恢复：销毁实例并移除加载圈，避免转圈悬挂
                             if (state.hlsInstance) {
                                 try { state.hlsInstance.destroy(); } catch {}
@@ -242,7 +256,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
             modalVideo.src = hlsUrl;
         } else {
             // Fallback to direct playback
-            console.warn('HLS 不支持，回退到直接播放');
+            modalLogger.warn('HLS 不支持，回退到直接播放');
             modalVideo.src = mediaSrc;
         }
 
@@ -257,13 +271,13 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
         _onResizeRef = onResize;
         modalVideo.play().catch(e => {
             if (myToken !== activeVideoToken) return cleanup();
-            console.warn('自动播放可能被浏览器阻止', e);
+            modalLogger.warn('自动播放可能被浏览器阻止', e);
         });
 
-        if(elements.captionBubble) elements.captionBubble.classList.remove('show');
+        if(elements.captionBubble) safeClassList(elements.captionBubble, 'remove', 'show');
     } else {
         // 图片处理逻辑
-        navigationHint.style.display = 'flex';
+        safeSetStyle(navigationHint, 'display', 'flex');
         modalImg.src = mediaSrc; 
         
         // 禁用右键菜单
@@ -274,10 +288,79 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
         
         // AI标题生成
         if (showAiElements) {
+            // 🧹 清理之前的定时器和状态
             clearTimeout(state.captionDebounceTimer);
-            state.captionDebounceTimer = setTimeout(() => generateImageCaption(originalPathForAI), 300);
-            captionContainer.innerHTML = '<div class="flex items-center justify-center h-full"><div class="spinner"></div><p class="ml-4">酝酿中...</p></div>';
-            captionContainerMobile.innerHTML = '酝酿中...';
+
+            // 🚀 立即检查blob URL，如果是blob URL立即执行
+            const immediateImageSrc = modalImg.src;
+            if (immediateImageSrc.startsWith('blob:')) {
+                generateImageCaption(originalPathForAI);
+                return;
+            }
+
+            // 延迟执行，避免快速切换时的状态混乱
+            state.captionDebounceTimer = setTimeout(() => {
+                // 再次检查是否还是当前图片，避免快速切换时的竞态条件
+                const currentImageSrc = modalImg.src;
+                const currentFileName = originalPathForAI.split('/').pop();
+
+
+                // 处理blob URL特殊情况
+                let isBlobUrl = currentImageSrc.startsWith('blob:');
+                let srcFileName;
+                let pathname = '';
+
+                if (isBlobUrl) {
+                    // 对于blob URL，直接使用originalPathForAI进行AI生成
+                    generateImageCaption(originalPathForAI);
+                    return;
+                } else {
+                }
+
+                // 提取URL中的实际文件名，去掉查询参数
+                try {
+                    const url = new URL(currentImageSrc);
+                    srcFileName = url.pathname.split('/').pop().split('?')[0];
+                    pathname = url.pathname;
+                } catch (e) {
+                    // 如果不是完整的URL，使用简单的方法
+                    srcFileName = currentImageSrc.split('/').pop().split('?')[0];
+                    pathname = 'N/A (relative URL)';
+                }
+
+
+                // 更精确的比较：比较文件名（去掉查询参数）
+                if (currentImageSrc && srcFileName === currentFileName) {
+                    generateImageCaption(originalPathForAI);
+                } else {
+                    // 如果精确匹配失败，尝试更宽松的匹配（处理UUID缓存文件名）
+                    // 例如：001.webp 可能被缓存为 67c2c9cb-332a-461e-a2db-b50d036c53e4
+                    // 我们可以通过检查originalPathForAI是否包含在currentImageSrc中来验证
+                    const isSameImage = currentImageSrc.includes(originalPathForAI.split('/').pop().split('.')[0]);
+
+                    if (isSameImage) {
+                        generateImageCaption(originalPathForAI);
+                    } else {
+                    }
+                }
+            }, 300);
+
+            // XSS安全修复：使用DOM操作替代innerHTML
+            safeSetInnerHTML(captionContainer, ''); // 清空内容
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'flex items-center justify-center h-full';
+
+            const spinner = document.createElement('div');
+            spinner.className = 'spinner';
+            loadingDiv.appendChild(spinner);
+
+            const textP = document.createElement('p');
+            textP.className = 'ml-4';
+            textP.textContent = '酝酿中...';
+            loadingDiv.appendChild(textP);
+
+            captionContainer.appendChild(loadingDiv);
+            captionContainerMobile.textContent = '酝酿中...';
         }
 
         // 启用移动端双指缩放/拖拽（touch.js）
@@ -314,16 +397,16 @@ async function handleModalNavigationLoad(mediaSrc, index) {
     state.isModalNavigating = true;
 
     // 预加载图片
-    const tempImg = new Image();
-    tempImg.onload = () => {
-        updateModalContent(tempImg.src, index, originalPath);
+    const preloadImage = new Image();
+    preloadImage.onload = () => {
+        updateModalContent(preloadImage.src, index, originalPath);
         state.isModalNavigating = false;
     };
-    tempImg.onerror = () => {
+    preloadImage.onerror = () => {
         showNotification('图片加载或解码失败', 'error');
         state.isModalNavigating = false;
     };
-    tempImg.src = mediaSrc;
+    preloadImage.src = mediaSrc;
 }
 
 /**
@@ -331,12 +414,15 @@ async function handleModalNavigationLoad(mediaSrc, index) {
  * 清理所有状态和DOM元素
  */
 export function closeModal() {
-    if (elements.modal.classList.contains('opacity-0')) return;
+    if (safeClassList(elements.modal, 'contains', 'opacity-0')) return;
 
     // 移除模态框相关类
+    // 注意：document.documentElement 和 document.body 的classList操作保持原样
+    // 因为这些是特殊DOM元素，不在我们的封装范围内
     document.documentElement.classList.remove('modal-open');
     document.body.classList.remove('modal-open');
-    elements.modal.classList.add('opacity-0', 'pointer-events-none');
+    safeClassList(elements.modal, 'add', 'opacity-0');
+    safeClassList(elements.modal, 'add', 'pointer-events-none');
     
     // 确保停止快速导航，避免定时器泄漏
     if (typeof stopFastNavigate === 'function') {
@@ -352,8 +438,8 @@ export function closeModal() {
     elements.modalVideo.src = '';
     
     // 清理背景
-    backdrops.one.style.backgroundImage = 'none';
-    backdrops.two.style.backgroundImage = 'none';
+    safeSetStyle(backdrops.one, 'backgroundImage', 'none');
+    safeSetStyle(backdrops.two, 'backgroundImage', 'none');
     
     // 清理对象URL
     if (state.currentObjectURL) {
@@ -362,7 +448,9 @@ export function closeModal() {
     }
     
     // 隐藏AI气泡
-    if (elements.captionBubble) elements.captionBubble.classList.remove('show');
+
+
+    if (elements.captionBubble) safeClassList(elements.captionBubble, 'remove', 'show');
     if (document.activeElement) document.activeElement.blur();
 
     // 恢复滚动位置
@@ -411,7 +499,7 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
     state.activeThumbnail = element;
     
     const photoItem = element.querySelector('.photo-item');
-    if (!photoItem || photoItem.classList.contains('is-loading')) return;
+    if (!photoItem || safeClassList(photoItem, 'contains', 'is-loading')) return;
 
     const isVideo = /\.(mp4|webm|mov)$/i.test(mediaSrc);
 
@@ -431,11 +519,11 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
     if (progressCircle) {
         const radius = progressCircle.r.baseVal.value;
         const circumference = 2 * Math.PI * radius;
-        progressCircle.style.strokeDasharray = `${circumference} ${circumference}`;
-        progressCircle.style.strokeDashoffset = circumference;
+        safeSetStyle(progressCircle, 'strokeDasharray', `${circumference} ${circumference}`);
+        safeSetStyle(progressCircle, 'strokeDashoffset', circumference);
     }
     
-    photoItem.classList.add('is-loading');
+    safeClassList(photoItem, 'add', 'is-loading');
     
     // 创建新的加载控制器
     const controller = new AbortController();
@@ -475,7 +563,7 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
                                     const progress = receivedLength / contentLength;
                                     const circumference = 2 * Math.PI * progressCircle.r.baseVal.value;
                                     const offset = circumference - progress * circumference;
-                                    progressCircle.style.strokeDashoffset = offset;
+                                    safeSetStyle(progressCircle, 'strokeDashoffset', offset);
                                 }
                                 try { controller.enqueue(value); } catch {}
                                 push();
@@ -485,7 +573,7 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
                                     try { controller.close(); } catch {}
                                     return;
                                 }
-                                console.error('流读取错误:', error);
+                                modalLogger.error('流读取错误', error);
                                 try { controller.error(error); } catch {}
                             })
                         }
@@ -517,7 +605,7 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
             showNotification('图片加载失败', 'error');
         })
         .finally(() => {
-            photoItem.classList.remove('is-loading');
+            safeClassList(photoItem, 'remove', 'is-loading');
             if (activeLoader === controller) activeLoader = null;
         });
 }
@@ -532,17 +620,20 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
  */
 export function _openModal(mediaSrc, index = 0, isObjectURL = false, originalPathForAI = null, thumbForBlur = null) {
     // 添加模态框相关类
+    // 注意：document.documentElement 和 document.body 的classList操作保持原样
+    // 因为这些是特殊DOM元素，不在我们的封装范围内
     document.documentElement.classList.add('modal-open');
     document.body.classList.add('modal-open');
     if (document.activeElement) document.activeElement.blur();
     
     // 验证媒体源
     if (!mediaSrc || typeof mediaSrc !== 'string' || mediaSrc.trim() === '') {
-        console.error('打开模态框失败: 无效的媒体源:', mediaSrc);
+        modalLogger.error('打开模态框失败: 无效的媒体源', { mediaSrc });
         return;
     }
 
-    elements.modal.classList.remove('opacity-0', 'pointer-events-none');
+    safeClassList(elements.modal, 'remove', 'opacity-0');
+    safeClassList(elements.modal, 'remove', 'pointer-events-none');
     
     // 更新模态框内容
     const aiPath = originalPathForAI || mediaSrc;
@@ -552,9 +643,9 @@ export function _openModal(mediaSrc, index = 0, isObjectURL = false, originalPat
 
     // 显示导航提示（仅首次）
     if (!state.hasShownNavigationHint && window.innerWidth > 768) {
-        elements.navigationHint.classList.add('show-hint');
+        safeClassList(elements.navigationHint, 'add', 'show-hint');
         state.hasShownNavigationHint = true;
-        setTimeout(() => elements.navigationHint.classList.remove('show-hint'), 4000);
+        setTimeout(() => safeClassList(elements.navigationHint, 'remove', 'show-hint'), 4000);
     }
 
     // 更新URL哈希
@@ -609,7 +700,7 @@ export function startFastNavigate(direction) {
     fastNavInterval = setInterval(() => {
         // 只有当 state.isModalNavigating 为 false (即上一张图片已加载且动画完成) 时，
         // 并且模态框是可见的，才进行翻页
-        if (!state.isModalNavigating && !elements.modal.classList.contains('opacity-0')) {
+        if (!state.isModalNavigating && !safeClassList(elements.modal, 'contains', 'opacity-0')) {
             navigateModal(fastNavDirection);
         }
     }, 300); // 每 0.3秒 检查一次是否可以翻页
@@ -642,7 +733,7 @@ export function cleanupModal() {
         try {
             state.hlsInstance.destroy();
         } catch (e) {
-            console.warn('清理HLS实例失败:', e);
+            modalLogger.warn('清理HLS实例失败', e);
         }
         state.hlsInstance = null;
     }
@@ -655,7 +746,7 @@ export function cleanupModal() {
             modalVideo.src = '';
             modalVideo.load();
         } catch (e) {
-            console.warn('清理视频元素失败:', e);
+            modalLogger.warn('清理视频元素失败', e);
         }
     }
     
@@ -667,7 +758,7 @@ export function cleanupModal() {
         try {
             URL.revokeObjectURL(state.currentObjectURL);
         } catch (e) {
-            console.warn('清理对象URL失败:', e);
+            modalLogger.warn('清理对象URL失败', e);
         }
         state.currentObjectURL = null;
     }

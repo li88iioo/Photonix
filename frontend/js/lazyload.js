@@ -2,6 +2,10 @@ import { state } from './state.js';
 import { AbortBus } from './abort-bus.js';
 import { triggerMasonryUpdate } from './masonry.js';
 import { getAuthToken } from './auth.js';
+import { createModuleLogger } from './logger.js';
+import { safeSetInnerHTML, safeSetStyle, safeClassList } from './dom-utils.js';
+
+const lazyloadLogger = createModuleLogger('Lazyload');
 
 // Blob URL 管理器 - 池化优化版本
 const blobUrlManager = {
@@ -56,7 +60,7 @@ const blobUrlManager = {
                     // 因为每个blob只能对应一个URL，所以还是需要创建新的
                     newBlobUrl = URL.createObjectURL(blob);
                 } catch (error) {
-                    console.warn('复用blob URL失败，创建新的:', error);
+                    lazyloadLogger.warn('复用blob URL失败，创建新的', error);
                     newBlobUrl = URL.createObjectURL(blob);
                 }
             } else {
@@ -66,7 +70,10 @@ const blobUrlManager = {
 
             // 验证blob URL是否有效
             if (!newBlobUrl || !newBlobUrl.startsWith('blob:')) {
-                console.warn('创建blob URL失败');
+                // 生产环境安全修复：条件化console输出
+                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                    lazyloadLogger.warn('创建blob URL失败');
+                }
                 return null;
             }
 
@@ -75,7 +82,7 @@ const blobUrlManager = {
 
             // 设置图片src前先监听错误事件
             const errorHandler = (e) => {
-                console.warn('blob URL加载失败，尝试清理:', newBlobUrl);
+                lazyloadLogger.warn('blob URL加载失败，尝试清理', { newBlobUrl });
                 this.revokeBlobUrl(img);
                 img.removeEventListener('error', errorHandler);
             };
@@ -85,7 +92,7 @@ const blobUrlManager = {
 
             return newBlobUrl;
         } catch (error) {
-            console.warn('设置blob URL时出错:', error);
+            lazyloadLogger.warn('设置blob URL时出错', error);
             return null;
         }
     },
@@ -144,24 +151,95 @@ const blobUrlManager = {
             }
             // 减少清理日志输出频率
             if (expiredUrls.length > 0 && Math.random() < 0.1) { // 10%概率输出
-                console.debug(`清理了 ${expiredUrls.length} 个池中过期blob URLs`);
+                lazyloadLogger.debug('清理了池中过期blob URLs', { count: expiredUrls.length });
             }
         }
 
         // 减少清理日志输出频率
         if (toCleanup.length > 0 && Math.random() < 0.1) { // 10%概率输出
-            console.debug(`清理了 ${toCleanup.length} 个过期blob URLs`);
+            lazyloadLogger.debug('清理了过期blob URLs', { count: toCleanup.length });
         }
     }
 };
 
 // 定期清理过期blob URLs（更频繁）
-setInterval(() => {
+const blobCleanupInterval = setInterval(() => {
     blobUrlManager.cleanupExpired();
 }, 30000); // 每30秒清理一次
 
-// 导出blob URL管理器和重试管理器供其他模块使用
-export { blobUrlManager, thumbnailRetryManager };
+/**
+ * 统一资源清理管理器
+ * 管理所有懒加载相关的资源清理
+ */
+const resourceCleanupManager = {
+    // 存储所有需要清理的资源
+    resources: new Set(),
+    // 定时器引用
+    timers: new Set(),
+
+    /**
+     * 注册需要清理的资源
+     * @param {Object} resource - 资源对象，包含cleanup方法
+     */
+    register(resource) {
+        this.resources.add(resource);
+    },
+
+    /**
+     * 注册定时器
+     * @param {number} timerId - setTimeout/setInterval的返回值
+     */
+    registerTimer(timerId) {
+        this.timers.add(timerId);
+    },
+
+    /**
+     * 清理所有资源
+     */
+    cleanup() {
+        // 清理所有注册的资源
+        for (const resource of this.resources) {
+            try {
+                if (resource && typeof resource.cleanup === 'function') {
+                    resource.cleanup();
+                }
+            } catch (error) {
+                lazyloadLogger.warn('清理资源时出错', error);
+            }
+        }
+
+        // 清理所有定时器
+        for (const timerId of this.timers) {
+            try {
+                clearTimeout(timerId);
+                clearInterval(timerId);
+            } catch (error) {
+                // 静默忽略清理错误
+            }
+        }
+
+        this.timers.clear();
+    },
+
+    /**
+     * 销毁管理器
+     */
+    destroy() {
+        this.cleanup();
+        this.resources.clear();
+    }
+};
+
+// 注册现有的清理资源
+resourceCleanupManager.register(blobUrlManager);
+resourceCleanupManager.register(thumbnailRetryManager);
+resourceCleanupManager.register(thumbnailRequestThrottler);
+
+// 注册定时器到资源清理管理器
+resourceCleanupManager.registerTimer(blobCleanupInterval);
+
+// 导出资源清理管理器
+export { blobUrlManager, thumbnailRetryManager, resourceCleanupManager };
 
 // 将blob URL管理器暴露到全局window对象，供SSE等其他模块使用
 if (typeof window !== 'undefined') {
@@ -169,9 +247,7 @@ if (typeof window !== 'undefined') {
 
     // 页面卸载时清理所有资源
     window.addEventListener('beforeunload', () => {
-        blobUrlManager.cleanupAll();
-        thumbnailRetryManager.cleanup();
-        thumbnailRequestThrottler.cleanup();
+        resourceCleanupManager.cleanup();
         // 清理虚拟滚动懒加载器
         if (window.virtualScrollLazyLoader) {
             window.virtualScrollLazyLoader.cleanup();
@@ -188,14 +264,14 @@ function handleImageLoad(event) {
     const status = img.dataset.thumbStatus;
     // 当缩略图仍在生成中或失败时，保留占位，不标记为 loaded
     if (status === 'processing') {
-        img.classList.add('processing');
+        safeClassList(img, 'add', 'processing');
 
         // 添加更明显的loading指示器
         const container = img.parentElement;
         if (container && !container.querySelector('.processing-indicator')) {
             const indicator = document.createElement('div');
             indicator.className = 'processing-indicator';
-            indicator.innerHTML = `
+            safeSetInnerHTML(indicator, `
                 <div class="processing-spinner">
                     <div class="processing-dots">
                         <div class="processing-dot"></div>
@@ -204,26 +280,30 @@ function handleImageLoad(event) {
                     </div>
                 </div>
                 <div class="processing-text">生成中...</div>
-            `;
+            `);
             container.appendChild(indicator);
 
             // 3秒后自动移除指示器（防止长时间显示）
-            setTimeout(() => {
+            const indicatorTimeoutId = setTimeout(() => {
                 if (indicator.parentNode) {
                     indicator.remove();
                 }
             }, 3000);
+
+            // 注册临时定时器到清理管理器
+            resourceCleanupManager.registerTimer(indicatorTimeoutId);
         }
 
         return;
     }
     if (status === 'failed') {
-        img.classList.add('error');
+        safeClassList(img, 'add', 'error');
         return;
     }
-    img.classList.add('loaded');
+    safeClassList(img, 'add', 'loaded');
     // 清理可能残留的处理中/错误态样式与标记，避免覆盖正常显示
-    img.classList.remove('processing', 'error');
+    safeClassList(img, 'remove', 'processing');
+    safeClassList(img, 'remove', 'error');
     img.dataset.thumbStatus = '';
 
     // 使用统一的blob URL管理器清理资源
@@ -232,7 +312,7 @@ function handleImageLoad(event) {
     // 清理父元素的生成状态类，停止SVG动画
     const parent = img.closest('.photo-item, .album-card');
     if (parent) {
-        parent.classList.remove('thumbnail-generating');
+        safeClassList(parent, 'remove', 'thumbnail-generating');
     }
 
     // 手动隐藏占位符和加载覆盖层，因为CSS选择器无法向前选择
@@ -243,14 +323,18 @@ function handleImageLoad(event) {
         const processingIndicator = container.querySelector('.processing-indicator');
 
         if (placeholder) {
-            placeholder.style.opacity = '0';
-            placeholder.style.animation = 'none';
-            placeholder.style.pointerEvents = 'none';
+            safeSetStyle(placeholder, {
+                opacity: '0',
+                animation: 'none',
+                pointerEvents: 'none'
+            });
         }
 
         if (loadingOverlay) {
-            loadingOverlay.style.display = 'none';
-            loadingOverlay.style.opacity = '0';
+            safeSetStyle(loadingOverlay, {
+                display: 'none',
+                opacity: '0'
+            });
         }
 
         // 移除processing indicator
@@ -283,8 +367,8 @@ function handleImageError(event) {
             <text x="50" y="90" text-anchor="middle" fill="#9CA3AF" font-size="10" font-family="Arial, sans-serif">BROKEN</text>
         </svg>`;
     img.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(brokenSvg);
-    img.classList.add('error');
-    img.classList.remove('blurred');
+    safeClassList(img, 'add', 'error');
+    safeClassList(img, 'remove', 'blurred');
 
     // 手动隐藏占位符和加载覆盖层
     const container = img.parentElement;
@@ -293,14 +377,18 @@ function handleImageError(event) {
         const loadingOverlay = container.querySelector('.loading-overlay');
 
         if (placeholder) {
-            placeholder.style.opacity = '0';
-            placeholder.style.animation = 'none';
-            placeholder.style.pointerEvents = 'none';
+            safeSetStyle(placeholder, {
+                opacity: '0',
+                animation: 'none',
+                pointerEvents: 'none'
+            });
         }
 
         if (loadingOverlay) {
-            loadingOverlay.style.display = 'none';
-            loadingOverlay.style.opacity = '0';
+            safeSetStyle(loadingOverlay, {
+                display: 'none',
+                opacity: '0'
+            });
         }
     }
 }
@@ -415,9 +503,12 @@ const thumbnailRequestThrottler = {
 };
 
 // 定期清理超时的请求记录
-setInterval(() => {
+const requestCleanupInterval = setInterval(() => {
     thumbnailRequestThrottler.cleanup();
 }, 15000); // 15秒清理一次
+
+// 注册定时器到资源清理管理器
+resourceCleanupManager.registerTimer(requestCleanupInterval);
 
 /**
  * 缩略图重试管理器
@@ -441,7 +532,7 @@ const thumbnailRetryManager = {
             img: img,
             url: thumbnailUrl,
             retryCount: 0,
-            maxRetries: 2, // 降低重试次数到2次
+            maxRetries: 8, // 扩大重试上限，容忍生成延迟
             nextRetryTime: Date.now() + 8000 // 8秒后开始第一次重试
         };
 
@@ -468,14 +559,14 @@ const thumbnailRetryManager = {
 
         const timeoutId = setTimeout(async () => {
             // 检查图片状态
-            if (!img.isConnected || img.classList.contains('loaded') || img.dataset.thumbStatus !== 'processing') {
+            if (!img.isConnected || safeClassList(img, 'contains', 'loaded') || img.dataset.thumbStatus !== 'processing') {
                 this.removeRetry(img);
                 return;
             }
 
             // 检查重试次数
             if (retryCount >= maxRetries) {
-                console.warn('缩略图重试次数过多，停止重试:', url);
+                lazyloadLogger.warn('缩略图重试次数过多，停止重试', { url });
                 this.removeRetry(img);
                 return;
             }
@@ -527,7 +618,7 @@ const thumbnailRetryManager = {
                 }
             } catch (error) {
                 if (error.name !== 'AbortError') {
-                    console.warn('缩略图重试失败:', url, error);
+                    lazyloadLogger.warn('缩略图重试失败', { url, error });
                     // 网络错误也停止重试，避免无限循环
                     this.removeRetry(img);
                 }
@@ -610,16 +701,16 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
             thumbnailRetryManager.addRetry(img, thumbnailUrl);
         } else if (response.status === 429) {
             // 请求频率过高，被服务器拒绝
-            // 频率限制日志只在开发模式下输出
-            if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                console.debug('缩略图请求被频率限制，延迟重试:', thumbnailUrl);
-            }
+            lazyloadLogger.debug('缩略图请求被频率限制，延迟重试', { thumbnailUrl });
             // 立即标记请求结束（因为服务器拒绝了）
             thumbnailRequestThrottler.markRequestEnd(thumbnailUrl);
             // 延迟更长时间重试
-            setTimeout(() => {
+            const retryTimeoutId = setTimeout(() => {
                 requestLazyImage(img);
             }, 2000); // 2秒后重试
+
+            // 注册临时定时器到清理管理器
+            resourceCleanupManager.registerTimer(retryTimeoutId);
             return; // 提前返回，避免重复处理
         } else if (response.status === 500 && (response.headers.get('X-Thumb-Status') === 'failed')) {
             // 失败：展示后端返回的失败占位图，保留占位层
@@ -634,7 +725,7 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
         }
     } catch (error) {
         if (error.name !== 'AbortError') {
-            console.error('获取懒加载图片失败:', thumbnailUrl, error);
+            lazyloadLogger.error('获取懒加载图片失败', { thumbnailUrl, error });
             img.dispatchEvent(new Event('error'));
         }
     }
@@ -648,13 +739,13 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
 function requestLazyImage(img) {
     const thumbnailUrl = img.dataset.src;
     if (!thumbnailUrl || thumbnailUrl.includes('undefined') || thumbnailUrl.includes('null')) {
-        console.error('懒加载失败: 无效的图片URL:', thumbnailUrl);
+        lazyloadLogger.error('懒加载失败: 无效的图片URL', { thumbnailUrl });
         img.dispatchEvent(new Event('error'));
         return;
     }
 
     // 如果已完成加载，或已有真实 src（非 data: 与非 blob:），则不重复请求
-    if (img.classList.contains('loaded')) return;
+    if (safeClassList(img, 'contains', 'loaded')) return;
     if (img.src && !img.src.startsWith('data:') && !img.src.startsWith('blob:')) return;
 
     // 如果这张图片之前加载过，清除wasLoaded标记并继续正常加载
@@ -663,7 +754,7 @@ function requestLazyImage(img) {
         delete img.dataset.loadTime;
         // 减少快速加载日志输出，只在开发模式下输出
         if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-            console.debug('快速加载之前加载过的图片:', thumbnailUrl);
+            lazyloadLogger.debug('快速加载之前加载过的图片', { thumbnailUrl });
         }
     }
 
@@ -671,9 +762,12 @@ function requestLazyImage(img) {
     if (!thumbnailRequestThrottler.canSendRequest(thumbnailUrl)) {
         // 如果不能发送，使用智能延迟时间
         const retryDelay = thumbnailRequestThrottler.requestDelay * 2;
-        setTimeout(() => {
+        const delayTimeoutId = setTimeout(() => {
             requestLazyImage(img);
         }, retryDelay);
+
+        // 注册临时定时器到清理管理器
+        resourceCleanupManager.registerTimer(delayTimeoutId);
         return;
     }
 
@@ -704,10 +798,10 @@ export function savePageLazyState(pageKey) {
         sessionId: Date.now().toString(), // 用于标识当前会话
         images: Array.from(lazyImages).map(img => ({
             src: img.dataset.src,
-            loaded: img.classList.contains('loaded'),
+            loaded: safeClassList(img, 'contains', 'loaded'),
             status: img.dataset.thumbStatus,
             // 不缓存blob URL，因为页面重新加载后会失效
-            loadTime: img.classList.contains('loaded') ? Date.now() : null
+            loadTime: safeClassList(img, 'contains', 'loaded') ? Date.now() : null
         }))
     };
 
@@ -719,10 +813,9 @@ export function savePageLazyState(pageKey) {
         pageStateCache.delete(oldestKey);
     }
 
-    // 减少缓存保存日志输出，只在开发模式下输出
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        console.debug(`[懒加载缓存] 保存了 ${pageState.images.filter(img => img.loaded).length} 张图片的状态`);
-    }
+    lazyloadLogger.debug('懒加载缓存: 保存图片状态', {
+        count: pageState.images.filter(img => img.loaded).length
+    });
 }
 
 /**
@@ -734,10 +827,7 @@ export function restorePageLazyState(pageKey) {
 
     // 重复恢复防护
     if (restoreProtection.has(pageKey)) {
-        // 减少重复恢复日志输出，只在开发模式下输出
-        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-            console.debug(`[懒加载缓存] 跳过重复恢复: ${pageKey}`);
-        }
+        lazyloadLogger.debug('懒加载缓存: 跳过重复恢复', { pageKey });
         return false;
     }
 
@@ -747,20 +837,14 @@ export function restorePageLazyState(pageKey) {
     // 检查缓存是否过期（3分钟，缩短过期时间）
     if (Date.now() - cachedState.timestamp > 3 * 60 * 1000) {
         pageStateCache.delete(pageKey);
-        // 减少过期缓存日志输出，只在开发模式下输出
-        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-            console.debug(`[懒加载缓存] 缓存已过期: ${pageKey}`);
-        }
+        lazyloadLogger.debug('懒加载缓存: 缓存已过期', { pageKey });
         return false;
     }
 
     // 检查是否是同一会话（避免页面刷新后的无效恢复）
     const currentSessionId = sessionStorage.getItem('pageSessionId') || Date.now().toString();
     if (cachedState.sessionId !== currentSessionId) {
-        // 减少会话不匹配日志输出，只在开发模式下输出
-        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.0.1') {
-            console.debug(`[懒加载缓存] 会话不匹配，跳过恢复: ${pageKey}`);
-        }
+        lazyloadLogger.debug('懒加载缓存: 会话不匹配，跳过恢复', { pageKey });
         pageStateCache.delete(pageKey);
         return false;
     }
@@ -789,7 +873,7 @@ export function restorePageLazyState(pageKey) {
         requestAnimationFrame(() => {
             imagesToMark.forEach(({ img, cachedImage }) => {
                 // 只标记状态，不设置失效的blob URL
-                img.classList.add('loaded');
+                safeClassList(img, 'add', 'loaded');
                 img.dataset.thumbStatus = '';
 
                 // 添加快速加载标记，让懒加载系统知道这张图片之前加载过
@@ -797,15 +881,18 @@ export function restorePageLazyState(pageKey) {
                 img.dataset.loadTime = cachedImage.loadTime;
             });
 
-            // 减少恢复状态日志输出，只在开发模式下输出
-            if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                console.debug(`[懒加载缓存] 恢复了 ${restoredCount} 张图片的状态 (无blob URL)`);
-            }
+            lazyloadLogger.debug('懒加载缓存: 恢复图片状态', {
+                restoredCount,
+                note: '无blob URL'
+            });
 
             // 延迟触发布局更新，避免强制重排
-            setTimeout(() => {
+            const layoutTimeoutId = setTimeout(() => {
                 triggerMasonryUpdate();
             }, 50);
+
+            // 注册临时定时器到清理管理器
+            resourceCleanupManager.registerTimer(layoutTimeoutId);
         });
 
         return true;
@@ -850,18 +937,21 @@ export function setupLazyLoading() {
                 img._noContextMenuBound = true;
             }
 
-            if (state.isBlurredMode) img.classList.add('blurred');
+            if (state.isBlurredMode) safeClassList(img, 'add', 'blurred');
 
             // 重要修复：只对成功加载的图片停止观察
             // 处理中的图片（processing状态）需要保持观察，以便SSE更新或重试时能够重新触发
-            if (img.classList.contains('loaded') || img.dataset.thumbStatus === 'failed') {
+            if (safeClassList(img, 'contains', 'loaded') || img.dataset.thumbStatus === 'failed') {
                 observer.unobserve(img);
                 img._processingLazyLoad = false; // 清理标记
             } else {
                 // 延迟清理标记，避免重复处理
-                setTimeout(() => {
+                const cleanupTimeoutId = setTimeout(() => {
                     img._processingLazyLoad = false;
                 }, 100);
+
+                // 注册临时定时器到清理管理器
+                resourceCleanupManager.registerTimer(cleanupTimeoutId);
             }
         });
     }, {
@@ -917,7 +1007,7 @@ export function reobserveImage(img) {
     }
 
     // 如果图片已被观察器停止观察，重新开始观察
-    if (img._observed && !img.classList.contains('loaded') && img.dataset.thumbStatus !== 'failed') {
+    if (img._observed && !safeClassList(img, 'contains', 'loaded') && img.dataset.thumbStatus !== 'failed') {
         globalImageObserver.observe(img);
     }
 }
