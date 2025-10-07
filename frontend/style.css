@@ -3230,3 +3230,152 @@ body.settings-open {
     transform: scale(1);
     pointer-events: auto;
 }
+
+/* ===== 首页层级显示样式 ===== */
+
+/* 层级标识样式 */
+.album-depth {
+    font-size: 0.65rem;
+    font-weight: 600;
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.4), rgba(236, 72, 153, 0.3));
+    border: 1px solid rgba(139, 92, 246, 0.3);
+    border-radius: 0.25rem;
+    padding: 2px 6px;
+    margin-left: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    transition: all 0.2s ease;
+}
+
+.album-depth:hover {
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.6), rgba(236, 72, 153, 0.5));
+    border-color: rgba(139, 92, 246, 0.5);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+/* 嵌套相册的视觉效果 */
+.album-link[data-is-nested="true"] .album-card {
+    border: 1px solid rgba(139, 92, 246, 0.2);
+    background: linear-gradient(145deg, rgba(55, 65, 81, 0.9), rgba(75, 85, 99, 0.8));
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.album-link[data-is-nested="true"] .album-card:hover {
+    border-color: rgba(139, 92, 246, 0.4);
+    background: linear-gradient(145deg, rgba(55, 65, 81, 0.95), rgba(75, 85, 99, 0.9));
+    box-shadow: 0 8px 24px rgba(139, 92, 246, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    transform: translateY(-2px);
+}
+
+/* 层级缩进动画 */
+.album-link[data-is-nested="true"] {
+    animation: nestedSlideIn 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    opacity: 0;
+    transform: translateX(-20px);
+}
+
+@keyframes nestedSlideIn {
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* 为不同层级的相册添加不同的延迟动画 */
+.album-link[data-depth="2"] {
+    animation-delay: 0.1s;
+}
+
+.album-link[data-depth="3"] {
+    animation-delay: 0.2s;
+}
+
+.album-link[data-depth="4"] {
+    animation-delay: 0.3s;
+}
+
+/* 首页层级分组标题（可选功能） */
+.home-level-section {
+    margin: 2rem 0 1rem 0;
+    padding: 0.75rem 1rem;
+    background: linear-gradient(90deg, rgba(139, 92, 246, 0.1), transparent);
+    border-left: 3px solid rgba(139, 92, 246, 0.5);
+    border-radius: 0.25rem;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+.home-level-section.level-1 {
+    border-left-color: rgba(139, 92, 246, 0.7);
+    background: linear-gradient(90deg, rgba(139, 92, 246, 0.15), transparent);
+}
+
+.home-level-section.level-2 {
+    border-left-color: rgba(236, 72, 153, 0.7);
+    background: linear-gradient(90deg, rgba(236, 72, 153, 0.15), transparent);
+}
+
+.home-level-section.level-3 {
+    border-left-color: rgba(59, 130, 246, 0.7);
+    background: linear-gradient(90deg, rgba(59, 130, 246, 0.15), transparent);
+}
+
+/* 响应式优化 */
+@media (max-width: 768px) {
+    .album-depth {
+        font-size: 0.6rem;
+        padding: 1px 4px;
+        margin-left: 0.25rem;
+    }
+
+    .album-link[data-is-nested="true"] {
+        /* 移动端减少缩进 */
+        margin-left: 0.5rem !important;
+    }
+
+    .home-level-section {
+        margin: 1.5rem 0 0.75rem 0;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.75rem;
+    }
+}
+
+/* 网格模式下的层级显示优化 */
+.grid-mode .album-link[data-is-nested="true"] {
+    transform: scale(0.95);
+    transition: transform 0.2s ease;
+}
+
+.grid-mode .album-link[data-is-nested="true"]:hover {
+    transform: scale(0.98);
+}
+
+/* 瀑布流模式下的层级显示优化 */
+.masonry-mode .album-link[data-is-nested="true"] {
+    position: relative;
+}
+
+.masonry-mode .album-link[data-is-nested="true"]::before {
+    content: '';
+    position: absolute;
+    left: -8px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: linear-gradient(180deg, rgba(139, 92, 246, 0.6), rgba(236, 72, 153, 0.4));
+    border-radius: 1px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.masonry-mode .album-link[data-is-nested="true"]:hover::before {
+    opacity: 1;
+}

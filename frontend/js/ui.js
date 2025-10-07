@@ -168,21 +168,91 @@ export function renderBreadcrumb(path) {
 export function displayAlbum(album) {
 	const aspectRatio = album.coverHeight ? album.coverWidth / album.coverHeight : 1;
 	const timeText = formatTime(album.mtime);
+
+	// 计算路径深度，用于层级显示
+	const pathDepth = (album.path || '').split('/').length;
+	const isNested = pathDepth > 1;
+	const isHomePage = !state.currentBrowsePath || state.currentBrowsePath === '';
+
 	let sortParam = '';
 	if (state.entrySort && state.entrySort !== 'smart') sortParam = `?sort=${state.entrySort}`; else {
 		const hash = window.location.hash;
 		const questionMarkIndex = hash.indexOf('?');
 		sortParam = questionMarkIndex !== -1 ? hash.substring(questionMarkIndex) : '';
 	}
-	const img = createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': album.coverUrl, alt: album.name } });
-	const albumTitle = createElement('div', { classes: ['album-title'], textContent: album.name });
+
+	// 根据深度调整卡片样式
+	const cardClasses = [
+		'album-card', 'group', 'block', 'bg-gray-800', 'rounded-lg',
+		'overflow-hidden', 'shadow-lg', 'hover:shadow-purple-500/30',
+		'transition-shadow'
+	];
+
+	// 首页的子目录添加缩进和透明度
+	if (isHomePage && isNested) {
+		cardClasses.push('ml-4', 'md:ml-8', 'lg:ml-12'); // 响应式缩进
+		cardClasses.push('opacity-90', 'hover:opacity-100'); // 稍微透明化，悬停时恢复
+	}
+
+	const img = createElement('img', {
+		classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'],
+		attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': album.coverUrl, alt: album.name }
+	});
+
+	// 显示相册名称，对于嵌套目录可以显示完整路径或简化名称
+	let displayName = album.name;
+	if (isHomePage && isNested) {
+		// 首页显示嵌套目录时，可以添加路径前缀或图标
+		const pathParts = album.path.split('/');
+		displayName = '📁 ' + album.name; // 添加文件夹图标
+	}
+
+	const albumTitle = createElement('div', {
+		classes: ['album-title'],
+		textContent: displayName
+	});
+
+	// 构建元数据
 	const albumMetaKids = [createElement('span', { classes: ['album-type'], textContent: '相册' })];
+
+	// 为嵌套目录添加层级标识
+	if (isHomePage && isNested) {
+		albumMetaKids.push(createElement('span', {
+			classes: ['album-depth', 'text-xs', 'bg-purple-600/30', 'px-2', 'py-1', 'rounded'],
+			textContent: `L${pathDepth}`
+		}));
+	}
+
 	if (timeText) albumMetaKids.push(createElement('span', { classes: ['album-time'], textContent: timeText }));
-	const infoOverlay = createElement('div', { classes: ['card-info-overlay'], children: [albumTitle, createElement('div', { classes: ['album-meta'], children: albumMetaKids })] });
-	
-	const relativeDiv = createElement('div', { classes: ['relative'], attributes: { style: `aspect-ratio: ${aspectRatio}` }, children: [createElement('div', { classes: ['image-placeholder','absolute','inset-0'] }), img, infoOverlay] });
-	const link = createElement('a', { classes: ['album-card','group','block','bg-gray-800','rounded-lg','overflow-hidden','shadow-lg','hover:shadow-purple-500/30','transition-shadow'], attributes: { href: `#/${encodeURIComponent(album.path)}${sortParam}` }, children: [relativeDiv] });
-	return createElement('div', { classes: ['grid-item','album-link'], attributes: { 'data-path': album.path, 'data-width': album.coverWidth || 1, 'data-height': album.coverHeight || 1 }, children: [link] });
+
+	const infoOverlay = createElement('div', {
+		classes: ['card-info-overlay'],
+		children: [albumTitle, createElement('div', { classes: ['album-meta'], children: albumMetaKids })]
+	});
+
+	const relativeDiv = createElement('div', {
+		classes: ['relative'],
+		attributes: { style: `aspect-ratio: ${aspectRatio}` },
+		children: [createElement('div', { classes: ['image-placeholder','absolute','inset-0'] }), img, infoOverlay]
+	});
+
+	const link = createElement('a', {
+		classes: cardClasses,
+		attributes: { href: `#/${encodeURIComponent(album.path)}${sortParam}` },
+		children: [relativeDiv]
+	});
+
+	return createElement('div', {
+		classes: ['grid-item','album-link'],
+		attributes: {
+			'data-path': album.path,
+			'data-width': album.coverWidth || 1,
+			'data-height': album.coverHeight || 1,
+			'data-depth': pathDepth,
+			'data-is-nested': isNested
+		},
+		children: [link]
+	});
 }
 
 /**

@@ -70,7 +70,9 @@ export async function fetchBrowseResults(path, page, signal) {
         }
 
         const sort = getSortParamFromHash();
-        const url = `/api/browse/${encodedPath}?page=${page}&limit=50&sort=${sort}`;
+        // 首页使用更大的limit以显示更多子目录
+        const limit = (path === '') ? 200 : 50;
+        const url = `/api/browse/${encodedPath}?page=${page}&limit=${limit}&sort=${sort}`;
         const performRequest = () => requestJSONWithDedup(url, {
             method: 'GET',
             headers,
