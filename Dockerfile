@@ -20,8 +20,7 @@ FROM node:20-alpine AS backend-builder
 WORKDIR /app/backend
 
 # 构建原生模块所需依赖（切换为国内 Alpine 源以加速）
-RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories && \
-    apk add --no-cache build-base python3 py3-setuptools vips-dev
+RUN apk add --no-cache build-base python3 py3-setuptools vips-dev
 
 # 复制后端 package 文件并安装生产依赖
 COPY backend/package*.json ./
@@ -41,7 +40,6 @@ WORKDIR /app
 # 阿里云: mirrors.aliyun.com
 RUN npm config set registry https://registry.npmmirror.com && \
     npm install -g pm2 && \
-    sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories && \
     apk add --no-cache gosu ffmpeg vips dcron
 
 # 拷贝后端依赖
