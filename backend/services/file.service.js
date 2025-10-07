@@ -288,7 +288,16 @@ async function getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, 
                 depthConditions.push(`length(path) - length(replace(path, '/', '')) = ${i}`);
             }
         }
-        whereClause = `(${depthConditions.join(' OR ')}) AND type = 'album'`;
+        // 只显示深度>0且包含媒体文件的目录
+        const filteredDepthConditions = [];
+        for (let i = 1; i <= HOME_MAX_DEPTH; i++) {
+            filteredDepthConditions.push(`length(path) - length(replace(path, '/', '')) = ${i}`);
+        }
+        whereClause = `(${filteredDepthConditions.join(' OR ')}) AND type = 'album' AND EXISTS (
+            SELECT 1 FROM items AS child_items
+            WHERE child_items.type IN ('photo', 'video')
+            AND child_items.path LIKE i.path || '/%'
+        )`;
         whereParams = [];
         logger.info(`[首页子目录显示] 生成SQL条件: ${whereClause}`);
     } else {
@@ -301,8 +310,8 @@ async function getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, 
 
     // 总数（albums + media）
     const totalRows = await dbAll('main',
-        `SELECT COUNT(1) as c FROM items
-         WHERE (${whereClause}) AND type IN ('album','photo','video')`,
+        `SELECT COUNT(1) as c FROM items i
+         WHERE (${whereClause}) AND i.type IN ('album','photo','video')`,
         whereParams
     );
     const total = totalRows?.[0]?.c || 0;
