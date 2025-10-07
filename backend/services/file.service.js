@@ -16,7 +16,7 @@ try {
 } catch {}
 const logger = require('../config/logger');
 const { redis } = require('../config/redis');
-const { PHOTOS_DIR, API_BASE, COVER_INFO_LRU_SIZE } = require('../config');
+const { PHOTOS_DIR, API_BASE, COVER_INFO_LRU_SIZE, HOME_SHOW_SUBDIRS, HOME_MAX_DEPTH, HOME_MAX_ITEMS } = require('../config');
 const { isPathSafe } = require('../utils/path.utils');
 const { dbAll, runAsync } = require('../db/multi-db');
 const { getVideoDimensions } = require('../utils/media.utils.js');
@@ -274,10 +274,30 @@ async function getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, 
     await ensureBrowseIndexes();
     const prefix = (relativePathPrefix || '').replace(/\\/g, '/');
 
-    const whereClause = !prefix
-        ? `instr(path, '/') = 0`
-        : `path LIKE ? || '/%' AND instr(substr(path, length(?) + 2), '/') = 0`;
-    const whereParams = !prefix ? [] : [prefix, prefix];
+    // 首页递归显示逻辑
+    let whereClause, whereParams;
+    if (!prefix && HOME_SHOW_SUBDIRS) {
+        // 首页且开启子目录显示：显示指定深度内的所有项目
+        logger.info(`[首页子目录显示] 启用递归显示，最大深度: ${HOME_MAX_DEPTH}`);
+        const depthConditions = [];
+        for (let i = 0; i <= HOME_MAX_DEPTH; i++) {
+            if (i === 0) {
+                depthConditions.push("instr(path, '/') = 0");  // 根目录：没有斜杠
+            } else {
+                // 修复：正确计算深度 - 使用length计算斜杠数量
+                depthConditions.push(`length(path) - length(replace(path, '/', '')) = ${i}`);
+            }
+        }
+        whereClause = `(${depthConditions.join(' OR ')}) AND type = 'album'`;
+        whereParams = [];
+        logger.info(`[首页子目录显示] 生成SQL条件: ${whereClause}`);
+    } else {
+        // 原有逻辑：只显示直接子项
+        whereClause = !prefix
+            ? `instr(path, '/') = 0`
+            : `path LIKE ? || '/%' AND instr(substr(path, length(?) + 2), '/') = 0`;
+        whereParams = !prefix ? [] : [prefix, prefix];
+    }
 
     // 总数（albums + media）
     const totalRows = await dbAll('main',
@@ -294,10 +314,35 @@ async function getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, 
 
     switch (sort) {
         case 'name_asc':
-            orderBy = `ORDER BY is_dir DESC, name COLLATE NOCASE ASC`;
+            if (!prefix && HOME_SHOW_SUBDIRS) {
+                // 首页递归显示：先按深度，再按类型，最后按名称
+                orderBy = `ORDER BY
+                    CASE
+                        WHEN length(path) - length(replace(path, '/', '')) = 0 THEN 0  // 根目录项目
+                        WHEN length(path) - length(replace(path, '/', '')) = 1 THEN 1  // 1级子目录
+                        WHEN length(path) - length(replace(path, '/', '')) = 2 THEN 2  // 2级子目录
+                        ELSE 3
+                    END,
+                    is_dir DESC,
+                    name COLLATE NOCASE ASC`;
+            } else {
+                orderBy = `ORDER BY is_dir DESC, name COLLATE NOCASE ASC`;
+            }
             break;
         case 'name_desc':
-            orderBy = `ORDER BY is_dir DESC, name COLLATE NOCASE DESC`;
+            if (!prefix && HOME_SHOW_SUBDIRS) {
+                orderBy = `ORDER BY
+                    CASE
+                        WHEN length(path) - length(replace(path, '/', '')) = 0 THEN 0
+                        WHEN length(path) - length(replace(path, '/', '')) = 1 THEN 1
+                        WHEN length(path) - length(replace(path, '/', '')) = 2 THEN 2
+                        ELSE 3
+                    END,
+                    is_dir DESC,
+                    name COLLATE NOCASE DESC`;
+            } else {
+                orderBy = `ORDER BY is_dir DESC, name COLLATE NOCASE DESC`;
+            }
             break;
         case 'mtime_asc':
             orderBy = `ORDER BY is_dir DESC, mtime ASC`;
@@ -310,7 +355,21 @@ async function getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, 
             orderBy = `ORDER BY is_dir DESC, name COLLATE NOCASE ASC`;
             break;
         default: // smart
-            if (!prefix) {
+            if (!prefix && HOME_SHOW_SUBDIRS) {
+                // 首页递归显示：按深度、类型、智能排序
+                orderBy = `ORDER BY
+                    CASE
+                        WHEN length(path) - length(replace(path, '/', '')) = 0 THEN 0
+                        WHEN length(path) - length(replace(path, '/', '')) = 1 THEN 1
+                        WHEN length(path) - length(replace(path, '/', '')) = 2 THEN 2
+                        ELSE 3
+                    END,
+                    is_dir DESC,
+                    CASE WHEN is_dir=1 THEN CASE WHEN mtime > ${dayAgo} THEN 0 ELSE 1 END END ASC,
+                    CASE WHEN is_dir=1 AND mtime > ${dayAgo} THEN mtime END DESC,
+                    CASE WHEN is_dir=1 AND mtime <= ${dayAgo} THEN name END COLLATE NOCASE ASC,
+                    CASE WHEN is_dir=0 THEN name END COLLATE NOCASE ASC`;
+            } else if (!prefix) {
                 orderBy = `ORDER BY is_dir DESC,
                                    CASE WHEN is_dir=1 THEN CASE WHEN mtime > ${dayAgo} THEN 0 ELSE 1 END END ASC,
                                    CASE WHEN is_dir=1 AND mtime > ${dayAgo} THEN mtime END DESC,

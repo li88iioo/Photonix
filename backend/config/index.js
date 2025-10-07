@@ -123,6 +123,11 @@ const HLS_CHECK_BATCH_SIZE = parseInt(process.env.HLS_CHECK_BATCH_SIZE) || 10; /
 // --- 文件监听配置 ---
 const DISABLE_WATCH = (process.env.DISABLE_WATCH || 'false').toLowerCase() === 'true'; // 关闭实时文件监听
 
+// --- 首页显示配置 ---
+const HOME_SHOW_SUBDIRS = (process.env.HOME_SHOW_SUBDIRS || 'true').toLowerCase() === 'true'; // 首页是否显示子目录
+const HOME_MAX_DEPTH = parseInt(process.env.HOME_MAX_DEPTH || '5'); // 首页最大显示深度（默认5层）
+const HOME_MAX_ITEMS = parseInt(process.env.HOME_MAX_ITEMS || '200'); // 首页最大显示项目数
+
 module.exports = {
     // 基础配置
     PORT,
@@ -167,6 +172,11 @@ module.exports = {
 
     // 文件监听配置
     DISABLE_WATCH,
+
+    // 首页显示配置
+    HOME_SHOW_SUBDIRS,
+    HOME_MAX_DEPTH,
+    HOME_MAX_ITEMS,
 
     // 硬件检测函数
     detectHardwareConfig,
