@@ -2,13 +2,18 @@ const { parentPort } = require('worker_threads');
 const { exec } = require('child_process');
 const path = require('path');
 const { promises: fs, constants: FS_CONST } = require('fs');
+const { TraceManager } = require('../utils/trace');
 const util = require('util');
 const os = require('os');
 const { redis } = require('../config/redis');
+const { safeRedisGet, safeRedisSet } = require('../utils/helpers');
 const winston = require('winston');
+const baseLogger = require('../config/logger');
+const { LOG_PREFIXES, formatLog, normalizeMessagePrefix } = baseLogger;
 const { initializeConnections, dbAll } = require('../db/multi-db');
 const { THUMBS_DIR, PHOTOS_DIR, VIDEO_MAX_CONCURRENCY, VIDEO_TASK_DELAY_MS } = require('../config');
 const { tempFileManager } = require('../utils/tempFileManager');
+const { createWorkerResult, createWorkerError } = require('../utils/workerMessage');
 
 (async () => {
     await initializeConnections();
@@ -16,7 +21,16 @@ const { tempFileManager } = require('../utils/tempFileManager');
     // --- 日志和配置 ---
     const logger = winston.createLogger({
         level: process.env.LOG_LEVEL || 'info',
-        format: winston.format.combine(winston.format.colorize(), winston.format.timestamp(), winston.format.printf(info => `[${info.timestamp}] [VIDEO-PROCESSOR] ${info.level}: ${info.message}`)),
+        format: winston.format.combine(
+            winston.format.colorize(),
+            winston.format.timestamp(),
+            winston.format.printf(info => {
+                const date = new Date(info.timestamp);
+                const time = date.toTimeString().split(' ')[0];
+                const normalized = normalizeMessagePrefix(info.message);
+                return `[${time}] ${info.level}: ${LOG_PREFIXES.VIDEO_WORKER || '视频线程'} ${normalized}`;
+            })
+        ),
         transports: [new winston.transports.Console()]
     });
 
@@ -85,7 +99,7 @@ const { tempFileManager } = require('../utils/tempFileManager');
             // 尝试垃圾回收（如果可用）
             if (global.gc) {
                 global.gc();
-                logger.info('[VIDEO-PROCESSOR] 已触发垃圾回收');
+                logger.debug('[VIDEO-PROCESSOR] 已触发垃圾回收');
             }
 
             // 如果队列严重积压，暂停队列处理
@@ -162,13 +176,14 @@ const { tempFileManager } = require('../utils/tempFileManager');
         }
         
         // 发送退出信号给主进程
-        parentPort.postMessage({ 
-            type: 'worker_shutdown', 
-            reason: reason,
+        parentPort.postMessage(createWorkerError({
+            type: 'worker_shutdown',
+            reason,
+            message: `Video worker shutting down (${reason})`,
             timestamp: new Date().toISOString(),
             queueLength: taskQueue.length,
-            isProcessing: isProcessingQueue || activeTaskCount > 0
-        });
+            isProcessing: isProcessingQueue || activeTaskCount > 0,
+        }));
         
         // 等待当前任务完成（最多30秒）
         const shutdownTimeout = setTimeout(() => {
@@ -310,7 +325,7 @@ const { tempFileManager } = require('../utils/tempFileManager');
                     if (taskQueue.length > 0) {
                         setImmediate(processTaskQueue);
                     } else if (!isProcessingQueue) {
-                        logger.info('[VIDEO-PROCESSOR] 任务队列处理完成');
+                        logger.debug('[VIDEO-PROCESSOR] 任务队列处理完成');
                     }
                 }
             });
@@ -366,7 +381,8 @@ const { tempFileManager } = require('../utils/tempFileManager');
             // 归一化到 [0,360)
             let norm = ((Math.round(angle) % 360) + 360) % 360;
             return norm; // 0/90/180/270
-        } catch {
+        } catch (rotationErr) {
+            logger.debug('[VIDEO-PROCESSOR] 读取视频旋转信息失败，使用默认角度0:', rotationErr && rotationErr.message);
             return 0;
         }
     }
@@ -376,11 +392,13 @@ const { tempFileManager } = require('../utils/tempFileManager');
      */
     async function getFfmpegTuning() {
         try {
-            const [threadsStr, preset] = await redis.mget('adaptive:ffmpeg_threads', 'adaptive:ffmpeg_preset');
+            const threadsStr = await safeRedisGet(redis, 'adaptive:ffmpeg_threads', 'FFmpeg线程配置');
+            const preset = await safeRedisGet(redis, 'adaptive:ffmpeg_preset', 'FFmpeg预设配置');
             const threads = Math.max(1, parseInt(threadsStr || '1', 10));
             const presetFinal = (preset || process.env.FFMPEG_PRESET || 'veryfast');
             return { threads, preset: presetFinal };
-        } catch {
+        } catch (ffmpegCfgErr) {
+            logger.debug('[VIDEO-PROCESSOR] 获取 FFmpeg 自适应配置失败，使用默认值:', ffmpegCfgErr && ffmpegCfgErr.message);
             const cpus = Math.max(1, Number(process.env.DETECTED_CPU_COUNT) || ((os.cpus && os.cpus().length) || 1));
             const defaultThreads = Math.max(1, Math.floor(cpus / 2));
             const finalThreads = Math.max(1, parseInt(process.env.FFMPEG_THREADS || String(defaultThreads), 10));
@@ -392,7 +410,7 @@ const { tempFileManager } = require('../utils/tempFileManager');
      * 生成HLS多码率流
      */
     async function generateHlsStreams(filePath, hlsOutputDir, rotation, ffCfg) {
-        logger.info(`[2/3] 开始生成 HLS 流: ${filePath}`);
+        logger.debug(`[2/3] 开始生成 HLS 流: ${filePath}`);
         const resolutions = [
             { name: '480p', width: 854, height: 480, bandwidth: '1500000' },
             { name: '720p', width: 1280, height: 720, bandwidth: '2800000' }
@@ -419,7 +437,7 @@ const { tempFileManager } = require('../utils/tempFileManager');
                 const hlsCommand = `ffmpeg -v error -y -threads ${ffCfg.threads} -i "${filePath}" -vf "${vfChain}" -c:v libx264 -pix_fmt yuv420p -profile:v baseline -level 3.0 -preset ${ffCfg.preset} -crf 23 -c:a aac -ar 48000 -ac 2 -b:a 128k -metadata:s:v:0 rotate=0 -start_number 0 -hls_time 10 -hls_flags independent_segments -hls_segment_filename "${segmentPattern}" -hls_list_size 0 -f hls "${path.join(resDir, 'stream.m3u8')}"`;
 
                 await execPromise(hlsCommand);
-                logger.info(`  - ${res.name} HLS 流生成成功`);
+                logger.debug(`  - ${res.name} HLS 流生成成功`);
                 successfulResolutions.push(res);
             } catch (error) {
                 const errorMsg = `  - ${res.name} HLS 流生成失败: ${error.message || '未知 FFmpeg 错误'}`;
@@ -438,7 +456,10 @@ const { tempFileManager } = require('../utils/tempFileManager');
         // 如果所有分辨率都失败，抛出错误
         if (successfulResolutions.length === 0) {
             const errorDetails = failedResolutions.map(f => `${f.resolution.name}: ${f.error}`).join('; ');
-            throw new Error(`所有HLS分辨率生成失败: ${errorDetails}`);
+            const { BusinessLogicError } = require('../utils/errors');
+            throw new BusinessLogicError(`所有HLS分辨率生成失败: ${errorDetails}`, 'HLS_ALL_FAILED', {
+                failedResolutions: failedResolutions.map(f => ({ resolution: f.resolution.name, error: f.error }))
+            });
         }
 
         // 如果部分失败，记录警告但继续处理
@@ -453,13 +474,13 @@ const { tempFileManager } = require('../utils/tempFileManager');
      * 创建HLS主播放列表
      */
     async function createMasterPlaylist(hlsOutputDir, resolutions, filePath) {
-        logger.info(`[3/3] 创建 HLS 主播放列表: ${filePath}`);
+        logger.debug(`[3/3] 创建 HLS 主播放列表: ${filePath}`);
         const masterPlaylistContent = resolutions.map(res =>
             `#EXT-X-STREAM-INF:BANDWIDTH=${res.bandwidth},RESOLUTION=${res.width}x${res.height}\n${res.name}/stream.m3u8`
         ).join('\n');
         const masterPlaylist = `#EXTM3U\n${masterPlaylistContent}`;
         await fs.writeFile(path.join(hlsOutputDir, 'master.m3u8'), masterPlaylist);
-        logger.info(`[3/3] HLS 主播放列表创建成功`);
+        logger.debug(`[3/3] HLS 主播放列表创建成功`);
     }
 
     /**
@@ -533,7 +554,7 @@ const { tempFileManager } = require('../utils/tempFileManager');
             const { processingDir, hlsOutputDir } = await createProcessingDirectories(thumbsDir, relativePath);
 
             // 跳过MOOV atom优化，保持原文件不变，直接进行HLS处理
-            logger.info(`跳过MOOV atom优化，保持原文件不变: ${filePath}`);
+            logger.debug(`跳过MOOV atom优化，保持原文件不变: ${filePath}`);
 
             // 2. 检测视频旋转
             const rotation = await detectVideoRotation(filePath);
@@ -583,10 +604,15 @@ const { tempFileManager } = require('../utils/tempFileManager');
         const failureKey = `video_failed_permanently:${filePath}`;
 
         try {
-            const isPermanentlyFailed = await redis.get(failureKey);
+            const isPermanentlyFailed = await safeRedisGet(redis, failureKey, '检查永久失败标记');
             if (isPermanentlyFailed) {
                 logger.warn(`视频已被标记为永久失败，跳过: ${filePath}`);
-                parentPort.postMessage({ success: true, path: filePath, status: 'skipped_permanent_failure' });
+                parentPort.postMessage(createWorkerResult({
+                    type: 'video_task_complete',
+                    success: true,
+                    path: filePath,
+                    status: 'skipped_permanent_failure'
+                }));
                 return;
             }
 
@@ -595,18 +621,27 @@ const { tempFileManager } = require('../utils/tempFileManager');
             const hlsExists = await checkHlsExists(relativePath);
 
             if (hlsExists) {
-                logger.info(`HLS 流已存在，跳过: ${filePath}`);
-                parentPort.postMessage({ success: true, path: filePath, status: 'skipped_hls_exists' });
+                logger.debug(`HLS 流已存在，跳过: ${filePath}`);
+                parentPort.postMessage(createWorkerResult({
+                    type: 'video_task_complete',
+                    success: true,
+                    path: filePath,
+                    status: 'skipped_hls_exists'
+                }));
                 return;
             }
 
-            logger.info(`视频需要处理，开始任务: ${filePath}`);
+            logger.debug(`视频需要处理，开始任务: ${filePath}`);
             const result = await processVideo(filePath, relativePath, thumbsDir);
 
             if (result.success) {
                 logger.info(`成功处理视频: ${filePath}`);
                 failureCounts.delete(filePath);
-                parentPort.postMessage(result);
+                parentPort.postMessage(createWorkerResult({
+                    type: 'video_task_complete',
+                    ...result,
+                    task,
+                }));
             } else {
                 const currentFailures = (failureCounts.get(filePath) || 0) + 1;
                 failureCounts.set(filePath, currentFailures);
@@ -614,14 +649,23 @@ const { tempFileManager } = require('../utils/tempFileManager');
 
                 if (currentFailures >= MAX_VIDEO_RETRIES) {
                     logger.error(`视频达到最大重试次数，标记为永久失败: ${filePath}`);
-                    await redis.set(failureKey, '1', 'EX', PERMANENT_FAILURE_TTL);
+                    await safeRedisSet(redis, failureKey, '1', 'EX', PERMANENT_FAILURE_TTL, '设置永久失败标记');
                     failureCounts.delete(filePath);
                 }
-                parentPort.postMessage(result);
+                parentPort.postMessage(createWorkerError({
+                    type: 'video_task_failed',
+                    ...result,
+                    task,
+                }));
             }
         } catch (e) {
             logger.error(`[VIDEO-PROCESSOR] 处理任务时发生致命错误 ${filePath}:`, e);
-            parentPort.postMessage({ success: false, path: filePath, error: e.message });
+            parentPort.postMessage(createWorkerError({
+                type: 'video_task_failed',
+                path: filePath,
+                error: e,
+                task,
+            }));
         }
     }
 
@@ -667,7 +711,7 @@ const { tempFileManager } = require('../utils/tempFileManager');
                         }
                     }
                 } catch (e) {
-                    // 忽略无法访问的目录
+                    logger.debug(`[VIDEO-PROCESSOR] 临时目录扫描失败（忽略）: ${dirPath} -> ${e && e.message}`);
                 }
             }
             
@@ -679,11 +723,26 @@ const { tempFileManager } = require('../utils/tempFileManager');
         }
     }
 
-    parentPort.on('message', async (task) => {
-        // 更新活动时间
-        updateActivity();
+    parentPort.on('message', async (message) => {
+        // 提取追踪上下文
+        const traceContext = TraceManager.fromWorkerMessage(message);
         
-        if (task.type === 'backfill') {
+        // 获取实际任务数据
+        // 修复消息处理逻辑，确保能正确提取任务类型
+        const task = message && message.type ? 
+            message : 
+            (message && message.payload && message.payload.type) ? 
+            message.payload : 
+            (message && message.task && message.task.type) ? 
+            message.task : 
+            message;
+        
+        // 定义处理函数
+        const processTask = async () => {
+            // 更新活动时间
+            updateActivity();
+            
+            if (task.type === 'backfill') {
             logger.info('[VIDEO-PROCESSOR] 收到 HLS 回填任务，开始扫描数据库...');
             try {
                 // 先清理残留的临时文件
@@ -692,25 +751,29 @@ const { tempFileManager } = require('../utils/tempFileManager');
                 const videos = await dbAll('main', `SELECT path FROM items WHERE type = 'video'`);
                 // 允许通过 Redis 自适应开关关闭回填
                 try {
-                    const disableBackfill = await redis.get('adaptive:disable_hls_backfill');
+                    const disableBackfill = await safeRedisGet(redis, 'adaptive:disable_hls_backfill', '禁用HLS回填标记');
                     if (disableBackfill === '1') {
                         logger.warn('[VIDEO-PROCESSOR] 自适应模式：已禁用 HLS 回填。本轮跳过。');
                         return;
                     }
-                } catch {}
-                logger.info(`发现 ${videos.length} 个视频需要检查 HLS 状态。`);
+                } catch (disableCheckErr) {
+                    logger.debug('[VIDEO-PROCESSOR] 检查 HLS 回填禁用标记失败（忽略）:', disableCheckErr && disableCheckErr.message);
+                }
+                logger.info(`发现 ${videos.length} 个视频需要检查 HLS 状态`);
                 for (const video of videos) {
                     // 更新活动时间
                     updateActivity();
                     
                     // 动态中断：运行中若切到 low 档，立即停止后续回填，保护系统
                     try {
-                        const stopNow = await redis.get('adaptive:disable_hls_backfill');
+                        const stopNow = await safeRedisGet(redis, 'adaptive:disable_hls_backfill', '检查HLS回填停止');
                         if (stopNow === '1') {
                             logger.warn('[VIDEO-PROCESSOR] 自适应模式切换为低负载，已中断剩余回填任务。');
                             break;
                         }
-                    } catch {}
+                    } catch (stopCheckErr) {
+                        logger.debug('[VIDEO-PROCESSOR] 检查中止标记失败（忽略）:', stopCheckErr && stopCheckErr.message);
+                    }
                     // 依次处理，避免并发过高，增加处理间隔
                     await handleTask({
                         filePath: path.join(PHOTOS_DIR, video.path),
@@ -730,15 +793,27 @@ await new Promise(resolve => setTimeout(resolve, delayMs));
                 logger.error('[VIDEO-PROCESSOR] HLS 回填任务失败:', e);
             }
         } else if (task.type === 'cleanup') {
-            // 手动触发清理任务
-            await cleanupOrphanedTempFiles();
-            parentPort.postMessage({ success: true, message: '临时文件清理完成' });
+                // 手动触发清理任务
+                await cleanupOrphanedTempFiles();
+                parentPort.postMessage(createWorkerResult({
+                    type: 'video_cleanup_complete',
+                    success: true,
+                    message: '临时文件清理完成'
+                }));
+            } else {
+                // 将任务添加到队列而不是直接处理
+                taskQueue.push(task);
+                logger.debug(`[VIDEO-PROCESSOR] 任务已添加到队列，当前队列长度: ${taskQueue.length}`);
+                // 异步启动队列处理
+                setImmediate(() => processTaskQueue());
+            }
+        };
+        
+        // 在追踪上下文中运行
+        if (traceContext) {
+            await TraceManager.run(traceContext, processTask);
         } else {
-            // 将任务添加到队列而不是直接处理
-            taskQueue.push(task);
-            logger.info(`[VIDEO-PROCESSOR] 任务已添加到队列，当前队列长度: ${taskQueue.length}`);
-            // 异步启动队列处理
-            setImmediate(() => processTaskQueue());
+            await processTask();
         }
     });
 

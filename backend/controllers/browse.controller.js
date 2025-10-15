@@ -5,6 +5,7 @@
 const path = require('path');
 const { promises: fs } = require('fs');
 const logger = require('../config/logger');
+const { TraceManager } = require('../utils/trace');
 const { PHOTOS_DIR } = require('../config');
 const { historyWorker } = require('../services/worker.manager');
 const { getDirectoryContents } = require('../services/file.service');
@@ -66,10 +67,11 @@ exports.updateViewTime = async (req, res) => {
 
     try {
         // 向历史记录工作线程发送更新访问时间的消息
-        historyWorker.postMessage({ 
+        const message = TraceManager.injectToWorkerMessage({ 
             type: 'update_view_time', 
             payload: { userId, path: sanitizedPath } 
         });
+        historyWorker.postMessage(message);
 
         // 返回204状态码表示成功（无内容）
         res.status(204).send();

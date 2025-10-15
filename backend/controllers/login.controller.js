@@ -1,21 +1,40 @@
 /**
- * 登录页背景控制器
- * 从缩略图目录中选择一张随机图片作为登录背景，并缓存3小时
+ * 登录页背景控制器模块
+ * 实现登录页背景功能：从缩略图目录中选择一张随机图片作为登录背景，并做3小时缓存
  */
+
 const path = require('path');
 const { promises: fs } = require('fs');
 const mime = require('mime-types');
 const { redis } = require('../config/redis');
 const logger = require('../config/logger');
+const { safeRedisGet, safeRedisSet } = require('../utils/helpers');
 const { THUMBS_DIR } = require('../config');
 
 const CACHE_KEY = 'login_bg_thumb_relpath_v1';
 const CACHE_TTL_SECONDS = 60 * 60 * 3; // 3小时
 
+/**
+ * 检查指定路径的文件是否存在
+ * @param {string} p - 文件路径
+ * @returns {Promise<boolean>}
+ */
 async function fileExists(p) {
-  try { await fs.access(p); return true; } catch { return false; }
+  try {
+    await fs.access(p);
+    return true;
+  } catch (error) {
+    logger.debug(`[LoginBG] 检测文件存在失败，视为不存在: ${error && error.message}`);
+    return false;
+  }
 }
 
+/**
+ * 递归遍历目录，异步生成所有图片文件的路径
+ * 跳过隐藏目录、系统目录和临时目录
+ * @param {string} dir - 目录路径
+ * @returns {AsyncGenerator<string>}
+ */
 async function* walk(dir) {
   let entries;
   try {
@@ -38,15 +57,18 @@ async function* walk(dir) {
   }
 }
 
+/**
+ * 从缩略图目录中随机挑选一张图片，支持缓存
+ * 先尝试使用Redis缓存，缓存失效后重新随机挑选并缓存
+ * @returns {Promise<string|null>} 选中的图片相对路径，失败时返回null
+ */
 async function pickRandomThumb() {
   // 优先使用 Redis 缓存的相对路径
-  try {
-    const relCached = await redis.get(CACHE_KEY);
-    if (relCached) {
-      const abs = path.join(THUMBS_DIR, relCached);
-      if (await fileExists(abs)) return relCached;
-    }
-  } catch {}
+  const relCached = await safeRedisGet(redis, CACHE_KEY, '登录背景缓存读取');
+  if (relCached) {
+    const abs = path.join(THUMBS_DIR, relCached);
+    if (await fileExists(abs)) return relCached;
+  }
 
   // 扫描缩略图目录，收集候选并随机选择
   const candidates = [];
@@ -59,18 +81,27 @@ async function pickRandomThumb() {
   }
   if (candidates.length === 0) return null;
   const chosen = candidates[Math.floor(Math.random() * candidates.length)];
-  try { await redis.set(CACHE_KEY, chosen, 'EX', CACHE_TTL_SECONDS); } catch {}
+  
+  // 尝试缓存选择结果
+  await safeRedisSet(redis, CACHE_KEY, chosen, 'EX', CACHE_TTL_SECONDS, '登录背景缓存写入');
+  
   return chosen;
 }
 
+/**
+ * 登录页背景图片请求处理器
+ * 选取并返回一张随机图片作为背景，支持缓存及规范响应头
+ * @param {import('express').Request} req - Express 请求对象
+ * @param {import('express').Response} res - Express 响应对象
+ */
 exports.serveLoginBackground = async (req, res) => {
   const rel = await pickRandomThumb();
-  if (!rel) return res.status(404).json({ code: 'LOGIN_BG_NOT_FOUND', message: '暂无可用的背景图片', requestId: req.requestId });
+  if (!rel) {
+    return res.status(404).json({ code: 'LOGIN_BG_NOT_FOUND', message: '暂无可用的背景图片', requestId: req.requestId });
+  }
   const abs = path.join(THUMBS_DIR, rel);
   const type = mime.lookup(abs) || 'image/jpeg';
   res.setHeader('Content-Type', type);
   res.setHeader('Cache-Control', `public, max-age=${CACHE_TTL_SECONDS}`);
   return res.sendFile(abs);
 };
-
-

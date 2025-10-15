@@ -8,23 +8,36 @@ const thumbnailController = require('../controllers/thumbnail.controller');
 const { validate, Joi, asyncHandler } = require('../middleware/validation');
 const { cache } = require('../middleware/cache');
 const { requirePermission, PERMISSIONS } = require('../middleware/permissions');
-const { validateInput, VALIDATION_RULES } = require('../middleware/inputValidation');
+
+// 注意：thumbnailController 内部会从 req.query.path 读取路径，需要特殊处理
+// 创建一个适配器中间件将 query.path 复制到 req.body.path，以便 validatePath('body') 可以验证
+const adaptQueryPathToBody = (req, res, next) => {
+    if (req.query && req.query.path) {
+        req.body = req.body || {};
+        req.body.path = req.query.path;
+    }
+    next();
+};
+
+const validatePath = require('../middleware/pathValidator');
 
 // 缩略图获取路由
 // 根据查询参数中的文件路径生成或获取对应的缩略图
 const thumbQuerySchema = Joi.object({
   path: Joi.string()
     .min(1)
-    .max(2048)
+    .max(1024)  // 与 pathValidator 的 MAX_PATH_LENGTH 保持一致
     .custom((value, helpers)=> value.includes('..') ? helpers.error('any.invalid') : value, 'path traversal guard')
     .required()
 });
 
 // 缩略图获取路由 - 需要查看权限
+// 验证流程：Joi schema → adaptQueryPathToBody → validatePath → cache → controller
 router.get('/',
-    validateInput(VALIDATION_RULES.filePath),
-    requirePermission(PERMISSIONS.VIEW_THUMBNAILS),
     validate(thumbQuerySchema, 'query'),
+    adaptQueryPathToBody,
+    validatePath('body'),
+    requirePermission(PERMISSIONS.VIEW_THUMBNAILS),
     cache(300),
     asyncHandler(thumbnailController.getThumbnail)
 );

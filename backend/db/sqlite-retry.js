@@ -35,12 +35,9 @@ function isSQLiteBusyError(error) {
  * @returns {Promise<boolean>} 索引是否正在进行
  */
 async function isIndexingInProgress(redis) {
-    try {
-        const indexing = await redis.get('indexing_in_progress');
-        return !!indexing;
-    } catch {
-        return false;
-    }
+    const { safeRedisGet } = require('../utils/helpers');
+    const indexing = await safeRedisGet(redis, 'indexing_in_progress', '检查索引进行中');
+    return !!indexing;
 }
 
 /**
@@ -151,7 +148,8 @@ async function withSQLiteRetry(operation, options = {}) {
 async function writeThumbStatusWithRetry(dbRun, { path: relPath, mtime, status }, redis) {
     // 参数验证和清理
     if (!relPath || typeof relPath !== 'string') {
-        throw new Error(`无效的文件路径: ${relPath}`);
+        const { ValidationError } = require('../utils/errors');
+        throw new ValidationError(`无效的文件路径: ${relPath}`, { path: relPath, type: typeof relPath });
     }
     
     // 清理路径中的特殊字符，统一使用正斜杠

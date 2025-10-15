@@ -12,6 +12,8 @@
 const path = require('path');
 const { promises: fs } = require('fs');
 const logger = require('../../config/logger');
+const { TraceManager } = require('../../utils/trace');
+const { safeRedisDel } = require('../../utils/helpers');
 const { THUMBS_DIR, PHOTOS_DIR } = require('../../config');
 const { runHlsBatch } = require('../video.service');
 const { dbAll, dbRun, dbAllWithCache, dbGetWithCache, runAsync } = require('../../db/multi-db');
@@ -40,6 +42,11 @@ class ThumbnailSyncService {
     this.db = require('../../db/multi-db');
     this.config = require('../../config');
     this.redis = clientRedis;
+    this._resyncQueue = Promise.resolve();
+    this._resyncPending = 0;
+    this._resyncActive = false;
+    this._currentTrigger = null;
+    this._resyncStartedAt = null;
   }
 
   /**
@@ -52,7 +59,10 @@ class ThumbnailSyncService {
    * @returns {Object} 同步结果统计
    */
   async clearAndRebuildThumbStatus(mediaFiles) {
-    // 清空现有的缩略图状态表
+    // 使用Repository清空现有的缩略图状态表
+    const ThumbStatusRepository = require('../../repositories/thumbStatus.repo');
+    const thumbStatusRepo = new ThumbStatusRepository();
+    
     await this.db.dbRun('main', 'DELETE FROM thumb_status');
     let syncedCount = 0;
     let existsCount = 0;
@@ -84,32 +94,181 @@ class ThumbnailSyncService {
    * 
    * @returns {number} 同步的文件数量
    */
-  async resyncThumbnailStatus() {
-    try {
-      logger.debug('开始重新同步缩略图状态...');
-      
-      // 获取所有照片和视频文件
-      const mediaFiles = await this.db.dbAll('main', `
-        SELECT path, type FROM items
-        WHERE type IN ('photo', 'video')
-      `);
+  async resyncThumbnailStatus(options = {}) {
+    const {
+      trigger = 'unknown',
+      waitForCompletion = true,
+      skipIfRunning = false
+    } = options;
 
-      if (!mediaFiles || mediaFiles.length === 0) {
-        logger.info('没有找到媒体文件，跳过同步');
-        return 0;
+    return this._scheduleThumbnailTask({
+      trigger,
+      waitForCompletion,
+      skipIfRunning
+    }, () => this._executeThumbnailResync(trigger));
+  }
+
+  async _executeThumbnailResync(trigger) {
+    logger.info(`[ThumbnailSync] 开始重同步（触发源：${trigger}）`);
+    const MAX_BUSY_RETRIES = 3;
+
+    for (let attempt = 0; attempt < MAX_BUSY_RETRIES; attempt += 1) {
+      try {
+        const mediaFiles = await this.db.dbAll('main', `
+          SELECT path, type FROM items
+          WHERE type IN ('photo', 'video')
+        `);
+
+        if (!mediaFiles || mediaFiles.length === 0) {
+          logger.info('[ThumbnailSync] 未找到媒体文件，跳过重同步');
+          return { syncedCount: 0, existsCount: 0, missingCount: 0 };
+        }
+
+        const { syncedCount, existsCount, missingCount } = await this.clearAndRebuildThumbStatus(mediaFiles);
+        logger.info(`[ThumbnailSync] 重同步完成（触发源：${trigger}）: 总计=${syncedCount}, 存在=${existsCount}, 缺失=${missingCount}`);
+
+        await this.cleanupThumbnailCache();
+        return { syncedCount, existsCount, missingCount };
+      } catch (error) {
+        const isBusy = /SQLITE_BUSY/.test(error?.message || '') || error?.code === 'SQLITE_BUSY';
+        if (isBusy && attempt < MAX_BUSY_RETRIES - 1) {
+          const delayMs = 200 * (attempt + 1);
+          logger.warn(`[ThumbnailSync] 数据库忙（触发源：${trigger}），将在 ${delayMs}ms 后重试 (${attempt + 1}/${MAX_BUSY_RETRIES})`);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+        logger.error(`[ThumbnailSync] 重同步失败（触发源：${trigger}）:`, error);
+        throw error;
       }
-
-      // 重建缩略图状态表
-      const { syncedCount, existsCount, missingCount } = await this.clearAndRebuildThumbStatus(mediaFiles);
-      logger.debug(`缩略图状态重同步完成: 总计=${syncedCount}, 存在=${existsCount}, 缺失=${missingCount}`);
-      
-      // 清理缓存
-      await this.cleanupThumbnailCache();
-      return syncedCount;
-    } catch (error) {
-      logger.error('缩略图状态重同步失败:', error);
-      throw error;
     }
+  }
+
+  async updateThumbnailStatusIncremental(changeSet = {}) {
+    const {
+      addedPhotos = [],
+      addedVideos = [],
+      removed = [],
+      trigger = 'incremental',
+      waitForCompletion = true,
+      skipIfRunning = false
+    } = changeSet;
+
+    return this._scheduleThumbnailTask({
+      trigger,
+      waitForCompletion,
+      skipIfRunning
+    }, () => this._executeIncrementalUpdate({ addedPhotos, addedVideos, removed, trigger }));
+  }
+
+  async _executeIncrementalUpdate({ addedPhotos = [], addedVideos = [], removed = [], trigger }) {
+    logger.info(`[ThumbnailSync] 执行增量更新（触发源：${trigger}）：新增=${addedPhotos.length + addedVideos.length}，删除=${removed.length}`);
+
+    const ThumbStatusRepository = require('../../repositories/thumbStatus.repo');
+    const repo = new ThumbStatusRepository();
+
+    const removalList = Array.from(new Set((removed || []).map((p) => String(p || '').trim()).filter(Boolean)));
+    if (removalList.length > 0) {
+      try {
+        await repo.deleteBatch(removalList, false);
+        logger.debug(`[ThumbnailSync] 已删除 ${removalList.length} 个缩略图状态（触发源：${trigger}）`);
+      } catch (error) {
+        logger.warn(`[ThumbnailSync] 删除缩略图状态失败（触发源：${trigger}）:`, error && error.message ? error.message : error);
+      }
+    }
+
+    const files = [];
+    const dedupe = new Set();
+    const appendFile = (relPath, type) => {
+      if (!relPath) return;
+      const normalized = String(relPath).trim();
+      if (!normalized || dedupe.has(normalized)) {
+        return;
+      }
+      dedupe.add(normalized);
+      files.push({ path: normalized, type });
+    };
+
+    (addedPhotos || []).forEach((rel) => appendFile(rel, 'photo'));
+    (addedVideos || []).forEach((rel) => appendFile(rel, 'video'));
+
+    if (files.length === 0) {
+      return { updated: 0, deleted: removed.length };
+    }
+
+    const CHUNK_SIZE = 200;
+    let updated = 0;
+    for (let i = 0; i < files.length; i += CHUNK_SIZE) {
+      const slice = files.slice(i, i + CHUNK_SIZE);
+      for (const file of slice) {
+        try {
+          await this.processFileForSync(file);
+          updated += 1;
+        } catch (error) {
+          logger.debug(`[ThumbnailSync] 增量更新失败 (path=${file.path})：`, error && error.message ? error.message : error);
+        }
+      }
+    }
+
+    logger.info(`[ThumbnailSync] 增量更新完成（触发源：${trigger}）: 更新=${updated}, 删除=${removalList.length}`);
+    return { updated, deleted: removalList.length };
+  }
+
+  _scheduleThumbnailTask(options, taskFactory) {
+    const { trigger = 'unknown', waitForCompletion = true, skipIfRunning = false } = options || {};
+
+    const inProgress = this._resyncActive || this._resyncPending > 0;
+    if (skipIfRunning && inProgress) {
+      logger.info(`[ThumbnailSync] 当前已有任务运行中（触发源：${this._currentTrigger || '未知'}），跳过来自 ${trigger} 的请求`);
+      return {
+        inProgress: true,
+        skipped: true,
+        trigger: this._currentTrigger
+      };
+    }
+
+    if (inProgress && !skipIfRunning) {
+      logger.debug(`[ThumbnailSync] 将任务排队执行（当前运行：${this._currentTrigger || '无'}，新触发源：${trigger}）`);
+    }
+
+    this._resyncPending += 1;
+
+    const scheduledRun = this._resyncQueue.then(async () => {
+      this._resyncActive = true;
+      this._currentTrigger = trigger;
+      this._resyncStartedAt = Date.now();
+      try {
+        return await taskFactory();
+      } finally {
+        this._resyncActive = false;
+        this._currentTrigger = null;
+        this._resyncStartedAt = null;
+      }
+    });
+
+    this._resyncQueue = scheduledRun.then(() => undefined, () => undefined);
+
+    const finalize = () => {
+      this._resyncPending = Math.max(0, this._resyncPending - 1);
+    };
+    scheduledRun.finally(finalize);
+
+    if (!waitForCompletion) {
+      scheduledRun.catch((error) => {
+        logger.error(`[ThumbnailSync] 异步任务失败（触发源：${trigger}）:`, error);
+      });
+      return { started: true, trigger, promise: scheduledRun };
+    }
+
+    return scheduledRun;
+  }
+
+  getResyncState() {
+    return {
+      running: this._resyncActive,
+      pending: this._resyncPending,
+      trigger: this._currentTrigger,
+      startedAt: this._resyncStartedAt
+    };
   }
 
   /**
@@ -131,12 +290,18 @@ class ThumbnailSyncService {
     try {
       await this.fs.access(thumbFullPath);
       status = 'exists';
-    } catch {}
+    } catch (accessErr) {
+      logger.silly(`[ThumbnailSync] 检查缩略图 ${thumbPath} 失败，标记为缺失: ${accessErr && accessErr.message}`);
+    }
 
     // 更新缩略图状态表
     await this.db.dbRun('main', `
       INSERT INTO thumb_status (path, mtime, status, last_checked)
       VALUES (?, 0, ?, strftime('%s','now')*1000)
+      ON CONFLICT(path) DO UPDATE SET
+        mtime = excluded.mtime,
+        status = excluded.status,
+        last_checked = excluded.last_checked
     `, [file.path, status]);
 
     return { status };
@@ -194,13 +359,9 @@ class ThumbnailSyncService {
    * 删除Redis中的缩略图状态缓存，确保下次查询获取最新数据
    */
   async cleanupThumbnailCache() {
-    try {
-      if (this.redis) {
-        await this.redis.del('thumb_stats_cache');
-        logger.debug('已清理缩略图状态缓存');
-      }
-    } catch (cacheError) {
-      logger.debug('清理缓存失败（非关键错误）:', cacheError.message);
+    if (this.redis) {
+      await safeRedisDel(this.redis, 'thumb_stats_cache', '缩略图状态缓存清理');
+      logger.debug('已清理缩略图状态缓存');
     }
   }
 }
@@ -225,15 +386,15 @@ async function getIndexStatus() {
     // 获取索引状态行数据
     const row = await idxRepo.getIndexStatusRow();
     
-    // 获取各类型文件统计（带缓存）
-    const itemsStats = await dbAllWithCache('main', "SELECT type, COUNT(*) as count FROM items GROUP BY type", [], {
+    // 获取各类型文件统计（带缓存，使用索引优化）
+    const itemsStats = await dbAllWithCache('main', "SELECT type, COUNT(1) as count FROM items INDEXED BY idx_items_type_id GROUP BY type", [], {
       useCache: true,
       ttl: 30,
       tags: ['items-stats']
     });
     
     // 获取全文搜索索引统计（带缓存）
-    const ftsStats = await dbAllWithCache('main', "SELECT COUNT(*) as count FROM items_fts", [], {
+    const ftsStats = await dbAllWithCache('main', "SELECT COUNT(1) as count FROM items_fts", [], {
       useCache: true,
       ttl: 30,
       tags: ['fts-stats']
@@ -276,8 +437,10 @@ async function getIndexStatus() {
  */
 async function getHlsFileStats() {
   try {
-    // 获取所有视频文件
-    const videos = await dbAll('main', "SELECT path FROM items WHERE type='video'");
+    // 使用Repository获取所有视频文件
+    const ItemsRepository = require('../../repositories/items.repo');
+    const itemsRepo = new ItemsRepository();
+    const videos = await itemsRepo.getVideos();
     const totalVideos = videos.length;
     const toCheck = videos.map((v) => v.path);
     let processed = 0;
@@ -296,7 +459,9 @@ async function getHlsFileStats() {
       try {
         await fs.access(master);
         processed++;
-      } catch {}
+      } catch (hlsAccessErr) {
+        logger.silly(`[Maintenance] 无法访问 HLS master (${master})，标记为未处理: ${hlsAccessErr && hlsAccessErr.message}`);
+      }
     }
 
     // 从Redis获取失败记录数量
@@ -306,7 +471,9 @@ async function getHlsFileStats() {
         const keys = await redis.keys('video_failed_permanently:*');
         failed = keys.length;
       }
-    } catch {}
+    } catch (redisErr) {
+      logger.debug('[Maintenance] 统计 HLS 失败记录时读取 Redis 失败（忽略）:', redisErr && redisErr.message);
+    }
 
     const skipped = Math.max(0, totalVideos - processed - failed);
     return {
@@ -376,11 +543,10 @@ async function getHlsStatus() {
 
 async function performThumbnailReconcile() {
   try {
-    const missingFiles = await dbAll('main', `
-      SELECT path FROM thumb_status
-      WHERE status = 'missing'
-      LIMIT 1000
-    `);
+    const ThumbStatusRepository = require('../../repositories/thumbStatus.repo');
+    const thumbStatusRepo = new ThumbStatusRepository();
+    
+    const missingFiles = await thumbStatusRepo.getByStatus('missing', 1000);
 
     if (!missingFiles || missingFiles.length === 0) {
       logger.debug('缩略图补全检查完成：没有发现需要补全的缩略图');
@@ -407,8 +573,9 @@ async function performThumbnailReconcile() {
           WHERE path = ?
         `, [sanitizedPath]);
         changed++;
-      } catch {
+      } catch (resyncErr) {
         skipped++;
+        logger.debug(`[Maintenance] 缩略图补全标记失败，已跳过: ${sanitizedPath || row.path} -> ${resyncErr && resyncErr.message}`);
       }
     }
 
@@ -429,7 +596,9 @@ async function performThumbnailReconcile() {
 
 async function performHlsReconcileOnce(limit = 1000) {
   try {
-    const videos = await dbAll('main', `SELECT path FROM items WHERE type='video' LIMIT ${limit}`);
+    const ItemsRepository = require('../../repositories/items.repo');
+    const itemsRepo = new ItemsRepository();
+    const videos = await itemsRepo.getVideos(limit);
     if (!videos || videos.length === 0) {
       logger.debug('HLS补全检查：没有发现需要处理的视频文件');
       return { total: 0, success: 0, failed: 0, skipped: 0 };
@@ -451,7 +620,9 @@ async function performHlsReconcileOnce(limit = 1000) {
           await fs.access(master);
           skip++;
           continue;
-        } catch {}
+        } catch (missingHlsErr) {
+          logger.silly(`[Maintenance] 视频 ${sanitizedRelative} 缺少 HLS master（继续补全）: ${missingHlsErr && missingHlsErr.message}`);
+        }
 
         const sourceAbsPath = path.resolve(PHOTOS_DIR, sanitizedRelative);
         await fs.access(sourceAbsPath);
@@ -485,51 +656,104 @@ async function performHlsReconcileOnce(limit = 1000) {
 
 async function performThumbnailCleanup() {
   try {
-    const allThumbs = await dbAll('main', "SELECT path, status FROM thumb_status");
-    let deletedCount = 0;
-    let errorCount = 0;
+    const ThumbStatusRepository = require('../../repositories/thumbStatus.repo');
+    const ItemsRepository = require('../../repositories/items.repo');
+    const thumbStatusRepo = new ThumbStatusRepository();
+    const itemsRepo = new ItemsRepository();
+
+    const allThumbs = await thumbStatusRepo.getAll(['path', 'status']);
+    const result = {
+      thumbFilesRemoved: 0,
+      permanentSourcesRemoved: 0,
+      dbRecordsRemoved: 0,
+      errors: 0
+    };
 
     for (const thumb of allThumbs) {
+      if (!thumb?.path) continue;
+
+      const sanitizedPath = sanitizePath(thumb.path);
+      if (!sanitizedPath || !isPathSafe(sanitizedPath)) {
+        logger.warn(`[ThumbnailCleanup] 跳过可疑路径: ${thumb.path}`);
+        continue;
+      }
+
+      const sourceAbsPath = path.join(PHOTOS_DIR, sanitizedPath);
+      const isVideo = /\.(mp4|webm|mov)$/i.test(sanitizedPath);
+      const thumbExt = isVideo ? '.jpg' : '.webp';
+      const thumbRelPath = sanitizedPath.replace(/\.[^.]+$/, thumbExt);
+      const thumbAbsPath = path.join(THUMBS_DIR, thumbRelPath);
+
+      let sourceExists = false;
       try {
-        const sourcePath = path.join(PHOTOS_DIR, thumb.path);
-        const sourceExists = await fs.access(sourcePath).then(() => true).catch(() => false);
+        await fs.access(sourceAbsPath);
+        sourceExists = true;
+      } catch (sourceErr) {
+        if (sourceErr.code !== 'ENOENT') {
+          logger.warn(`[ThumbnailCleanup] 检测源文件失败: ${sourceAbsPath}`, sourceErr);
+        }
+      }
 
-        if (!sourceExists) {
-          const isVideo = /\.(mp4|webm|mov)$/i.test(thumb.path);
-          const ext = isVideo ? '.jpg' : '.webp';
-          const thumbRelPath = thumb.path.replace(/\.[^.]+$/, ext);
-          const thumbAbsPath = path.join(THUMBS_DIR, thumbRelPath);
+      const shouldRemoveSource = thumb.status === 'permanent_failed';
+      const isOrphanThumb = !sourceExists;
 
+      if (!shouldRemoveSource && !isOrphanThumb) {
+        continue;
+      }
+
+      try {
+        const removed = await itemsRepo.deleteWithRelations(sanitizedPath);
+        if (removed) {
+          result.dbRecordsRemoved += 1;
+        } else {
+          await runAsync('main', 'DELETE FROM thumb_status WHERE path=?', [sanitizedPath]);
+        }
+
+        if (redis) {
+          const redisKey = `thumb_failed_permanently:${sanitizedPath}`;
+          await safeRedisDel(redis, redisKey, '清理永久失败缩略图标记');
+        }
+
+        if (shouldRemoveSource && sourceExists) {
           try {
-            await fs.unlink(thumbAbsPath);
-            await runAsync('main', 'DELETE FROM thumb_status WHERE path=?', [thumb.path]);
-            deletedCount++;
-            logger.info(`删除冗余缩略图文件: ${thumbAbsPath}`);
-          } catch (fileError) {
-            if (fileError.code !== 'ENOENT') {
-              logger.warn(`删除缩略图文件失败: ${thumbAbsPath}`, fileError);
+            await fs.unlink(sourceAbsPath);
+            logger.info(`[ThumbnailCleanup] 删除永久失败源文件: ${sourceAbsPath}`);
+            result.permanentSourcesRemoved += 1;
+          } catch (unlinkErr) {
+            if (unlinkErr.code !== 'ENOENT') {
+              logger.warn(`[ThumbnailCleanup] 删除源文件失败: ${sourceAbsPath}`, unlinkErr);
             }
-            await runAsync('main', 'DELETE FROM thumb_status WHERE path=?', [thumb.path]);
-            deletedCount++;
           }
         }
-      } catch (error) {
-        logger.warn(`处理缩略图同步时出错: ${thumb.path}`, error);
-        errorCount++;
+
+        try {
+          await fs.unlink(thumbAbsPath);
+          logger.info(`[ThumbnailCleanup] 删除缩略图文件: ${thumbAbsPath}`);
+          result.thumbFilesRemoved += 1;
+        } catch (thumbErr) {
+          if (thumbErr.code !== 'ENOENT') {
+            logger.warn(`[ThumbnailCleanup] 删除缩略图文件失败: ${thumbAbsPath}`, thumbErr);
+          }
+        }
+      } catch (cleanupErr) {
+        logger.warn(`[ThumbnailCleanup] 处理路径失败: ${sanitizedPath}`, cleanupErr);
+        result.errors += 1;
       }
     }
 
-    logger.info(`缩略图同步完成：删除 ${deletedCount} 个冗余缩略图文件，${errorCount} 个处理出错`);
-    return { deleted: deletedCount, errors: errorCount };
+    logger.info(`缩略图清理完成：移除缩略图 ${result.thumbFilesRemoved} 个，永久失败源文件 ${result.permanentSourcesRemoved} 个，数据库清理 ${result.dbRecordsRemoved} 条`);
+    return result;
   } catch (error) {
-    logger.error('缩略图同步失败:', error);
+    logger.error('缩略图清理失败:', error);
     throw error;
   }
 }
 
 async function performHlsCleanup() {
   try {
-    const allVideos = await dbAll('main', "SELECT path FROM items WHERE type='video'");
+    const ItemsRepository = require('../../repositories/items.repo');
+    const itemsRepo = new ItemsRepository();
+    const allVideos = await itemsRepo.getVideos();
     const sourceVideoPaths = new Set(allVideos.map((v) => v.path));
     const hlsDir = path.join(THUMBS_DIR, 'hls');
     let deletedCount = 0;
@@ -550,7 +774,9 @@ async function performHlsCleanup() {
                 await fs.rmdir(fullPath);
                 logger.info(`删除空的HLS目录: ${fullPath}`);
               }
-            } catch {}
+            } catch (cleanupErr) {
+              logger.debug(`[Maintenance] 删除空 HLS 目录失败（忽略）: ${fullPath} -> ${cleanupErr && cleanupErr.message}`);
+            }
           } else if (entry.name === 'master.m3u8') {
             const videoExists = sourceVideoPaths.has(relativePath);
             if (!videoExists) {
@@ -593,24 +819,44 @@ async function performHlsCleanup() {
 async function checkSyncStatus(type) {
   try {
     if (type === 'thumbnail') {
-      const allThumbs = await dbAll('main', "SELECT path FROM thumb_status");
+      const ThumbStatusRepository = require('../../repositories/thumbStatus.repo');
+      const thumbStatusRepo = new ThumbStatusRepository();
+
+      const allThumbs = await thumbStatusRepo.getAll(['path', 'status']);
       let redundantCount = 0;
+      let permanentFailedCount = 0;
 
       for (const thumb of allThumbs) {
-        const sourcePath = path.join(PHOTOS_DIR, thumb.path);
-        const sourceExists = await fs.access(sourcePath).then(() => true).catch(() => false);
-        if (!sourceExists) {
-          redundantCount++;
+        try {
+          if (thumb.status === 'permanent_failed') {
+            permanentFailedCount++;
+          }
+
+          const sourcePath = path.join(PHOTOS_DIR, thumb.path);
+          const sourceExists = await fs.access(sourcePath).then(() => true).catch(() => false);
+          if (!sourceExists) {
+            redundantCount++;
+          }
+        } catch (scanErr) {
+          logger.debug(`[Maintenance] 检查缩略图状态失败（忽略）: ${thumb.path} -> ${scanErr && scanErr.message}`);
         }
       }
 
       const total = allThumbs.length;
-      const synced = total - redundantCount;
-      return { total, synced, redundant: redundantCount, isSynced: redundantCount === 0 };
+      const synced = total - redundantCount - permanentFailedCount;
+      return {
+        total,
+        synced: Math.max(0, synced),
+        redundant: redundantCount,
+        permanentFailed: permanentFailedCount,
+        isSynced: redundantCount === 0 && permanentFailedCount === 0
+      };
     }
 
     if (type === 'hls') {
-      const allVideos = await dbAll('main', "SELECT path FROM items WHERE type='video'");
+      const ItemsRepository = require('../../repositories/items.repo');
+      const itemsRepo = new ItemsRepository();
+      const allVideos = await itemsRepo.getVideos();
       const sourceVideoPaths = new Set(allVideos.map((v) => v.path));
       const hlsDir = path.join(THUMBS_DIR, 'hls');
       let totalDirs = 0;
@@ -633,7 +879,9 @@ async function checkSyncStatus(type) {
               }
             }
           }
-        } catch {}
+        } catch (scanErr) {
+          logger.debug(`[Maintenance] 扫描 HLS 目录失败（忽略）: ${dir} -> ${scanErr && scanErr.message}`);
+        }
       }
 
       await scan(hlsDir);
@@ -682,10 +930,12 @@ async function triggerSyncOperation(type) {
   const { getIndexingWorker } = require('../worker.manager');
 
   switch (type) {
-    case 'index':
+    case 'index': {
       // 发送消息给索引工作线程重建索引
-      getIndexingWorker().postMessage({ type: 'rebuild_index', payload: { photosDir: PHOTOS_DIR } });
+      const message = TraceManager.injectToWorkerMessage({ type: 'rebuild_index', payload: { photosDir: PHOTOS_DIR, syncThumbnails: true } });
+      getIndexingWorker().postMessage(message);
       return { message: '已启动索引补全任务' };
+    }
     case 'thumbnail':
       // 执行缩略图补全
       await performThumbnailReconcile();
@@ -697,7 +947,8 @@ async function triggerSyncOperation(type) {
     }
     case 'all': {
       // 执行所有补全任务
-      getIndexingWorker().postMessage({ type: 'rebuild_index', payload: { photosDir: PHOTOS_DIR } });
+      const message = TraceManager.injectToWorkerMessage({ type: 'rebuild_index', payload: { photosDir: PHOTOS_DIR, syncThumbnails: true } });
+      getIndexingWorker().postMessage(message);
       await performThumbnailReconcile();
       const batchAll = await performHlsReconcileOnce();
       return {
@@ -705,8 +956,10 @@ async function triggerSyncOperation(type) {
         result: { hls: batchAll }
       };
     }
-    default:
-      throw new Error('未知的补全类型');
+    default: {
+      const { ValidationError } = require('../../utils/errors');
+      throw new ValidationError('未知的补全类型', { type, validTypes: ['indexing', 'hls', 'thumbnails'] });
+    }
   }
 }
 
@@ -727,8 +980,9 @@ async function triggerCleanupOperation(type) {
   // 检查当前同步状态
   const syncStatus = await checkSyncStatus(type);
   if (syncStatus.isSynced) {
+    const { redundant = 0, permanentFailed = 0 } = syncStatus;
     return {
-      message: `${getTypeDisplayName(type)}已经处于同步状态，无需清理`,
+      message: `${getTypeDisplayName(type)}已经处于同步状态，无需清理（孤立缩略图 ${redundant} 个，永久失败 ${permanentFailed || 0} 个）`,
       status: syncStatus,
       skipped: true
     };
@@ -738,9 +992,10 @@ async function triggerCleanupOperation(type) {
     case 'thumbnail': {
       // 执行缩略图清理
       const thumbResult = await performThumbnailCleanup();
+      const updatedStatus = await checkSyncStatus('thumbnail');
       return {
-        message: `缩略图同步完成：删除 ${thumbResult.deleted} 个冗余文件`,
-        status: syncStatus,
+        message: `缩略图清理完成：移除缩略图 ${thumbResult.thumbFilesRemoved} 个，永久失败源文件 ${thumbResult.permanentSourcesRemoved} 个`,
+        status: updatedStatus,
         result: thumbResult
       };
     }
@@ -758,7 +1013,7 @@ async function triggerCleanupOperation(type) {
       const thumbResultAll = await performThumbnailCleanup();
       const hlsResultAll = await performHlsCleanup();
       return {
-        message: `全量同步完成：缩略图删除 ${thumbResultAll.deleted} 个，HLS删除 ${hlsResultAll.deleted} 个`,
+        message: `全量清理完成：缩略图移除 ${thumbResultAll.thumbFilesRemoved} 个，永久失败源 ${thumbResultAll.permanentSourcesRemoved} 个，HLS删除 ${hlsResultAll.deleted} 个`,
         status: {
           thumbnail: await checkSyncStatus('thumbnail'),
           hls: await checkSyncStatus('hls')
@@ -766,8 +1021,10 @@ async function triggerCleanupOperation(type) {
         result: { thumbnail: thumbResultAll, hls: hlsResultAll }
       };
     }
-    default:
-      throw new Error('未知的同步类型');
+    default: {
+      const { ValidationError } = require('../../utils/errors');
+      throw new ValidationError('未知的同步类型', { type, validTypes: ['full', 'partial'] });
+    }
   }
 }
 

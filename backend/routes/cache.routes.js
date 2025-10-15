@@ -18,8 +18,8 @@ router.get('/stats', adminLimiter, (req, res) => {
             data: stats
         });
     } catch (error) {
-        logger.error('获取缓存统计失败:', error);
-        res.status(500).json({ error: '获取缓存统计失败' });
+        const { fromNativeError } = require('../utils/errors');
+        throw fromNativeError(error, { operation: 'getCacheStats' });
     }
 });
 

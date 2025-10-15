@@ -12,6 +12,7 @@
 
 const bcrypt = require('bcryptjs');
 const logger = require('../../config/logger');
+const { TraceManager } = require('../../utils/trace');
 const settingsService = require('../settings.service');
 const { settingsWorker } = require('../worker.manager');
 const { settingsUpdateQueue, redis, bullConnection } = require('../../config/redis');
@@ -238,7 +239,8 @@ async function dispatchUpdateTask(settingsToUpdate, updateId, hasAuthChanges, bu
     // 如果队列不可用，使用工作线程
     if (!bullConnection || (redis && redis.isNoRedis === true)) {
       try {
-        settingsWorker.postMessage({ type: 'update_settings', payload: { settingsToUpdate, updateId } });
+        const message = TraceManager.injectToWorkerMessage({ type: 'update_settings', payload: { settingsToUpdate, updateId } });
+        settingsWorker.postMessage(message);
       } catch (e) {
         logger.debug('线程消息发送失败（忽略）:', e && e.message);
       }
@@ -250,7 +252,8 @@ async function dispatchUpdateTask(settingsToUpdate, updateId, hasAuthChanges, bu
     logger.warn('投递到设置队列失败，降级使用线程消息：', e && e.message);
     try {
       // 降级使用工作线程
-      settingsWorker.postMessage({ type: 'update_settings', payload: { settingsToUpdate, updateId } });
+      const message = TraceManager.injectToWorkerMessage({ type: 'update_settings', payload: { settingsToUpdate, updateId } });
+      settingsWorker.postMessage(message);
     } catch (workerError) {
       logger.debug('线程消息降级也失败（忽略）:', workerError && workerError.message);
     }

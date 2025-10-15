@@ -1,26 +1,31 @@
-// frontend/js/main.js
+/**
+ * @file frontend/js/main.js
+ * @description 应用主入口，负责初始化前端各核心模块
+ */
 
-import { state } from './state.js';
-import { initializeAuth, showLoginScreen, getAuthToken, removeAuthToken, checkAuthStatus } from './auth.js';
-import { fetchSettings, clearAuthHeadersCache } from './api.js';
-import { showSkeletonGrid } from './loading-states.js';
-import { showNotification } from './utils.js';
-import { initializeSSE } from './sse.js';
-import { setupEventListeners } from './listeners.js';
-import { initializeRouter } from './router.js';
-import { blobUrlManager } from './lazyload.js';
-import { saveLazyLoadState, restoreLazyLoadState, clearLazyLoadProtection } from './lazyload-state-manager.js';
-import { initializeUI } from './ui.js';
-import { UI } from './constants.js';
-import { createModuleLogger } from './logger.js';
-import { safeSetInnerHTML, safeGetElementById, safeQuerySelector, safeClassList } from './dom-utils.js';
-import { eventManager } from './event-manager.js';
+import { state, clearExpiredAlbumTombstones } from './core/state.js';
+import { initializeAuth, showLoginScreen, getAuthToken, removeAuthToken, checkAuthStatus } from './app/auth.js';
+import { fetchSettings, clearAuthHeadersCache } from './app/api.js';
+import { showSkeletonGrid } from './features/gallery/loading-states.js';
+import { showNotification } from './shared/utils.js';
+import { initializeSSE } from './app/sse.js';
+import { setupEventListeners } from './features/gallery/listeners.js';
+import { initializeRouter } from './app/router.js';
+import { blobUrlManager } from './features/gallery/lazyload.js';
+import { saveLazyLoadState, restoreLazyLoadState, clearLazyLoadProtection } from './features/gallery/lazyload-state-manager.js';
+import { initializeUI } from './features/gallery/ui.js';
+import { UI } from './core/constants.js';
+import { createModuleLogger } from './core/logger.js';
+import { safeSetInnerHTML, safeGetElementById, safeQuerySelector, safeClassList } from './shared/dom-utils.js';
+import { eventManager } from './core/event-manager.js';
 
 const mainLogger = createModuleLogger('Main');
 
 let appStarted = false;
 
-// 生成与 frontend/assets/icon.svg 相同的 SVG，并设置为 favicon（运行时注入，避免静态依赖）
+/**
+ * 生成与 frontend/assets/icon.svg 相同的 SVG，并设置为 favicon（运行时注入，避免静态依赖）
+ */
 function applyAppIcon() {
     const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="192" height="192" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
@@ -63,7 +68,7 @@ function applyAppIcon() {
 }
 
 /**
- * 统一的UI状态机，管理应用、登录、错误等不同视图状态的切换
+ * 统一的 UI 状态机，管理应用、登录、错误等不同视图状态的切换
  * @param {'app'|'login'|'error'} nextState - 目标状态
  * @param {object} [options] - 附加选项
  */
@@ -71,12 +76,18 @@ function setUIState(nextState, options = {}) {
     const app = safeGetElementById('app-container');
     const overlay = safeGetElementById('auth-overlay');
 
+    /**
+     * 隐藏认证遮罩层
+     */
     const hideOverlay = () => {
         if (!overlay) return;
         safeClassList(overlay, 'remove', 'opacity-100');
         safeClassList(overlay, 'add', 'opacity-0');
         safeClassList(overlay, 'add', 'pointer-events-none');
     };
+    /**
+     * 显示认证遮罩层
+     */
     const showOverlay = () => {
         if (!overlay) return;
         safeClassList(overlay, 'remove', 'opacity-0');
@@ -109,6 +120,7 @@ function setUIState(nextState, options = {}) {
  * 应用初始化函数
  */
 async function initializeApp() {
+    try { clearExpiredAlbumTombstones(); } catch {}
     // 注入与静态文件一致的 SVG 图标，避免启动时找不到 /assets 时的 404
     try { applyAppIcon(); } catch {}
     // 1. 初始化基础组件和事件监听
@@ -168,7 +180,7 @@ function startMainApp() {
     }
     loadAppSettings();
 
-    // 设置全局事件监听
+    // 设置全局网络和认证相关事件监听
     window.addEventListener('offline', () => showNotification('网络已断开', 'warning', UI.NOTIFICATION_DURATION_WARNING));
     window.addEventListener('online', () => showNotification('网络已恢复', 'success', UI.NOTIFICATION_DURATION_SUCCESS));
     window.addEventListener('auth:required', () => {
@@ -183,7 +195,7 @@ function startMainApp() {
         mainLogger.info('认证状态变更，重新检查', { passwordEnabled });
 
         try {
-            // 清除API缓存中的认证头，避免使用过时的认证信息
+            // 清除 API 缓存中的认证头，避免使用过时的认证信息
             if (typeof clearAuthHeadersCache === 'function') {
                 clearAuthHeadersCache();
             }
@@ -259,17 +271,28 @@ async function loadAppSettings() {
     try {
         const clientSettings = await fetchSettings();
         const localAI = JSON.parse(localStorage.getItem('ai_settings') || '{}');
-        
-        state.update('aiEnabled', (localAI.AI_ENABLED !== undefined) ? (localAI.AI_ENABLED === 'true') : (clientSettings.AI_ENABLED === 'true'));
-        state.update('passwordEnabled', clientSettings.PASSWORD_ENABLED === 'true');
+
+        state.batchUpdate({
+            aiEnabled: (localAI.AI_ENABLED !== undefined) ? (localAI.AI_ENABLED === 'true') : (clientSettings.AI_ENABLED === 'true'),
+            passwordEnabled: clientSettings.PASSWORD_ENABLED === 'true',
+            albumDeletionEnabled: Boolean(clientSettings.albumDeletionEnabled),
+            adminSecretConfigured: Boolean(clientSettings.isAdminSecretConfigured)
+        });
     } catch (e) {
         mainLogger.warn("无法获取应用设置，使用默认配置", e);
 
-        state.batchUpdate({ aiEnabled: false, passwordEnabled: false });
+        state.batchUpdate({
+            aiEnabled: false,
+            passwordEnabled: false,
+            albumDeletionEnabled: false,
+            adminSecretConfigured: false
+        });
     }
 }
 
-// Service Worker 注册
+/**
+ * Service Worker 注册
+ */
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
         navigator.serviceWorker.register('/sw.js')
@@ -282,195 +305,71 @@ if ('serviceWorker' in navigator) {
     });
 }
 
-/**
- * 异步操作管理器 - 用于管理页面生命周期中的异步操作
- * 使用AbortController + 资源管理器
- */
-class AsyncOperationManager {
-    constructor() {
-        this.controllers = new Map();
-        this.timeouts = new Map();
-        this.pageHiddenTime = 0;
-        this.isPageReallyHidden = false;
-        this.pageSessionId = Date.now().toString();
+function initializeLifecycleGuards() {
+    const pageSessionId = Date.now().toString();
+    sessionStorage.setItem('pageSessionId', pageSessionId);
+    mainLogger.debug('初始化异步操作管理器', { sessionId: pageSessionId });
 
-        // 初始化页面会话
-        sessionStorage.setItem('pageSessionId', this.pageSessionId);
-        mainLogger.debug('初始化异步操作管理器', { sessionId: this.pageSessionId });
+    let pageHiddenTime = 0;
+    let hideCleanupTimeout = null;
+    let isPageReallyHidden = false;
 
-        this.setupLifecycleHandlers();
-    }
-
-    /**
-     * 创建命名控制器
-     * @param {string} name - 控制器名称
-     * @returns {AbortController}
-     */
-    createController(name) {
-        // 取消同名现有控制器
-        this.abort(name);
-
-        const controller = new AbortController();
-        this.controllers.set(name, controller);
-        return controller;
-    }
-
-    /**
-     * 取消指定控制器
-     * @param {string} name - 控制器名称
-     */
-    abort(name) {
-        const controller = this.controllers.get(name);
-        if (controller && !controller.signal.aborted) {
-            controller.abort();
+    window.addEventListener('beforeunload', () => {
+        try {
+            blobUrlManager.cleanupAll();
+            saveLazyLoadState(window.location.hash);
+            eventManager.destroy();
+            mainLogger.debug('页面卸载，完成缓存和事件清理');
+        } catch (error) {
+            mainLogger.warn('页面卸载清理失败', error);
         }
-        this.controllers.delete(name);
-    }
+    });
 
-    /**
-     * 设置命名超时
-     * @param {string} name - 超时名称
-     * @param {Function} callback - 回调函数
-     * @param {number} delay - 延迟时间
-     */
-    setTimeout(name, callback, delay) {
-        // 清除同名现有超时
-        this.clearTimeout(name);
-
-        const timeoutId = setTimeout(() => {
-            this.timeouts.delete(name);
-            callback();
-        }, delay);
-
-        this.timeouts.set(name, timeoutId);
-        return timeoutId;
-    }
-
-    /**
-     * 清除命名超时
-     * @param {string} name - 超时名称
-     */
-    clearTimeout(name) {
-        const timeoutId = this.timeouts.get(name);
-        if (timeoutId) {
-            clearTimeout(timeoutId);
-            this.timeouts.delete(name);
-        }
-    }
-
-    /**
-     * 设置页面生命周期处理
-     */
-    setupLifecycleHandlers() {
-        // 页面卸载处理 - 使用AbortController管理
-        const unloadController = this.createController('pageUnload');
-        window.addEventListener('beforeunload', () => {
-            if (unloadController.signal.aborted) return;
-
-            try {
-                // 真正离开页面时才清理所有缓存
-                blobUrlManager.cleanupAll();
-                // 清理页面状态缓存
-                saveLazyLoadState(window.location.hash);
-                // 清理所有事件监听器 - 防止内存泄漏
-                eventManager.destroy();
-                mainLogger.debug('页面卸载，完成缓存和事件清理');
-            } catch (error) {
-                mainLogger.warn('页面卸载清理失败', error);
-            }
-        }, { signal: unloadController.signal });
-
-        // 页面可见性处理 - 使用AbortController管理
-        const visibilityController = this.createController('visibility');
-        document.addEventListener('visibilitychange', () => {
-            if (visibilityController.signal.aborted) return;
-
-            this.handleVisibilityChange();
-        }, { signal: visibilityController.signal });
-    }
-
-    /**
-     * 处理页面可见性变化
-     */
-    handleVisibilityChange() {
+    document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'hidden') {
-            this.pageHiddenTime = Date.now();
-            this.isPageReallyHidden = false;
+            pageHiddenTime = Date.now();
+            isPageReallyHidden = false;
 
-            // 使用命名超时管理延迟清理，避免竞态条件
-            this.setTimeout('pageHideCleanup', () => {
-                if (document.visibilityState === 'hidden' && !this.isPageReallyHidden) {
-                    this.isPageReallyHidden = true;
+            if (hideCleanupTimeout) {
+                clearTimeout(hideCleanupTimeout);
+            }
+
+            hideCleanupTimeout = setTimeout(() => {
+                if (document.visibilityState === 'hidden' && !isPageReallyHidden) {
+                    isPageReallyHidden = true;
                     mainLogger.debug('页面长时间隐藏，开始清理部分缓存');
-
                     try {
-                        // 只清理过期缓存，不清理所有缓存
                         blobUrlManager.cleanupExpired();
-                        // 保存当前页面状态以便恢复
                         saveLazyLoadState(window.location.hash);
                     } catch (error) {
                         mainLogger.warn('页面隐藏清理失败', error);
                     }
                 }
-            }, 10000); // 10秒后开始清理
-
+            }, 10000);
         } else {
-            // 页面重新可见 - 取消延迟清理
-            this.isPageReallyHidden = false;
-            this.clearTimeout('pageHideCleanup');
+            isPageReallyHidden = false;
+            if (hideCleanupTimeout) {
+                clearTimeout(hideCleanupTimeout);
+                hideCleanupTimeout = null;
+            }
 
-            // 只有在页面曾经被隐藏过时才计算隐藏时长
-            if (this.pageHiddenTime > 0) {
-                const hiddenDuration = Date.now() - this.pageHiddenTime;
-
+            if (pageHiddenTime > 0) {
+                const hiddenDuration = Date.now() - pageHiddenTime;
                 if (hiddenDuration < 30000) {
                     mainLogger.debug('页面短暂隐藏，保持缓存');
                 } else {
                     mainLogger.debug('页面长时间隐藏后重新可见', { hiddenDuration });
-                    // 可以在这里添加缓存预热逻辑
                 }
             }
 
-            // 重置隐藏时间，避免后续错误计算
-            this.pageHiddenTime = 0;
+            pageHiddenTime = 0;
         }
-    }
-
-    /**
-     * 清理所有异步操作
-     */
-    cleanup() {
-        mainLogger.debug('清理异步操作管理器');
-
-        // 取消所有控制器
-        for (const [name, controller] of this.controllers) {
-            if (!controller.signal.aborted) {
-                controller.abort();
-            }
-        }
-        this.controllers.clear();
-
-        // 清除所有超时
-        for (const [name, timeoutId] of this.timeouts) {
-            clearTimeout(timeoutId);
-        }
-        this.timeouts.clear();
-
-        // 重置状态
-        this.pageHiddenTime = 0;
-        this.isPageReallyHidden = false;
-    }
-
-    /**
-     * 获取会话ID
-     */
-    getSessionId() {
-        return this.pageSessionId;
-    }
+    });
 }
 
-// 创建全局异步操作管理器实例
-const asyncOperationManager = new AsyncOperationManager();
+initializeLifecycleGuards();
 
-// 应用启动入口
+/**
+ * 应用启动入口
+ */
 document.addEventListener('DOMContentLoaded', initializeApp);

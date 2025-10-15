@@ -13,6 +13,7 @@
 
 const logger = require('../../config/logger');
 const { redis } = require('../../config/redis');
+const { safeRedisDel, safeRedisGet } = require('../../utils/helpers');
 
 // 内存中的状态映射表
 const updateStatusMap = new Map();
@@ -94,7 +95,7 @@ async function resolveUpdateStatus(updateId) {
 
   // 首先尝试从Redis获取状态
   try {
-    const raw = await redis.get(`settings_update_status:${updateId}`);
+    const raw = await safeRedisGet(redis, `settings_update_status:${updateId}`, '设置更新状态查询');
     if (raw) {
       const parsed = JSON.parse(raw);
       const ts = parsed.ts || updateStatusMap.get(updateId)?.timestamp || Date.now();
@@ -105,11 +106,11 @@ async function resolveUpdateStatus(updateId) {
           const settingsService = require('../settings.service');
           settingsService.clearCache();
         }
-      } catch {}
+      } catch (e) { logger.debug(`操作失败: ${e.message}`); }
 
       // 如果操作已完成，清理Redis和内存中的记录
       if (COMPLETED_STATUS.has(parsed.status)) {
-        try { await redis.del(`settings_update_status:${updateId}`); } catch {}
+        await safeRedisDel(redis, `settings_update_status:${updateId}`, '设置更新状态清理');
         updateStatusMap.delete(updateId);
       }
 
@@ -123,7 +124,9 @@ async function resolveUpdateStatus(updateId) {
         }
       };
     }
-  } catch {}
+  } catch (statusErr) {
+    logger.debug('[SettingsStatus] 从 Redis 获取状态失败，将尝试内存缓存:', statusErr && statusErr.message);
+  }
 
   // 如果Redis中没有，检查内存中的状态
   if (updateStatusMap.has(updateId)) {

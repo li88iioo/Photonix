@@ -47,8 +47,9 @@ function buildOpenAIEndpoint(baseUrl, resourcePath) {
             endpointPath = `v1/${resourcePath}`;
         }
         return new URL(endpointPath, normalized).toString();
-    } catch {
+    } catch (openaiEndpointErr) {
         const normalized = normalizeBaseUrl(baseUrl);
+        logger.debug('[AI-MICROSERVICE] 构建 OpenAI 端点失败，使用回退路径:', openaiEndpointErr && openaiEndpointErr.message);
         return `${normalized}${resourcePath}`;
     }
 }
@@ -66,7 +67,8 @@ function buildGeminiEndpoint(baseUrl, resourcePath) {
             endpointPath = `v1beta/${resourcePath}`;
         }
         return new URL(endpointPath, normalized).toString();
-    } catch {
+    } catch (geminiEndpointErr) {
+        logger.debug('[AI-MICROSERVICE] 构建 Gemini 端点失败，使用回退路径:', geminiEndpointErr && geminiEndpointErr.message);
         return `${normalized}${endpointPath}`;
     }
 }
@@ -80,7 +82,8 @@ function isGeminiEndpoint(url = '') {
     try {
         const parsed = new URL(url);
         return GEMINI_HOST_PATTERN.test(parsed.hostname);
-    } catch {
+    } catch (endpointCheckErr) {
+        logger.debug('[AI-MICROSERVICE] 解析 Endpoint 失败，按非 Gemini 处理:', endpointCheckErr && endpointCheckErr.message);
         return false;
     }
 }
@@ -137,7 +140,9 @@ class AIMicroservice {
                 const suggested = Math.max(1, Math.ceil(budget.cpus / 2));
                 return Math.min(4, suggested);
             }
-        } catch {}
+        } catch (budgetErr) {
+            logger.debug('[AI-MICROSERVICE] 读取资源预算失败，使用默认并发:', budgetErr && budgetErr.message);
+        }
 
         return 2;
     }
@@ -227,7 +232,7 @@ class AIMicroservice {
         // 开始处理任务
         const abortController = new AbortController();
         const timeoutTimer = setTimeout(() => {
-            try { abortController.abort(); } catch {}
+            try { abortController.abort(); } catch (e) { logger.debug(`操作失败: ${e.message}`); }
         }, this.taskTimeoutMs);
         this.activeTasks.set(taskKey, { taskId, startTime: Date.now(), abortController, timeoutTimer });
 
@@ -297,7 +302,9 @@ class AIMicroservice {
                 const abortError = () => {
                     try {
                         transformer.destroy(new Error('AI_TASK_ABORTED'));
-                    } catch {}
+                    } catch (destroyErr) {
+                        logger.debug('[AI-MICROSERVICE] 取消任务时销毁转换器失败（忽略）:', destroyErr && destroyErr.message);
+                    }
                 };
 
                 if (signal.aborted) {
@@ -318,10 +325,12 @@ class AIMicroservice {
             }
         } catch (error) {
             if (error && error.message && error.message.includes('AI_TASK_ABORTED')) {
-                throw new Error('AI任务已取消');
+                const { BusinessLogicError } = require('../utils/errors');
+                throw new BusinessLogicError('AI任务已取消', 'AI_TASK_ABORTED');
             }
             logger.error(`[AI微服务] 图片处理失败: ${imagePath}, 错误: ${error.message}`);
-            throw new Error(`图片处理失败: ${path.basename(imagePath)}`);
+            const { FileSystemError } = require('../utils/errors');
+            throw new FileSystemError(`图片处理失败: ${path.basename(imagePath)}`, { path: imagePath, originalError: error.message });
         }
     }
 
@@ -390,7 +399,8 @@ class AIMicroservice {
                 const errMsg = data && data.error
                     ? (data.error.message || JSON.stringify(data.error))
                     : 'AI未能生成有效内容，请检查图片质量或重试';
-                throw new Error(errMsg);
+                const { ExternalServiceError } = require('../utils/errors');
+                throw new ExternalServiceError('AI服务', { reason: errMsg, responseData: data });
             }
 
             return String(description).trim();
@@ -416,18 +426,23 @@ class AIMicroservice {
                             errorData = JSON.stringify(body).slice(0, 300);
                         }
                     }
-                } catch {}
+                } catch (bodyParseErr) {
+                    logger.debug('[AI-MICROSERVICE] 解析 OpenAI 错误响应失败（忽略）:', bodyParseErr && bodyParseErr.message);
+                }
 
-                if (status === 401) throw new Error('AI服务认证失败，请检查API密钥');
-                if (status === 429) throw new Error('AI服务请求频率过高，请稍后重试');
-                if (status === 408) throw new Error('AI服务超时，请稍后重试');
-                if (status >= 500) throw new Error(`AI服务内部错误 (${status}): ${errorData}`);
-                throw new Error(`AI服务返回错误 (状态码: ${status}): ${errorData}`);
+                const { AuthenticationError, TooManyRequestsError, TimeoutError, ExternalServiceError } = require('../utils/errors');
+                if (status === 401) throw new AuthenticationError('AI服务认证失败，请检查API密钥');
+                if (status === 429) throw new TooManyRequestsError('AI服务请求频率过高，请稍后重试', 60);
+                if (status === 408) throw new TimeoutError('AI服务请求', true);
+                if (status >= 500) throw new ExternalServiceError('AI服务', { status, errorData });
+                throw new ExternalServiceError('AI服务', { status, errorData });
             } else if (error.request) {
-                throw new Error('无法连接到AI服务，请检查网络或AI URL配置');
+                const { ServiceUnavailableError } = require('../utils/errors');
+                throw new ServiceUnavailableError('AI服务', { message: '无法连接' });
             }
 
-            throw new Error(`调用AI服务时发生未知错误: ${error.message}`);
+            const { fromNativeError } = require('../utils/errors');
+            throw fromNativeError(error, { service: 'AI' });
         }
     }
 
@@ -476,7 +491,8 @@ class AIMicroservice {
             }
 
             if (!description) {
-                throw new Error('AI未能生成有效内容，请检查图片质量或重试');
+                const { ExternalServiceError } = require('../utils/errors');
+                throw new ExternalServiceError('AI服务', { reason: 'AI未能生成有效内容，请检查图片质量或重试' });
             }
 
             return String(description).trim();
@@ -499,18 +515,23 @@ class AIMicroservice {
                     } else if (body) {
                         errorMessage = JSON.stringify(body).slice(0, 300);
                     }
-                } catch {}
+                } catch (bodyParseErr) {
+                    logger.debug('[AI-MICROSERVICE] 解析 Gemini 错误响应失败（忽略）:', bodyParseErr && bodyParseErr.message);
+                }
 
-                if (status === 401 || status === 403) throw new Error('AI服务认证失败，请检查API密钥');
-                if (status === 429) throw new Error('AI服务请求频率过高，请稍后重试');
-                if (status === 408) throw new Error('AI服务超时，请稍后重试');
-                if (status >= 500) throw new Error(`AI服务内部错误 (${status}): ${errorMessage}`);
-                throw new Error(`AI服务返回错误 (状态码: ${status}): ${errorMessage}`);
+                const { AuthenticationError, TooManyRequestsError, TimeoutError, ExternalServiceError } = require('../utils/errors');
+                if (status === 401 || status === 403) throw new AuthenticationError('AI服务认证失败，请检查API密钥');
+                if (status === 429) throw new TooManyRequestsError('AI服务请求频率过高，请稍后重试', 60);
+                if (status === 408) throw new TimeoutError('AI服务请求', true);
+                if (status >= 500) throw new ExternalServiceError('AI服务', { status, errorMessage });
+                throw new ExternalServiceError('AI服务', { status, errorMessage });
             } else if (error.request) {
-                throw new Error('无法连接到AI服务，请检查网络或AI URL配置');
+                const { ServiceUnavailableError } = require('../utils/errors');
+                throw new ServiceUnavailableError('AI服务', { message: '无法连接' });
             }
 
-            throw new Error(`调用AI服务时发生未知错误: ${error.message}`);
+            const { fromNativeError } = require('../utils/errors');
+            throw fromNativeError(error, { service: 'AI' });
         }
     }
 
@@ -534,7 +555,8 @@ class AIMicroservice {
         try {
             const normalizedBase = normalizeBaseUrl(aiConfig.url);
             candidates.push(new URL('models', normalizedBase).toString());
-        } catch {
+        } catch (modelEndpointErr) {
+            logger.debug('[AI-MICROSERVICE] 构建模型列表端点失败，使用拼接方式:', modelEndpointErr && modelEndpointErr.message);
             candidates.push(`${normalizeBaseUrl(aiConfig.url)}models`);
         }
 

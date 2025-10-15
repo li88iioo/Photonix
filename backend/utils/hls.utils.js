@@ -7,6 +7,7 @@ const path = require('path');
 const { promises: fs } = require('fs');
 const logger = require('../config/logger');
 const { THUMBS_DIR } = require('../config');
+const { safeRedisGet, safeRedisSet, safeRedisDel } = require('./helpers');
 
 // Redis客户端（延迟初始化）
 let redisClient = null;
@@ -50,13 +51,16 @@ class RedisCacheHelper {
      */
     async get(key) {
         if (!this.enabled) return null;
-        try {
-            const value = await this.redis.get(key);
-            return value ? JSON.parse(value) : null;
-        } catch (e) {
-            logger.debug(`Redis缓存读取失败: ${key}`, e.message);
-            return null;
+        const value = await safeRedisGet(this.redis, key, 'HLS缓存读取');
+        if (value) {
+            try {
+                return JSON.parse(value);
+            } catch (e) {
+                logger.debug(`HLS缓存数据解析失败: ${key}`, e.message);
+                return null;
+            }
         }
+        return null;
     }
 
     /**
@@ -64,17 +68,11 @@ class RedisCacheHelper {
      */
     async set(key, value, ttlMs = CACHE_TTL) {
         if (!this.enabled) return false;
-        try {
-            const serialized = JSON.stringify(value);
-            if (ttlMs > 0) {
-                await this.redis.set(key, serialized, 'PX', ttlMs);
-            } else {
-                await this.redis.set(key, serialized);
-            }
-            return true;
-        } catch (e) {
-            logger.debug(`Redis缓存写入失败: ${key}`, e.message);
-            return false;
+        const serialized = JSON.stringify(value);
+        if (ttlMs > 0) {
+            return await safeRedisSet(this.redis, key, serialized, 'PX', ttlMs, 'HLS缓存写入');
+        } else {
+            return await safeRedisSet(this.redis, key, serialized, null, null, 'HLS缓存写入');
         }
     }
 
@@ -83,13 +81,8 @@ class RedisCacheHelper {
      */
     async del(key) {
         if (!this.enabled) return false;
-        try {
-            await this.redis.del(key);
-            return true;
-        } catch (e) {
-            logger.debug(`Redis缓存删除失败: ${key}`, e.message);
-            return false;
-        }
+        const result = await safeRedisDel(this.redis, key, 'HLS缓存删除');
+        return result > 0;
     }
 
     /**

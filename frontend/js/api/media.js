@@ -1,8 +1,16 @@
-// 媒体相关 API：搜索、浏览、埋点与随机缩略图
-import { apiLogger, getAuthHeaders, requestJSONWithDedup, refreshAuthToken, triggerAuthRequired } from './shared.js';
-import { getAuthToken } from '../auth.js';
+/**
+ * @file media.js
+ * @description
+ *   媒体相关 API，包括搜索、浏览、埋点与随机缩略图等功能。
+ */
 
-// 从 URL hash 中解析排序参数（默认 smart）
+import { apiLogger, getAuthHeaders, requestJSONWithDedup, refreshAuthToken, triggerAuthRequired } from './shared.js';
+import { getAuthToken } from '../app/auth.js';
+
+/**
+ * 从 URL hash 中解析排序参数（默认 smart）
+ * @returns {string} 排序参数
+ */
 function getSortParamFromHash() {
     const hash = window.location.hash;
     const questionMarkIndex = hash.indexOf('?');
@@ -10,7 +18,20 @@ function getSortParamFromHash() {
     return params.get('sort') || 'smart';
 }
 
-// 搜索接口：带 503/504 重试与 401 刷新认证
+/**
+ * 搜索接口
+ * - 支持 503/504 重试
+ * - 支持 401 自动刷新认证
+ * @param {string} query 搜索查询
+ * @param {number} page 页码
+ * @param {AbortSignal} signal 中止信号
+ * @returns {Promise<object>} 搜索结果对象
+ *   - query {string} 查询字符串
+ *   - results {Array} 结果列表
+ *   - totalPages {number} 总页数
+ *   - totalResults {number} 总结果数
+ * @throws {Error} 网络或认证等错误
+ */
 export async function fetchSearchResults(query, page, signal) {
     try {
         if (typeof query !== 'string' || query.trim() === '') {
@@ -28,6 +49,7 @@ export async function fetchSearchResults(query, page, signal) {
             return await performRequest();
         } catch (error) {
             if (error.status === 503 || error.status === 504) {
+                // 503/504 重试机制
                 const delays = [5000, 10000, 20000];
                 for (const delay of delays) {
                     await new Promise(resolve => setTimeout(resolve, delay));
@@ -39,6 +61,7 @@ export async function fetchSearchResults(query, page, signal) {
                     }
                 }
             } else if (error.status === 401) {
+                // 401 自动刷新认证
                 const refreshed = await refreshAuthToken();
                 if (refreshed) {
                     return await performRequest();
@@ -60,7 +83,17 @@ export async function fetchSearchResults(query, page, signal) {
     }
 }
 
-// 浏览接口：根目录允许无 token 访问；带重试与 401 刷新
+/**
+ * 浏览接口
+ * - 根目录允许无 token 访问
+ * - 支持 503/504 重试
+ * - 支持 401 自动刷新认证
+ * @param {string} path 浏览路径
+ * @param {number} page 页码
+ * @param {AbortSignal} signal 中止信号
+ * @returns {Promise<object|null>} 浏览结果对象，失败时返回 null
+ * @throws {Error} 网络或认证等错误
+ */
 export async function fetchBrowseResults(path, page, signal) {
     try {
         const encodedPath = path.split('/').map(encodeURIComponent).join('/');
@@ -82,6 +115,7 @@ export async function fetchBrowseResults(path, page, signal) {
         } catch (error) {
             if (signal?.aborted) return null;
             if (error.status === 503 || error.status === 504) {
+                // 503/504 重试机制
                 const delays = [5000, 10000, 20000];
                 for (const delay of delays) {
                     await new Promise(resolve => setTimeout(resolve, delay));
@@ -93,6 +127,7 @@ export async function fetchBrowseResults(path, page, signal) {
                     }
                 }
             } else if (error.status === 401 && path !== '') {
+                // 401 自动刷新认证
                 const refreshed = await refreshAuthToken();
                 if (refreshed) {
                     return await performRequest();
@@ -114,13 +149,24 @@ export async function fetchBrowseResults(path, page, signal) {
     }
 }
 
-// 浏览埋点：短超时+失败静默重试
+/**
+ * 浏览埋点
+ * - 发送浏览记录，短超时
+ * - 失败时静默重试
+ * @param {string} path 浏览路径
+ * @returns {void}
+ */
 export function postViewed(path) {
     if (!path) return;
 
     const token = getAuthToken();
     if (!token) return;
 
+    /**
+     * 内部重试请求
+     * @param {number} retries 重试次数
+     * @returns {Promise<void>}
+     */
     const makeRobustRequest = async (retries = 1) => {
         for (let attempt = 0; attempt <= retries; attempt++) {
             try {
@@ -159,7 +205,11 @@ export function postViewed(path) {
     });
 }
 
-// 获取随机缩略图：复用浏览结果中的首个媒体项
+/**
+ * 获取随机缩略图
+ * - 复用浏览结果中的首个媒体项
+ * @returns {Promise<string|null>} 缩略图 URL，失败时为 null
+ */
 export async function fetchRandomThumbnail() {
     try {
         const data = await fetchBrowseResults('', 1, new AbortController().signal);
@@ -169,4 +219,24 @@ export async function fetchRandomThumbnail() {
         apiLogger.error('无法获取随机缩略图', error);
         return null;
     }
+}
+
+/**
+ * 删除相册
+ * @param {string} path 相册路径
+ * @returns {Promise<object>} 删除结果对象
+ * @throws {Error} 删除失败时抛出错误
+ */
+export async function deleteAlbum(path) {
+    const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+    const response = await fetch(`/api/albums/${encodedPath}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders()
+    });
+
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(result?.message || result?.error || '删除相册失败');
+    }
+    return result;
 }

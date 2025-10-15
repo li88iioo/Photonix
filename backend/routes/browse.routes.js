@@ -15,7 +15,7 @@ const validatePath = require('../middleware/pathValidator');
 const viewedSchema = Joi.object({
   path: Joi.string()
     .min(1)
-    .max(2048)
+    .max(1024)  // 与 pathValidator 的 MAX_PATH_LENGTH 保持一致
     // 这里的 custom 校验与 pathValidator 重复，但作为 Joi 层的第一道防线保留是好的实践
     .custom((v,h)=> v.includes('..') ? h.error('any.invalid') : v, 'path traversal guard')
     .required()
@@ -24,17 +24,25 @@ const viewedSchema = Joi.object({
 // 使用 validatePath 中间件处理来自 req.body 的路径
 router.post('/viewed', validate(viewedSchema), validatePath('body'), asyncHandler(browseController.updateViewTime));
 
-// 文件浏览路由（缓存10分钟）
+// 文件浏览路由（缓存缩短至 180 秒，强化与前端 TTL 的一致性）
 // 使用通配符 `*` 捕获所有路径，支持任意深度的目录浏览
-// 缓存时间设置为600秒（10分钟），提高响应速度
+// 缓存时间可通过环境变量 BROWSE_CACHE_TTL 覆盖，默认 180 秒
 const browseQuerySchema = Joi.object({
   limit: Joi.number().integer().min(1).max(200).optional(),
   page: Joi.number().integer().min(1).max(100000).optional(),
   sort: Joi.string().valid('smart','name_asc','name_desc','mtime_asc','mtime_desc','viewed_desc').optional()
 });
 
+const BROWSE_CACHE_TTL = Number(process.env.BROWSE_CACHE_TTL || 180);
+
 // 使用 validatePath 中间件处理来自 req.params 的路径
-router.get('/*', validate(browseQuerySchema, 'query'), validatePath('param'), cache(600), asyncHandler(browseController.browseDirectory));
+router.get(
+  '/*',
+  validate(browseQuerySchema, 'query'),
+  validatePath('param'),
+  cache(BROWSE_CACHE_TTL),
+  asyncHandler(browseController.browseDirectory)
+);
 
 // 导出浏览路由模块
 module.exports = router;

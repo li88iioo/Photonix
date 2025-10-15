@@ -70,6 +70,36 @@ cd Photonix
 - **生产环境**：复制 `env.production` 为 `.env`，根据需要调整
 - 或使用最小模板：复制 `env.example` 为 `.env`（仅核心必配项，其余使用代码默认值）
 
+#### 快速生成 32+ 位强随机密钥并写入 .env
+
+- Linux/macOS（bash）：
+
+```bash
+# 生成并追加到 .env（若不存在会创建），可用于 JWT_SECRET / ADMIN_SECRET
+echo "JWT_SECRET=$(openssl rand -base64 48 | tr -d '\n')" >> .env
+echo "ADMIN_SECRET=$(openssl rand -base64 36 | tr -d '\n')" >> .env
+
+# 如需替换已存在的同名变量（谨慎）：
+[ -f .env ] && sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$(openssl rand -base64 48 | tr -d '\n')/" .env || true
+[ -f .env ] && sed -i "s/^ADMIN_SECRET=.*/ADMIN_SECRET=$(openssl rand -base64 36 | tr -d '\n')/" .env || true
+```
+
+- Windows（PowerShell）：
+
+```powershell
+# 生成并追加到 .env（若不存在会创建）
+"JWT_SECRET=$([Convert]::ToBase64String((1..48 | ForEach-Object {Get-Random -Maximum 256})))" | Out-File -FilePath .env -Append -Encoding utf8
+"ADMIN_SECRET=$([Convert]::ToBase64String((1..36 | ForEach-Object {Get-Random -Maximum 256})))" | Out-File -FilePath .env -Append -Encoding utf8
+
+# 如需替换已存在同名变量（谨慎）：
+if (Test-Path .env) {
+  (Get-Content .env) -replace '^JWT_SECRET=.*', "JWT_SECRET=$([Convert]::ToBase64String((1..48 | ForEach-Object {Get-Random -Maximum 256})))" |
+  Set-Content .env -Encoding utf8
+  (Get-Content .env) -replace '^ADMIN_SECRET=.*', "ADMIN_SECRET=$([Convert]::ToBase64String((1..36 | ForEach-Object {Get-Random -Maximum 256})))" |
+  Set-Content .env -Encoding utf8
+}
+```
+
 #### 详细配置
 - 📖 **完整配置指南**：查看 [ENV_GUIDE.md](./env.example/ENV_GUIDE.md)（精注释版）与 [ENV_GUIDE_MIN.md](./env.example/ENV_GUIDE_MIN.md)（简版速查）
 - 🔧 **核心配置**：`PORT`、`PHOTOS_DIR`、`DATA_DIR`、`JWT_SECRET`
@@ -270,7 +300,7 @@ Photonix/
 | `RATE_LIMIT_WINDOW_MINUTES` | `1`                                             | API 速率限制的时间窗口（分钟，代码默认 1 分钟）。            |
 | `RATE_LIMIT_MAX_REQUESTS`    | `800`                                          | 在一个时间窗口内的最大请求数（代码默认 800，可按需下调）。   |
 | `JWT_SECRET`             | `your-own-very-long-and-random-secret-string-123450` | 用于签发和验证登录 Token 的密钥，请修改为复杂随机字符串。    |
-| `ADMIN_SECRET`           | `（默认admin，请手动设置）`                          | 超级管理员密钥，启用/修改/禁用访问密码等敏感操作时必需。      |
+| `ADMIN_SECRET`           | `（默认nameadmin，请手动设置）`                          | 超级管理员密钥，启用/修改/禁用访问密码等敏感操作时必需。      |
 
 > **注意：**
 > - `ADMIN_SECRET` 必须在 `.env` 文件中手动设置，否则涉及超级管理员权限的敏感操作（如设置/修改/禁用访问密码）将无法进行。
@@ -358,42 +388,179 @@ npm start
 ### Nginx 反向代理配置
 如果在生产环境中使用 Nginx 作为反向代理，请使用以下配置以确保 **Server-Sent Events (SSE)** 正常工作。
 
+#### 为什么 SSE 需要特殊配置？
+
+SSE (Server-Sent Events) 是一种长连接、流式传输技术，与普通 HTTP 请求有本质区别：
+
+| Nginx 默认行为 | 对 SSE 的影响 | 问题 |
+|---------------|--------------|------|
+| `proxy_buffering on` | 缓冲响应数据 | 数据被缓冲，无法实时推送 |
+| `proxy_http_version 1.0` | 使用 HTTP/1.0 | 不支持长连接，每次响应后关闭 |
+| `Connection: close` | 关闭连接头 | SSE 需要保持连接打开 |
+| 短超时（60秒） | 60秒后断开 | SSE 可能需要保持数小时 |
+
+**不配置 SSE 专用规则会导致**：
+- 实时更新变成"批量更新"或超时
+- 连接频繁断开，前端报 `net::ERR_FAILED`
+- 缩略图生成进度无法实时显示
+
+#### HTTP 代理配置（仅用于开发/测试）
+
 ```nginx
 server {
     listen 80;
     server_name your-domain.com;
 
-    # 建议升级到 HTTPS
-    # listen 443 ssl http2;
-    # ssl_certificate /path/to/your/cert.pem;
-    # ssl_certificate_key /path/to/your/key.pem;
-
     client_max_body_size 0; # 允许上传大文件
 
-    location / {
-        proxy_pass http://127.0.0.1:12080; # 指向 Photonix 服务地址
+    # ⚠️ 重要：SSE 专用配置必须放在通用 location 之前
+    location /api/events {
+        proxy_pass http://127.0.0.1:12080/api/events;
+        
+        # SSE 关键配置
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';  # 清空连接头，保持长连接
+        
+        # 禁用所有缓冲，确保实时传输
+        proxy_buffering off;
+        proxy_cache off;
+        
+        # 长超时配置（24小时）
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+        
+        # 支持分块传输
+        chunked_transfer_encoding on;
+        
+        # TCP 优化
+        tcp_nodelay on;
+        tcp_nopush on;
+        
+        # 标准代理头
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # 针对 SSE 事件流的特殊配置
-    location /api/events {
-        proxy_pass http://127.0.0.1:12080/api/events;
-        proxy_set_header Connection '';
-        proxy_http_version 1.1;
+    # 通用代理配置
+    location / {
+        proxy_pass http://127.0.0.1:12080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        
-        # 关键：关闭缓冲并设置长超时
-        proxy_buffering off;
-        proxy_cache off;
-        proxy_read_timeout 1h; # 保持长连接
     }
 }
+```
+
+#### HTTPS 代理配置（生产环境推荐）
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name your-domain.com;
+
+    # SSL 证书配置
+    ssl_certificate /path/to/your/fullchain.pem;
+    ssl_certificate_key /path/to/your/private.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    client_max_body_size 0;
+
+    # ⚠️ 重要：SSE 专用配置必须放在通用 location 之前
+    location /api/events {
+        proxy_pass http://127.0.0.1:12080/api/events;
+        
+        # SSE 关键配置
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        
+        # 禁用缓冲
+        proxy_buffering off;
+        proxy_cache off;
+        
+        # 长超时（24小时）
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+        
+        # 流式传输优化
+        chunked_transfer_encoding on;
+        tcp_nodelay on;
+        tcp_nopush on;
+        
+        # 标准代理头
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # 通用代理配置
+    location / {
+        proxy_pass http://127.0.0.1:12080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# HTTP 自动跳转到 HTTPS
+server {
+    listen 80;
+    server_name your-domain.com;
+    return 301 https://$server_name$request_uri;
+}
+```
+
+#### 验证 SSE 配置
+
+**方法 1：浏览器控制台测试**
+```javascript
+const es = new EventSource('https://your-domain.com/api/events');
+es.onopen = () => console.log('✅ SSE 连接成功！');
+es.onerror = (e) => console.error('❌ SSE 连接失败：', e);
+es.addEventListener('connected', (e) => console.log('📨 收到connected事件：', e.data));
+```
+
+**方法 2：命令行测试**
+```bash
+# 测试 HTTP
+curl -N -H "Accept: text/event-stream" http://your-domain.com/api/events
+
+# 测试 HTTPS
+curl -N -H "Accept: text/event-stream" https://your-domain.com/api/events
+```
+
+预期输出：
+```
+event: connected
+data: {"message":"SSE connection established.","clientId":"..."}
+
+: keep-alive
+
+: keep-alive
+```
+
+**方法 3：查看 Network 标签**
+1. 打开浏览器开发者工具（F12）
+2. 切换到 **Network** 标签
+3. 筛选 **EventStream** 类型
+4. 查找 `/api/events` 请求
+5. 状态应该是 **200** 且持续保持连接
+
+#### 常见问题排查
+
+| 现象 | 可能原因 | 解决方案 |
+|------|---------|---------|
+| 连接立即断开 | 缺少 `proxy_http_version 1.1` 或 `Connection ''` | 添加 SSE 专用配置 |
+| 数据延迟数秒才到达 | `proxy_buffering on` 未禁用 | 设置 `proxy_buffering off` |
+| 60秒后自动断开 | 超时配置过短 | 增加 `proxy_read_timeout` 到 24小时 |
+| `net::ERR_FAILED` | Nginx 配置未生效 | 执行 `nginx -t && nginx -s reload` |
+| HTTPS 下无法连接 | 后端使用 HTTP，需要协议转换 | 使用 `proxy_pass http://...` 即可 |
 ```
 
 
@@ -485,8 +652,10 @@ node backend/db/migrate-to-multi-db.js
 
 ### 日志管理
 - **日志级别**：通过 `LOG_LEVEL` 环境变量控制
-- **日志格式**：结构化 JSON 格式，便于分析
-- **日志轮转**：Docker 日志轮转配置
+- **日志格式**：可选人类可读或 JSON（设置 `LOG_JSON=true` 输出 JSON，便于集中采集与检索）
+- **追踪标识**：日志自动带 `[Trace:<前8位>]` 段，HTTP 响应头包含 `X-Trace-Id`、`X-Span-Id`
+- **前缀规范化**：旧日志前缀会被统一到中文前缀（如 `[Orchestrator]` → `[调度器]`）
+- **日志轮转**：建议使用 Docker 日志驱动或外部日志系统管理
 
 ### 数据备份
 - **数据库备份**：定期备份 SQLite 数据库文件
@@ -651,6 +820,10 @@ docker compose logs -f
 - **视频播放异常**：检查 FFmpeg 依赖、视频格式和 HLS 配置
 - **缩略图不显示**：检查 Sharp 依赖和磁盘权限
 - **缓存不生效**：检查 Redis 连接和内存配置
+- **相册删除提示权限不足**：确认挂载的照片目录对容器运行用户具备写权限。
+  - **普通 Linux 主机**：建议在宿主机执行 `sudo chown -R <容器UID:GID> /opt/photos`（Node 官方镜像通常为 `1000:1000`），或在 `docker-compose.yml` 的 `app` 服务中添加 `user: "1000:1000"`，让容器进程以具备写权限的用户运行。
+  - **NAS/NFS（如 Synology DSM）**：在 DSM 中创建专用的“Photonix”用户/用户组，并赋予共享目录读写权限；随后在容器配置中将 `user` 指向该用户的 UID/GID，或使用 DSM 套件的“用户映射”功能保证容器用户与共享权限一致。为避免 DSM GUI 显示数字 UID，可在 DSM 上同步创建同名账号。
+  - 修改属主不会影响 root 删除/管理能力；若仍提示 403，请确认 NFS 挂载选项允许写入（不要启用 `ro`、`root_squash` 等限制），并重新启动容器。
 
 ### 网络问题
 - **SSE 连接断开**：检查反向代理配置，确保长连接支持

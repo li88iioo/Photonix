@@ -39,18 +39,52 @@ function isPathSafe(requestedPath) {
  * 清理和标准化路径
  * 移除路径中的危险字符和序列，确保路径格式正确
  * @param {string} inputPath - 输入的路径字符串
- * @returns {string} 清理后的安全路径，如果输入无效则返回空字符串
+ * @returns {string} 清理后的安全路径，如果输入包含危险模式则返回空字符串
  */
 function sanitizePath(inputPath) {
-    // 检查输入类型，如果不是字符串则返回空字符串
+    // 第一步：类型检查
     if (typeof inputPath !== 'string') return '';
     
-    return inputPath
-        .replace(/\.\./g, '')           // 移除所有 ".." 序列，防止目录遍历
-        .replace(/[<>:"|?*]/g, '')      // 移除Windows和Unix系统的非法字符
-        .replace(/^\/+/, '')            // 移除开头的斜杠
-        .replace(/\/{2,}/g, '/')        // 将多个连续斜杠替换为单个斜杠
-        .replace(/\/$/, '');            // 移除末尾的斜杠
+    // 第二步：早期拒绝明显的危险模式
+    // 拒绝任何包含 ".." 的输入（无论位置），因为它代表向上遍历意图
+    // 拒绝以 "." 开头的路径（隐藏文件/目录，如 .git, .env）
+    // 注意：空字符串是合法的（代表根目录），不应被拒绝
+    const rawSegments = inputPath.split(/[\\/]/).filter(Boolean);
+    if (rawSegments.some(segment => segment === '..' || segment === '.')) {
+        logger.warn(`路径清理：拒绝危险模式: "${inputPath}"`);
+        return '';
+    }
+    if (rawSegments.length > 0 && rawSegments[0].startsWith('.') && rawSegments[0].length > 1) {
+        logger.warn(`路径清理：拒绝隐藏路径: "${inputPath}"`);
+        return '';
+    }
+    
+    // 第三步：处理空字符串特殊情况
+    // path.normalize('') 会返回 '.'，但空字符串在我们的场景中代表根目录
+    if (inputPath === '' || inputPath === '/') {
+        return '';
+    }
+    
+    // 第四步：使用 path.normalize 规范化路径（处理 .、多余斜杠）
+    let normalized = path.normalize(inputPath);
+    
+    // 第五步：移除危险字符和规范化斜杠
+    normalized = normalized
+        .replace(/[<>:"|?*\x00-\x1f]/g, '')  // 移除控制字符、Windows/Unix非法字符
+        .replace(/^[\/\\]+/, '')              // 移除开头的斜杠（支持Windows反斜杠）
+        .replace(/[\/\\]{2,}/g, '/')          // 将多个连续斜杠/反斜杠替换为单个正斜杠
+        .replace(/[\/\\]+$/, '');             // 移除末尾的斜杠
+    
+    // 第六步：二次验证（防御性编程）
+    // path.normalize 在某些边缘情况下可能产生 ".."，再次检查
+    // 拒绝 ".." 和以 "." 开头的路径（但允许空字符串通过，因为它在第三步已经被处理）
+    const segments = normalized.split(/[\\/]/).filter(Boolean);
+    if (segments.some(segment => segment === '..' || segment === '.')) {
+        logger.warn(`路径清理：规范化后仍包含危险模式: "${inputPath}" → "${normalized}"`);
+        return '';
+    }
+    
+    return normalized;
 }
 
 // 导出路径工具函数

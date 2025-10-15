@@ -9,6 +9,7 @@
  */
 const { dbRun } = require('../db/multi-db');
 const { AsyncLocalStorage } = require('async_hooks');
+const logger = require('../config/logger');
 
 const als = new AsyncLocalStorage(); // store: { stacks: Map<dbName, string[]|null[]> }
 
@@ -42,7 +43,8 @@ async function begin(db, mode = 'IMMEDIATE') {
   const depth = stack.length;
   const store = als.getStore();
   if (depth === 0 && !(store && store.__txRoot === true)) {
-    throw new Error('begin() must be called within withTransaction root context');
+    const { BusinessLogicError } = require('../utils/errors');
+    throw new BusinessLogicError('begin() must be called within withTransaction root context', 'TX_CONTEXT_ERROR');
   }
   if (depth === 0) {
     await dbRun(db, `BEGIN ${String(mode).toUpperCase()}`);
@@ -79,10 +81,16 @@ async function rollback(db) {
   const spName = stack.pop();
   if (spName == null) {
     // 顶层事务
-    try { await dbRun(db, 'ROLLBACK'); } catch {}
+    try { await dbRun(db, 'ROLLBACK'); } catch (err) {
+      logger.debug(`[TxManager] 回滚顶层事务失败: ${err.message}`);
+    }
   } else {
-    try { await dbRun(db, `ROLLBACK TO ${spName}`); } catch {}
-    try { await dbRun(db, `RELEASE SAVEPOINT ${spName}`); } catch {}
+    try { await dbRun(db, `ROLLBACK TO ${spName}`); } catch (err) {
+      logger.debug(`[TxManager] 回滚保存点失败 (${spName}): ${err.message}`);
+    }
+    try { await dbRun(db, `RELEASE SAVEPOINT ${spName}`); } catch (err) {
+      logger.debug(`[TxManager] 释放保存点失败 (${spName}): ${err.message}`);
+    }
   }
 }
 
@@ -95,8 +103,9 @@ async function rollback(db) {
  */
 async function withTransaction(db, fn, options = {}) {
   const mode = options.mode || 'IMMEDIATE';
-  // 为本次事务执行链创建独立上下文
-  return als.run({ stacks: new Map(), __txRoot: true }, async () => {
+  const existingStore = als.getStore();
+
+  const execute = async () => {
     await begin(db, mode);
     try {
       const res = await fn();
@@ -106,7 +115,13 @@ async function withTransaction(db, fn, options = {}) {
       await rollback(db);
       throw e;
     }
-  });
+  };
+
+  if (existingStore && existingStore.__txRoot === true) {
+    return execute();
+  }
+
+  return als.run({ stacks: new Map(), __txRoot: true }, execute);
 }
 
 module.exports = {

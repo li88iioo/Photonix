@@ -5,6 +5,7 @@
 const { dbAll, dbRun, getDB } = require('../db/multi-db'); // 使用多数据库管理器
 const logger = require('../config/logger');
 const { redis } = require('../config/redis');
+const { safeRedisDel, safeRedisGet, safeRedisSet } = require('../utils/helpers');
 
 // --- 内存缓存配置 ---
 let settingsCache = null;           // 设置缓存对象
@@ -13,6 +14,20 @@ const CACHE_TTL = 5 * 60 * 1000;    // 默认TTL：5分钟
 const SENSITIVE_TTL = 30 * 1000;    // 敏感键TTL：30秒
 const SETTINGS_REDIS_CACHE = (process.env.SETTINGS_REDIS_CACHE || 'false') === 'true';
 const REDIS_CACHE_KEY = 'settings_cache_v1';
+const DEFAULT_SYNC_SCHEDULE = 'off';
+
+function applyDefaultSettings(settings = {}) {
+    if (typeof settings.ALLOW_PUBLIC_ACCESS === 'undefined') {
+        settings.ALLOW_PUBLIC_ACCESS = 'true';
+    }
+    if (typeof settings.ALBUM_DELETE_ENABLED === 'undefined') {
+        settings.ALBUM_DELETE_ENABLED = 'false';
+    }
+    if (typeof settings.MANUAL_SYNC_SCHEDULE === 'undefined') {
+        settings.MANUAL_SYNC_SCHEDULE = DEFAULT_SYNC_SCHEDULE;
+    }
+    return settings;
+}
 
 /**
  * 检查缓存是否有效
@@ -45,29 +60,18 @@ async function getAllSettings(options = {}) {
         // 1) 尝试使用内存缓存（敏感键可要求更短TTL）
         if (isCacheValid(preferFreshSensitive ? SENSITIVE_TTL : CACHE_TTL)) {
             // 设置缓存命中 - 降级为 trace 级别避免刷屏
-            // 补充 ALLOW_PUBLIC_ACCESS 默认值
-            if (typeof settingsCache.ALLOW_PUBLIC_ACCESS === 'undefined') {
-                settingsCache.ALLOW_PUBLIC_ACCESS = 'true';
-            }
-            return settingsCache;
+            return applyDefaultSettings(settingsCache);
         }
 
         // 2) 可选：从 Redis 兜底读取
         if (SETTINGS_REDIS_CACHE) {
-            try {
-                const cached = await redis.get(REDIS_CACHE_KEY);
-                if (cached) {
-                    const parsed = JSON.parse(cached);
-                    settingsCache = parsed;
-                    cacheTimestamp = Date.now();
-                    logger.debug('从 Redis 缓存获取设置');
-                    if (typeof settingsCache.ALLOW_PUBLIC_ACCESS === 'undefined') {
-                        settingsCache.ALLOW_PUBLIC_ACCESS = 'true';
-                    }
-                    return settingsCache;
-                }
-            } catch (e) {
-                logger.warn('读取 Redis 设置缓存失败，回退至数据库:', e.message);
+            const cached = await safeRedisGet(redis, REDIS_CACHE_KEY, 'Settings缓存读取');
+            if (cached) {
+                const parsed = JSON.parse(cached);
+                settingsCache = parsed;
+                cacheTimestamp = Date.now();
+                logger.debug('从 Redis 缓存获取设置');
+                return applyDefaultSettings(settingsCache);
             }
         }
 
@@ -78,19 +82,12 @@ async function getAllSettings(options = {}) {
         for (const row of rows) {
             settings[row.key] = row.value;
         }
-        if (typeof settings.ALLOW_PUBLIC_ACCESS === 'undefined') {
-            settings.ALLOW_PUBLIC_ACCESS = 'true';
-        }
-        settingsCache = settings;
+        settingsCache = applyDefaultSettings(settings);
         cacheTimestamp = Date.now();
 
         // 写回 Redis 兜底缓存
         if (SETTINGS_REDIS_CACHE) {
-            try {
-                await redis.set(REDIS_CACHE_KEY, JSON.stringify(settingsCache), 'EX', Math.floor(CACHE_TTL / 1000));
-            } catch (e) {
-                logger.warn('写入 Redis 设置缓存失败:', e.message);
-            }
+            await safeRedisSet(redis, REDIS_CACHE_KEY, JSON.stringify(settingsCache), 'EX', Math.floor(CACHE_TTL / 1000), 'Settings缓存写入');
         }
         return settingsCache;
     } catch (error) {
@@ -98,24 +95,22 @@ async function getAllSettings(options = {}) {
         // 回退策略：优先使用进程内过期缓存；再尝试 Redis；最后给出保守默认
         try {
             if (settingsCache) {
-                logger.warn('使用过期的内存设置缓存作为回退');
+                logger.debug('使用过期的内存设置缓存作为回退');
                 return settingsCache;
             }
             if (SETTINGS_REDIS_CACHE) {
-                try {
-                    const cached = await redis.get(REDIS_CACHE_KEY);
-                    if (cached) {
-                        const parsed = JSON.parse(cached);
-                        logger.warn('使用 Redis 设置缓存作为回退');
-                        return parsed;
-                    }
-                } catch (e) {
-                    logger.debug('读取 Redis 设置缓存回退失败（忽略）:', e.message);
+                const cached = await safeRedisGet(redis, REDIS_CACHE_KEY, 'Settings缓存回退读取');
+                if (cached) {
+                    const parsed = JSON.parse(cached);
+                    logger.debug('使用 Redis 设置缓存作为回退');
+                    return parsed;
                 }
             }
-        } catch {}
+        } catch (fallbackError) {
+            logger.debug('设置服务回退缓存读取失败，继续使用默认值:', fallbackError && fallbackError.message);
+        }
         // 最终兜底：最关键的公共开关默认放开，避免首页完全不可用
-        return { ALLOW_PUBLIC_ACCESS: 'true', PASSWORD_ENABLED: 'false' };
+        return { ALLOW_PUBLIC_ACCESS: 'true', PASSWORD_ENABLED: 'false', ALBUM_DELETE_ENABLED: 'false', MANUAL_SYNC_SCHEDULE: DEFAULT_SYNC_SCHEDULE };
     }
 }
 
@@ -159,7 +154,7 @@ async function updateSettings(settingsToUpdate) {
         clearCache();
         // 删除 Redis 兜底缓存
         if (SETTINGS_REDIS_CACHE) {
-            try { await redis.del(REDIS_CACHE_KEY); } catch (e) { logger.warn('删除 Redis 设置缓存失败:', e.message); }
+            await safeRedisDel(redis, REDIS_CACHE_KEY, 'Settings缓存删除');
         }
         
         // 检查是否包含认证相关设置，如果是则强制清除缓存

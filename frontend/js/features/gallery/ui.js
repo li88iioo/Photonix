@@ -1,0 +1,721 @@
+/**
+ * @file ui.js
+ * @description UI 渲染模块，负责页面 UI 元素的渲染和更新。
+ */
+
+import { state, stateManager } from '../../core/state.js';
+import * as api from '../../app/api.js';
+import { getAllViewed } from '../../shared/indexeddb-helper.js';
+import { applyMasonryLayout, triggerMasonryUpdate } from './masonry.js';
+import { MATH, UI } from '../../core/constants.js';
+import { uiLogger } from '../../core/logger.js';
+import { createProgressCircle, createPlayButton, createGridIcon, createMasonryIcon, createSortArrow, createDeleteIcon } from '../../shared/svg-utils.js';
+import { elements } from '../../shared/dom-elements.js';
+import { safeSetInnerHTML, safeClassList, safeSetStyle, safeCreateElement, safeGetElementById, safeQuerySelectorAll } from '../../shared/dom-utils.js';
+
+// 向后兼容导出 elements
+export { elements };
+
+/**
+ * 安全创建 DOM 元素并设置属性和内容
+ * @param {string} tag 标签名
+ * @param {Object} options 选项
+ * @param {Array} options.classes CSS 类名数组
+ * @param {Object} options.attributes 属性对象
+ * @param {string} options.textContent 文本内容
+ * @param {Array} options.children 子元素数组
+ * @returns {HTMLElement} 创建的元素
+ */
+function createElement(tag, { classes = [], attributes = {}, textContent = '', children = [] } = {}) {
+	return safeCreateElement(tag, { classes, attributes, textContent, children });
+}
+
+/**
+ * 格式化时间显示
+ * @param {number|string} timestamp 时间戳
+ * @returns {string} 格式化后的时间字符串
+ */
+function formatTime(timestamp) {
+	if (timestamp == null || timestamp === '') return '';
+
+	const timestampNum = typeof timestamp === 'number' ? timestamp :
+	                    typeof timestamp === 'string' ? parseInt(timestamp, 10) :
+	                    Number(timestamp);
+
+	if (isNaN(timestampNum) || timestampNum <= 0) return '';
+
+	const diff = Date.now() - timestampNum;
+	const { SECOND, MINUTE, HOUR, DAY, MONTH, YEAR } = UI.TIME_FORMAT;
+
+	if (diff < MINUTE) return '刚刚';
+	if (diff < HOUR) return `${Math.floor(diff / MINUTE)}分钟前`;
+	if (diff < DAY) return `${Math.floor(diff / HOUR)}小时前`;
+	if (diff < MONTH) return `${Math.floor(diff / DAY)}天前`;
+	if (diff < YEAR) return `${Math.floor(diff / MONTH)}个月前`;
+	return `${Math.floor(diff / YEAR)}年前`;
+}
+
+/**
+ * 根据已查看状态对相册进行排序
+ * 仅在 sort=smart 时生效
+ */
+export async function sortAlbumsByViewed() {
+	const hash = window.location.hash;
+	const questionMarkIndex = hash.indexOf('?');
+	const urlParams = new URLSearchParams(questionMarkIndex !== -1 ? hash.substring(questionMarkIndex) : '');
+	const currentSort = urlParams.get('sort') || 'smart';
+	if (currentSort !== 'smart') return;
+	const viewedAlbumsData = await getAllViewed();
+	const viewedAlbumPaths = viewedAlbumsData.map(item => item.path);
+	const albumElements = Array.from(safeQuerySelectorAll('.album-link'));
+	albumElements.sort((a, b) => {
+		const viewedA = viewedAlbumPaths.includes(a.dataset.path);
+		const viewedB = viewedAlbumPaths.includes(b.dataset.path);
+		if (viewedA && !viewedB) return 1;
+		if (!viewedA && viewedB) return -1;
+		return 0;
+	});
+	const grid = elements.contentGrid; if (!grid) return;
+	albumElements.forEach(el => grid.appendChild(el));
+}
+
+/**
+ * 渲染面包屑导航（安全 DOM 操作）
+ * @param {string} path 当前路径
+ */
+export function renderBreadcrumb(path) {
+	const parts = path ? path.split('/').filter(p => p) : [];
+	let currentPath = '';
+	let sortParam = '';
+	if (state.entrySort && state.entrySort !== 'smart') sortParam = `?sort=${state.entrySort}`; else {
+		const hash = window.location.hash;
+		const questionMarkIndex = hash.indexOf('?');
+		sortParam = questionMarkIndex !== -1 ? hash.substring(questionMarkIndex) : '';
+	}
+	const breadcrumbNav = elements.breadcrumbNav;
+	if (!breadcrumbNav) return;
+	let breadcrumbLinks = breadcrumbNav.querySelector('#breadcrumb-links');
+	if (!breadcrumbLinks) {
+		// XSS 安全：使用 DOM 操作替代 innerHTML
+		while (breadcrumbNav.firstChild) {
+			breadcrumbNav.removeChild(breadcrumbNav.firstChild);
+		}
+		breadcrumbLinks = createElement('div', { classes: ['flex-1', 'min-w-0'], attributes: { id: 'breadcrumb-links' } });
+		const sortContainer = createElement('div', { classes: ['flex-shrink-0', 'ml-4'], attributes: { id: 'sort-container' } });
+		breadcrumbNav.append(breadcrumbLinks, sortContainer);
+	}
+	const container = createElement('div', { classes: ['flex', 'flex-wrap', 'items-center'] });
+	container.appendChild(createElement('a', { classes: ['text-purple-400', 'hover:text-purple-300'], attributes: { href: `#/${sortParam}` }, textContent: '首页' }));
+	parts.forEach((part, index) => {
+		currentPath += (currentPath ? '/' : '') + part;
+		const isLast = index === parts.length - 1;
+		container.appendChild(createElement('span', { classes: ['mx-2'], textContent: '/' }));
+		if (isLast) {
+			container.appendChild(createElement('span', { classes: ['text-white'], textContent: decodeURIComponent(part) }));
+		} else {
+			container.appendChild(createElement('a', { classes: ['text-purple-400', 'hover:text-purple-300'], attributes: { href: `#/${encodeURIComponent(currentPath)}${sortParam}` }, textContent: decodeURIComponent(part) }));
+		}
+	});
+	// XSS 安全：使用 DOM 操作替代 innerHTML
+	while (breadcrumbLinks.firstChild) {
+		breadcrumbLinks.removeChild(breadcrumbLinks.firstChild);
+	}
+	breadcrumbLinks.appendChild(container);
+	setTimeout(() => {
+		const sortContainer = elements.sortContainer;
+		if (sortContainer) {
+			// 不清空容器，避免闪烁
+			let toggleWrap = sortContainer.querySelector('#layout-toggle-wrap');
+			if (!toggleWrap) {
+				const toggle = createLayoutToggle();
+				sortContainer.appendChild(toggle.container);
+				toggleWrap = toggle.container;
+			}
+			// 分割线
+			if (!sortContainer.querySelector('.layout-divider')) {
+				const divider = document.createElement('div');
+				divider.className = 'layout-divider';
+				sortContainer.appendChild(divider);
+			}
+			// 排序下拉专用容器
+			let sortWrapper = sortContainer.querySelector('#sort-wrapper');
+			if (!sortWrapper) {
+				sortWrapper = document.createElement('div');
+				sortWrapper.id = 'sort-wrapper';
+				safeSetStyle(sortWrapper, {
+					display: 'inline-block',
+					position: 'relative'
+				});
+				sortContainer.appendChild(sortWrapper);
+			}
+			// 没有媒体文件时才显示排序下拉
+			checkIfHasMediaFiles(path)
+				.then(hasMedia => {
+					if (!hasMedia) {
+						while (sortWrapper.firstChild) {
+							sortWrapper.removeChild(sortWrapper.firstChild);
+						}
+						renderSortDropdown();
+					} else {
+						while (sortWrapper.firstChild) {
+							sortWrapper.removeChild(sortWrapper.firstChild);
+						}
+					}
+				})
+				.catch(() => {
+					while (sortWrapper.firstChild) {
+						sortWrapper.removeChild(sortWrapper.firstChild);
+					}
+					renderSortDropdown();
+				});
+		}
+	}, 100);
+}
+
+/**
+ * 渲染相册卡片（安全 DOM 操作）
+ * @param {Object} album 相册数据
+ * @returns {HTMLElement} 相册卡片元素
+ */
+export function displayAlbum(album) {
+	const aspectRatio = album.coverHeight ? album.coverWidth / album.coverHeight : 1;
+	const timeText = formatTime(album.mtime);
+	let sortParam = '';
+	if (state.entrySort && state.entrySort !== 'smart') sortParam = `?sort=${state.entrySort}`; else {
+		const hash = window.location.hash;
+		const questionMarkIndex = hash.indexOf('?');
+		sortParam = questionMarkIndex !== -1 ? hash.substring(questionMarkIndex) : '';
+	}
+	const img = createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': album.coverUrl, alt: album.name } });
+	const albumTitle = createElement('div', { classes: ['album-title'], textContent: album.name });
+	const albumMetaKids = [createElement('span', { classes: ['album-type'], textContent: '相册' })];
+	if (timeText) albumMetaKids.push(createElement('span', { classes: ['album-time'], textContent: timeText }));
+	const infoOverlay = createElement('div', { classes: ['card-info-overlay'], children: [albumTitle, createElement('div', { classes: ['album-meta'], children: albumMetaKids })] });
+
+	const deleteTrigger = createElement('button', {
+		classes: ['album-delete-trigger'],
+		attributes: { type: 'button', 'aria-label': '删除相册' },
+		children: [createDeleteIcon()]
+	});
+	const deleteConfirm = createElement('button', { classes: ['album-delete-confirm'], attributes: { type: 'button' }, textContent: '确认删除' });
+	const deleteCancel = createElement('button', { classes: ['album-delete-cancel'], attributes: { type: 'button' }, textContent: '取消' });
+	const confirmGroup = createElement('div', { classes: ['album-delete-confirm-group'], children: [deleteConfirm, deleteCancel] });
+	const deleteStage = createElement('div', { classes: ['album-delete-stage'], children: [deleteTrigger, confirmGroup] });
+	const deleteOverlay = createElement('div', { classes: ['album-delete-overlay'], attributes: { 'data-state': 'idle', 'data-path': album.path }, children: [deleteStage] });
+
+	const relativeDiv = createElement('div', { classes: ['relative'], attributes: { style: `aspect-ratio: ${aspectRatio}` }, children: [createElement('div', { classes: ['image-placeholder','absolute','inset-0'] }), img, infoOverlay, deleteOverlay] });
+	const link = createElement('a', { classes: ['album-card','group','block','bg-gray-800','rounded-lg','overflow-hidden','shadow-lg','hover:shadow-purple-500/30','transition-shadow'], attributes: { href: `#/${encodeURIComponent(album.path)}${sortParam}` }, children: [relativeDiv] });
+	return createElement('div', { classes: ['grid-item','album-link'], attributes: { 'data-path': album.path, 'data-width': album.coverWidth || 1, 'data-height': album.coverHeight || 1 }, children: [link] });
+}
+
+/**
+ * 渲染流式媒体项（安全 DOM 操作，增强布局稳定性）
+ * @param {string} type 媒体类型
+ * @param {Object} mediaData 媒体数据
+ * @param {number} index 索引
+ * @param {boolean} showTimestamp 是否显示时间戳
+ * @returns {HTMLElement} 媒体项元素
+ */
+export function displayStreamedMedia(type, mediaData, index, showTimestamp) {
+	const isVideo = type === 'video';
+	const aspectRatio = (mediaData.height && mediaData.width)
+		? mediaData.width / mediaData.height
+		: (isVideo ? UI.ASPECT_RATIO.VIDEO_DEFAULT : UI.ASPECT_RATIO.IMAGE_DEFAULT);
+	const timeText = showTimestamp ? formatTime(mediaData.mtime) : '';
+	
+	const placeholderClasses = ['image-placeholder','absolute','inset-0'];
+	if (!mediaData.height || !mediaData.width) {
+		placeholderClasses.push(`min-h-[${UI.LAYOUT.UNKNOWN_ASPECT_RATIO_MIN_HEIGHT}]`);
+	}
+	const kids = [createElement('div', { classes: placeholderClasses })];
+	const loadingOverlay = createElement('div', { classes: ['loading-overlay'] });
+	const progressHolder = createElement('div');
+	const svg = createProgressCircle();
+	progressHolder.appendChild(svg);
+	loadingOverlay.append(progressHolder);
+	kids.push(loadingOverlay);
+	if (isVideo) {
+		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': mediaData.thumbnailUrl, alt: '视频缩略图' } }));
+		const overlay = createElement('div', { classes: ['video-thumbnail-overlay'] });
+		const playBtn = createElement('div', { classes: ['video-play-button'] });
+		const playSvg = createPlayButton();
+		playBtn.appendChild(playSvg);
+		overlay.append(playBtn);
+		kids.push(overlay);
+	} else {
+		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': mediaData.thumbnailUrl, alt: '图片缩略图' } }));
+	}
+	if (timeText) kids.push(createElement('div', { classes: ['absolute','bottom-2','right-2','bg-black/50','text-white','text-sm','px-2','py-1','rounded','shadow-lg'], textContent: timeText }));
+	const containerStyle = `aspect-ratio: ${aspectRatio}; min-height: 150px;`;
+	const relativeDiv = createElement('div', { 
+		classes: ['relative','w-full','h-full'], 
+		attributes: {
+			style: containerStyle,
+			'data-aspect-ratio': aspectRatio.toFixed(MATH.ASPECT_RATIO_PRECISION),
+			'data-original-width': mediaData.width || 0,
+			'data-original-height': mediaData.height || 0
+		}, 
+		children: kids 
+	});
+	const photoItem = createElement('div', { classes: ['photo-item','group','block','bg-gray-800','rounded-lg','overflow-hidden','cursor-pointer'], children: [relativeDiv] });
+	return createElement('div', { classes: ['grid-item','photo-link'], attributes: { 'data-url': mediaData.originalUrl, 'data-index': index, 'data-width': mediaData.width, 'data-height': mediaData.height }, children: [photoItem] });
+}
+
+/**
+ * 渲染搜索结果媒体项（安全 DOM 操作）
+ * @param {Object} result 搜索结果
+ * @param {number} index 索引
+ * @returns {HTMLElement} 媒体项元素
+ */
+export function displaySearchMedia(result, index) {
+	const isVideo = result.type === 'video';
+	const timeText = formatTime(result.mtime);
+	const aspectRatio = result.height ? result.width / result.height : 1;
+	const kids = [
+		createElement('div', { classes: ['image-placeholder','absolute','inset-0'] }),
+		createElement('div', { classes: ['loading-overlay'], children: [createElement('div', { classes: ['progress-circle'] })] })
+	];
+	if (isVideo) {
+		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': result.thumbnailUrl, alt: `视频缩略图：${result.name}` } }));
+		const overlay = createElement('div', { classes: ['video-thumbnail-overlay'] });
+		const playBtn = createElement('div', { classes: ['video-play-button'] });
+		const playSvg = createPlayButton();
+		playBtn.appendChild(playSvg);
+		overlay.append(playBtn);
+		kids.push(overlay);
+		const title = createElement('div', { classes: ['album-title'], textContent: result.name });
+		const metaKids = [createElement('span', { classes: ['album-type'], textContent: '视频' })];
+		if (timeText) metaKids.push(createElement('span', { classes: ['album-time'], textContent: timeText }));
+		const infoOverlay = createElement('div', { classes: ['card-info-overlay'], children: [title, createElement('div', { classes: ['album-meta'], children: metaKids })] });
+		kids.push(infoOverlay);
+	} else {
+		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': result.thumbnailUrl, alt: result.name } }));
+	}
+	if (!isVideo && timeText) kids.push(createElement('div', { classes: ['absolute','bottom-2','right-2','bg-black/50','text-white','text-sm','px-2','py-1','rounded','shadow-lg'], textContent: timeText }));
+	const relativeDiv = isVideo
+		? createElement('div', { classes: ['relative'], attributes: { style: `aspect-ratio: ${aspectRatio}` }, children: kids })
+		: createElement('div', { classes: ['aspect-w-1','aspect-h-1','relative'], children: kids });
+	const containerClasses = isVideo
+		? ['album-card','group','block','bg-gray-800','rounded-lg','overflow-hidden','shadow-lg','hover:shadow-purple-500/30','transition-shadow']
+		: ['photo-item','group','block','bg-gray-800','rounded-lg','overflow-hidden','cursor-pointer'];
+	const card = createElement('div', { classes: containerClasses, children: [relativeDiv] });
+	const nameDiv = isVideo ? null : createElement('div', { classes: ['mt-2'], children: [createElement('p', { classes: ['text-xs','text-gray-400','truncate'], textContent: result.name })] });
+	const attrs = { 'data-url': result.originalUrl, 'data-index': index, 'data-width': result.width || 1, 'data-height': result.height || 1 };
+	return createElement('div', { classes: ['grid-item','photo-link'], attributes: attrs, children: nameDiv ? [card, nameDiv] : [card] });
+}
+
+/**
+ * 渲染浏览网格（批量优化，返回 DOM 元素数组）
+ * @param {Array} items 项目数组
+ * @param {number} currentPhotoCount 当前图片计数
+ * @returns {Object} { contentElements, newMediaUrls, fragment }
+ */
+export function renderBrowseGrid(items, currentPhotoCount) {
+	const contentElements = [];
+	const newMediaUrls = [];
+	const showTimestampForMedia = false;
+	const fragment = document.createDocumentFragment();
+	items.forEach(item => {
+		const itemData = item.data;
+		let element;
+		if (item.type === 'album') {
+			element = displayAlbum(itemData);
+		} else {
+			const mediaIndex = currentPhotoCount + newMediaUrls.length;
+			element = displayStreamedMedia(item.type, itemData, mediaIndex, showTimestampForMedia);
+			newMediaUrls.push(itemData.originalUrl);
+		}
+		contentElements.push(element);
+		fragment.appendChild(element);
+	});
+	return { contentElements, newMediaUrls, fragment };
+}
+
+/**
+ * 渲染搜索网格（批量优化，返回 DOM 元素数组）
+ * @param {Array} results 搜索结果数组
+ * @param {number} currentPhotoCount 当前图片计数
+ * @returns {Object} { contentElements, newMediaUrls, fragment }
+ */
+export function renderSearchGrid(results, currentPhotoCount) {
+	const contentElements = [];
+	const newMediaUrls = [];
+	const fragment = document.createDocumentFragment();
+	results.forEach(result => {
+		let element;
+		if (result.type === 'album') {
+			element = displayAlbum(result);
+		} else if (result.type === 'photo' || result.type === 'video') {
+			const mediaIndex = currentPhotoCount + newMediaUrls.length;
+			element = displaySearchMedia(result, mediaIndex);
+			newMediaUrls.push(result.originalUrl);
+		}
+		if (element) {
+			contentElements.push(element);
+			fragment.appendChild(element);
+		}
+	});
+	return { contentElements, newMediaUrls, fragment };
+}
+
+/**
+ * 渲染排序下拉菜单（安全 DOM 操作）
+ */
+export function renderSortDropdown() {
+	const sortContainer = elements.sortContainer;
+	if (!sortContainer) return;
+
+	// 保证结构：布局切换器 + 分割线 + 排序 wrapper
+	let toggleWrap = sortContainer.querySelector('#layout-toggle-wrap');
+	if (!toggleWrap) {
+		const toggle = createLayoutToggle();
+		sortContainer.appendChild(toggle.container);
+		toggleWrap = toggle.container;
+	}
+
+	// 确保按钮可见
+	if (toggleWrap && !safeClassList(toggleWrap, 'contains', 'visible')) {
+		requestAnimationFrame(() => {
+			safeClassList(toggleWrap, 'add', 'visible');
+		});
+	}
+	if (!sortContainer.querySelector('.layout-divider')) {
+		const divider = document.createElement('div');
+		divider.className = 'layout-divider';
+		sortContainer.appendChild(divider);
+	}
+	let sortWrapper = sortContainer.querySelector('#sort-wrapper');
+	if (!sortWrapper) {
+		sortWrapper = document.createElement('div');
+		sortWrapper.id = 'sort-wrapper';
+		safeSetStyle(sortWrapper, {
+			position: 'relative',
+			display: 'inline-block'
+		});
+		sortContainer.appendChild(sortWrapper);
+	}
+	while (sortWrapper.firstChild) {
+		sortWrapper.removeChild(sortWrapper.firstChild);
+	}
+	const sortOptions = { smart: '🧠 智能', name: '📝 名称', mtime: '📅 日期', viewed_desc: '👁️ 访问' };
+	const hash = window.location.hash;
+	const questionMarkIndex = hash.indexOf('?');
+	const urlParams = new URLSearchParams(questionMarkIndex !== -1 ? hash.substring(questionMarkIndex) : '');
+	const currentSort = urlParams.get('sort') || 'smart';
+
+	function getCurrentOption(sortValue) {
+		if (sortValue === 'name_asc' || sortValue === 'name_desc') return 'name';
+		if (sortValue === 'mtime_asc' || sortValue === 'mtime_desc') return 'mtime';
+		return sortValue;
+	}
+
+	function getSortDisplayText(sortValue) {
+		switch (sortValue) {
+			case 'smart': return '智能';
+			case 'name_asc':
+			case 'name_desc': return '名称';
+			case 'mtime_desc':
+			case 'mtime_asc': return '日期';
+			case 'viewed_desc': return '访问';
+			default: return '智能';
+		}
+	}
+
+	const currentOption = getCurrentOption(currentSort);
+
+	const sortDisplay = createElement('span', { attributes: { id: 'sort-display' }, textContent: getSortDisplayText(currentSort) });
+    const iconContainer = createElement('div', { classes: ['w-3','h-3','sm:w-4','sm:h-4','text-gray-400', 'transition-transform', 'duration-200'] });
+    const isAscending = currentSort.endsWith('_asc');
+    const svg = createSortArrow(isAscending);
+    iconContainer.appendChild(svg);
+
+	const sortButton = createElement('button', { 
+        classes: ['bg-gray-800','border','border-gray-700','text-white','text-sm','rounded-lg','focus:ring-purple-500','focus:border-purple-500','block','w-20','p-1.5','sm:p-2.5','transition-colors','hover:border-purple-500','cursor-pointer','flex','items-center','justify-between'], 
+        attributes: { id: 'sort-button', 'aria-expanded': 'false' }, 
+        children: [sortDisplay, iconContainer] 
+    });
+
+	const dropdownOptions = Object.entries(sortOptions).map(([value, label]) => createElement('button', { classes: ['sort-option','w-full','text-left','px-3','py-2','text-sm','text-white','hover:bg-gray-700','transition-colors',...(currentOption === value ? ['bg-purple-600'] : [])], attributes: { 'data-value': value }, textContent: label }));
+	const sortDropdown = createElement('div', { classes: ['absolute','top-full','right-0','mt-1','bg-gray-800','border','border-gray-700','rounded-lg','shadow-lg','z-50','hidden','w-full'], attributes: { id: 'sort-dropdown' }, children: dropdownOptions });
+	const container = createElement('div', { classes: ['relative','inline-flex','items-center'], children: [sortButton, sortDropdown] });
+	sortWrapper.appendChild(container);
+
+	sortButton.addEventListener('click', (e) => { 
+        e.stopPropagation(); 
+        const isHidden = safeClassList(sortDropdown, 'toggle', 'hidden');
+        sortButton.setAttribute('aria-expanded', !isHidden);
+        safeClassList(iconContainer, 'toggle', 'rotate-180', !isHidden);
+    });
+
+	dropdownOptions.forEach(option => {
+		option.addEventListener('click', (e) => {
+			e.stopPropagation();
+			let newSort = option.dataset.value;
+			if (newSort === 'name') newSort = currentSort === 'name_asc' ? 'name_desc' : 'name_asc';
+			else if (newSort === 'mtime') newSort = currentSort === 'mtime_desc' ? 'mtime_asc' : 'mtime_desc';
+			
+            const newHash = `${window.location.hash.split('?')[0]}?sort=${newSort}`;
+			
+            sortDisplay.textContent = getSortDisplayText(newSort);
+
+			dropdownOptions.forEach(opt => safeClassList(opt, 'remove', 'bg-purple-600'));
+			safeClassList(option, 'add', 'bg-purple-600');
+			safeClassList(sortDropdown, 'add', 'hidden');
+            sortButton.setAttribute('aria-expanded', 'false');
+            safeClassList(iconContainer, 'remove', 'rotate-180');
+
+			if (window.location.hash !== newHash) window.location.hash = newHash;
+		});
+	});
+
+	document.addEventListener('click', (e) => {
+		if (!sortButton.contains(e.target) && !sortDropdown.contains(e.target)) {
+            safeClassList(sortDropdown, 'add', 'hidden');
+            sortButton.setAttribute('aria-expanded', 'false');
+            safeClassList(iconContainer, 'remove', 'rotate-180');
+        }
+	});
+}
+
+/**
+ * 仅渲染布局切换按钮到 sort-container（搜索页专用）
+ * 避免重复创建按钮导致事件绑定失效
+ */
+export function renderLayoutToggleOnly() {
+    const sortContainer = elements.sortContainer;
+    if (!sortContainer) return;
+
+    // 检查是否已存在布局切换按钮
+    const existingToggle = sortContainer.querySelector('#layout-toggle-wrap');
+    if (existingToggle) {
+        ensureLayoutToggleVisible();
+        return;
+    }
+
+    requestAnimationFrame(() => {
+        try {
+            const toggle = createLayoutToggle();
+            if (!toggle || !toggle.container) {
+                uiLogger.warn('创建布局切换按钮失败');
+                return;
+            }
+
+            sortContainer.appendChild(toggle.container);
+
+            // 分割线
+            const divider = document.createElement('div');
+            divider.className = 'layout-divider';
+            sortContainer.appendChild(divider);
+
+            // 强制重新计算布局
+            sortContainer.offsetHeight;
+
+            // 下一帧触发动画，确保按钮可见
+            requestAnimationFrame(() => {
+                if (toggle.container && !safeClassList(toggle.container, 'contains', 'visible')) {
+                    safeClassList(toggle.container, 'add', 'visible');
+                }
+            });
+
+        } catch (error) {
+            uiLogger.error('渲染布局切换按钮出错', error);
+        }
+    });
+}
+
+/**
+ * 确保布局切换按钮可见
+ * 用于修复按钮显示状态
+ */
+export function ensureLayoutToggleVisible() {
+    const sortContainer = elements.sortContainer;
+    if (!sortContainer) return;
+
+    const toggleWrap = sortContainer.querySelector('#layout-toggle-wrap');
+    if (toggleWrap && !safeClassList(toggleWrap, 'contains', 'visible')) {
+        requestAnimationFrame(() => {
+            safeClassList(toggleWrap, 'add', 'visible');
+        });
+    }
+}
+
+/**
+ * 根据内容长度动态调整滚动优化策略
+ * @param {string} path 当前路径
+ */
+export function adjustScrollOptimization(path) {
+    requestAnimationFrame(() => {
+        const contentGrid = elements.contentGrid;
+        if (!contentGrid) return;
+
+        const gridItems = contentGrid.querySelectorAll('.grid-item');
+        const viewportHeight = window.innerHeight;
+
+        // 计算内容总高度
+        let totalContentHeight = 0;
+        gridItems.forEach(item => {
+            const rect = item.getBoundingClientRect();
+            totalContentHeight = Math.max(totalContentHeight, rect.bottom);
+        });
+
+        const body = document.body;
+
+        // 移除旧类
+        safeClassList(body, 'remove', 'has-short-content');
+        safeClassList(body, 'remove', 'has-long-content');
+
+        // 根据内容高度判断并添加相应类
+        if (totalContentHeight > viewportHeight * 1.2) {
+            safeClassList(body, 'add', 'has-long-content');
+        } else {
+            safeClassList(body, 'add', 'has-short-content');
+        }
+    });
+}
+
+/**
+ * 检查路径是否包含媒体文件
+ * @param {string} path 路径
+ * @returns {Promise<boolean>} 是否包含媒体文件
+ */
+export async function checkIfHasMediaFiles(path) {
+	try {
+		const data = await api.fetchBrowseResults(path, 1, new AbortController().signal);
+		if (!data || !data.items) return false;
+		return data.items.some(item => item.type === 'photo' || item.type === 'video');
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * 创建布局图标
+ * @param {string} kind 布局类型（'grid' 或 'masonry'）
+ * @returns {SVGElement} SVG 图标元素
+ */
+function createLayoutIcon(kind) {
+	return kind === 'grid' ? createGridIcon() : createMasonryIcon();
+}
+
+/**
+ * 返回布局图标的 HTML 字符串（兼容旧用法）
+ * @param {string} kind 布局类型（'grid' 或 'masonry'）
+ * @returns {string} SVG 图标 HTML 字符串
+ */
+function iconHtml(kind) {
+	return createLayoutIcon(kind).outerHTML;
+}
+
+/**
+ * 初始化 UI 相关的状态订阅
+ */
+export function initializeUI() {
+    stateManager.subscribe(['layoutMode'], () => {
+        applyLayoutMode();
+
+        const btn = elements.layoutToggleBtn;
+        if (btn) {
+            updateLayoutToggleButton(btn);
+        }
+    });
+}
+
+/**
+ * 更新布局切换按钮的显示状态
+ * @param {HTMLElement} btn 按钮元素
+ */
+function updateLayoutToggleButton(btn) {
+    try {
+        const isGrid = state.layoutMode === 'grid';
+
+        // XSS 安全：安全 DOM 操作替代 innerHTML
+        safeSetInnerHTML(btn, '');
+
+        // 添加图标
+        const icon = createLayoutIcon(isGrid ? 'grid' : 'masonry');
+        btn.appendChild(icon);
+
+        // 添加工具提示文本
+        const tooltipSpan = document.createElement('span');
+        tooltipSpan.className = 'layout-tooltip';
+        safeSetStyle(tooltipSpan, 'marginLeft', '4px');
+        tooltipSpan.textContent = isGrid ? '瀑布流布局' : '网格布局';
+        btn.appendChild(tooltipSpan);
+
+        btn.setAttribute('aria-pressed', isGrid ? 'true' : 'false');
+    } catch (error) {
+        uiLogger.error('更新布局切换按钮出错', error);
+    }
+}
+
+/**
+ * 创建布局切换按钮（网格/瀑布流）
+ * @returns {Object} { container, button }
+ */
+function createLayoutToggle() {
+	const wrap = createElement('div', { attributes: { id: 'layout-toggle-wrap' }, classes: ['relative','inline-flex','items-center','mr-2'] });
+	const btn = createElement('button', {
+		classes: ['bg-gray-800','border','border-gray-700','text-white','text-sm','rounded-lg','focus:ring-purple-500','focus:border-purple-500','px-2.5','py-1.5','transition-colors','hover:border-purple-500','cursor-pointer','flex','items-center','gap-1'],
+		attributes: { id: 'layout-toggle-btn', type: 'button', 'aria-pressed': state.layoutMode === 'grid' ? 'true' : 'false' }
+	});
+	function updateLabel() {
+		const isGrid = state.layoutMode === 'grid';
+		safeSetInnerHTML(btn, '');
+		const icon = createLayoutIcon(isGrid ? 'grid' : 'masonry');
+		btn.appendChild(icon);
+		const tooltipSpan = document.createElement('span');
+		tooltipSpan.className = 'layout-tooltip';
+		safeSetStyle(tooltipSpan, 'marginLeft', '4px');
+		tooltipSpan.textContent = isGrid ? '瀑布流布局' : '网格布局';
+		btn.appendChild(tooltipSpan);
+		btn.setAttribute('aria-pressed', isGrid ? 'true' : 'false');
+	}
+	const clickHandler = () => {
+		try {
+			const current = state.layoutMode;
+			const next = current === 'grid' ? 'masonry' : 'grid';
+			state.update('layoutMode', next);
+			try { localStorage.setItem('sg_layout_mode', next); } catch {}
+		} catch (error) {
+			uiLogger.error('切换布局模式出错', error);
+		}
+	};
+	btn.addEventListener('click', clickHandler);
+	updateLabel();
+	wrap.appendChild(btn);
+	return { container: wrap, button: btn };
+}
+
+/**
+ * 应用当前布局模式到内容容器
+ */
+export function applyLayoutMode() {
+	const grid = elements.contentGrid;
+	if (!grid) return;
+	const mode = state.layoutMode;
+	if (mode === 'grid') {
+		safeClassList(grid, 'remove', 'masonry-mode');
+		safeClassList(grid, 'add', 'grid-mode');
+		// 清除瀑布流产生的内联样式
+		Array.from(grid.children).forEach(item => {
+			safeSetStyle(item, {
+				position: '',
+				width: '',
+				left: '',
+				top: ''
+			});
+		});
+		safeSetStyle(grid, 'height', '');
+		// 清理瀑布流写入的高度，避免影响网格模式布局
+		Array.from(grid.children).forEach(item => { safeSetStyle(item, 'height', ''); });
+		// 统一网格卡片纵横比（可按需改为 1/1 或 16/9）
+		safeSetStyle(grid, '--grid-aspect', '1/1');
+	} else {
+		safeClassList(grid, 'remove', 'grid-mode');
+		safeClassList(grid, 'add', 'masonry-mode');
+		requestAnimationFrame(() => {
+			applyMasonryLayout();
+			triggerMasonryUpdate();
+		});
+	}
+}

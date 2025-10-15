@@ -5,7 +5,7 @@
 const express = require('express');
 const router = express.Router();
 const aiController = require('../controllers/ai.controller');
-const apiLimiter = require('../middleware/rateLimiter');
+const { rateLimiterMiddleware } = require('../middleware/rateLimiter');
 const { validate, Joi, asyncHandler } = require('../middleware/validation');
 const aiRateGuard = require('../middleware/ai-rate-guard');
 
@@ -31,10 +31,10 @@ const modelListSchema = Joi.object({
 });
 
 // 为生成接口增加更严格的速率限制（在全局限速之外叠加，防止滥用）
-router.post('/generate', apiLimiter, aiRateGuard, validate(generateSchema), asyncHandler(aiController.generateCaption));
+router.post('/generate', rateLimiterMiddleware, aiRateGuard, validate(generateSchema), asyncHandler(aiController.generateCaption));
 
 // 获取可用AI模型
-router.post('/models', apiLimiter, validate(modelListSchema), asyncHandler(aiController.listAvailableModels));
+router.post('/models', rateLimiterMiddleware, validate(modelListSchema), asyncHandler(aiController.listAvailableModels));
 
 // AI任务状态查询路由（兼容性保留）
 router.get('/job/:jobId', asyncHandler(aiController.getJobStatus));

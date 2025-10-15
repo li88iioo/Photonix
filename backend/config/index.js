@@ -1,10 +1,15 @@
 const path = require('path');
-const logger = require('./logger');
+const baseLogger = require('./logger');
+const { LOG_PREFIXES, formatLog } = baseLogger;
+const logger = baseLogger;
 const { detectHardwareConfig } = require('./hardware');
 
 /**
- * 后端全局配置模块 - 简化版
- * 统一管理核心配置项，移除复杂的队列和性能调优参数
+ * @file index.js
+ * @description
+ *  后端全局配置模块（简化版）
+ *  - 集中管理核心配置项
+ *  - 移除复杂队列与高级性能调优参数
  */
 
 // --- 应用配置 ---
@@ -17,7 +22,10 @@ const API_BASE = process.env.API_BASE || '';            // API基础URL（为空
 function resolveDir(envKey, dockerDefault, projectFallback) {
     const envVal = process.env[envKey];
     if (envVal && envVal.trim() !== '') return envVal;
-    try { if (require('fs').existsSync(dockerDefault)) return dockerDefault; } catch {}
+    try { if (require('fs').existsSync(dockerDefault)) return dockerDefault; }
+    catch (error) {
+        logger.silly(formatLog(LOG_PREFIXES.CONFIG, `检测默认目录失败，使用项目内路径: ${error && error.message}`));
+    }
     return path.resolve(__dirname, '..', projectFallback);
 }
 const PHOTOS_DIR = resolveDir('PHOTOS_DIR', '/app/photos', 'photos'); // 图片/视频主目录
@@ -42,18 +50,61 @@ const { deriveRuntime } = require('./runtime');
 const __rt = deriveRuntime();
 const NUM_WORKERS = __rt.NUM_WORKERS;
 
-logger.debug(`[CONFIG] 最终硬件配置: CPU=${cpuCount}核, 内存=${totalMemoryGB}GB, 工作线程=${NUM_WORKERS}`);
+// --- 日志开关配置 ---
+const ENABLE_AUTH_DEBUG_LOGS = (process.env.AUTH_DEBUG_LOGS || '').toLowerCase() === 'true';
+
+// 只在主线程输出配置日志，避免Worker线程重复输出
+const { isMainThread } = require('worker_threads');
+if (isMainThread) {
+    logger.debug(formatLog(LOG_PREFIXES.CONFIG, `最终硬件配置: CPU=${cpuCount}核, 内存=${totalMemoryGB}GB, 工作线程=${NUM_WORKERS}`));
+}
+
+// --- 缩略图配置 ---
 const MAX_THUMBNAIL_RETRIES = 3;                                  // 缩略图最大重试次数
 const INITIAL_RETRY_DELAY = 1000;                                 // 缩略图初始重试延迟（毫秒）
+const THUMB_ONDEMAND_QUEUE_MAX = Number(process.env.THUMB_ONDEMAND_QUEUE_MAX || 2000); // 按需队列最大长度
+const THUMB_BATCH_COOLDOWN_MS = Math.max(0, Number(process.env.THUMB_BATCH_COOLDOWN_MS || 0)); // 批处理冷却时间
+const THUMB_TELEMETRY_LOG_INTERVAL_MS = Math.max(5000, Number(process.env.THUMB_TELEMETRY_LOG_INTERVAL_MS || 15000)); // 遥测日志间隔
+const THUMB_OVERFLOW_RETRY_MS = Number(process.env.THUMB_OVERFLOW_RETRY_MS || 5000); // 队列溢出重试间隔
+const THUMB_ONDEMAND_IDLE_DESTROY_MS = Number(process.env.THUMB_ONDEMAND_IDLE_DESTROY_MS || 30000); // 空闲销毁时间
+const THUMB_ONDEMAND_RESERVE = Math.max(0, Math.floor(Number(process.env.THUMB_ONDEMAND_RESERVE || 0))); // 预留worker数量
+
+// --- Sharp配置 ---
+const SHARP_CACHE_MEMORY_MB = Number(process.env.SHARP_CACHE_MEMORY_MB || 16); // Sharp缓存内存
+const SHARP_CACHE_ITEMS = Number(process.env.SHARP_CACHE_ITEMS || 50); // Sharp缓存项数
+const SHARP_CACHE_FILES = Number(process.env.SHARP_CACHE_FILES || 0); // Sharp缓存文件数
+const SHARP_CONCURRENCY = __rt.SHARP_CONCURRENCY; // Sharp并发数
+const SHARP_MAX_PIXELS = Number(process.env.SHARP_MAX_PIXELS || (24000 * 24000)); // Sharp最大像素数
+
 // --- 视频处理配置 ---
 const VIDEO_TASK_DELAY_MS = __rt.VIDEO_TASK_DELAY_MS; // 视频任务间延迟
 const VIDEO_MAX_CONCURRENCY = __rt.VIDEO_MAX_CONCURRENCY; // 视频任务最大并发
-const INDEX_STABILIZE_DELAY_MS = parseInt(process.env.INDEX_STABILIZE_DELAY_MS) || 2000; // 索引稳定化延迟
+const HLS_BATCH_TIMEOUT_MS = Number(process.env.HLS_BATCH_TIMEOUT_MS || 600000); // HLS批处理超时
 const FFMPEG_THREADS = parseInt(process.env.FFMPEG_THREADS) || 2; // FFmpeg线程数
-const SHARP_CONCURRENCY = __rt.SHARP_CONCURRENCY; // Sharp并发数
-const INDEX_BATCH_SIZE = __rt.INDEX_BATCH_SIZE; // 索引批量大小
 
+// --- 索引配置 ---
+const INDEX_STABILIZE_DELAY_MS = parseInt(process.env.INDEX_STABILIZE_DELAY_MS) || 2000; // 索引稳定化延迟
+const INDEX_BATCH_SIZE = __rt.INDEX_BATCH_SIZE; // 索引批量大小
 const INDEX_CONCURRENCY = __rt.INDEX_CONCURRENCY; // 索引并发数
+
+// --- 文件服务配置 ---
+const FILE_BATCH_SIZE = Number(process.env.FILE_BATCH_SIZE || 200); // 文件批处理大小
+const FILE_CACHE_DURATION = Number(process.env.FILE_CACHE_DURATION || 604800); // 文件缓存时长（秒）
+const DIMENSION_CACHE_TTL = Number(process.env.DIMENSION_CACHE_TTL || 60 * 60 * 24 * 30); // 尺寸缓存TTL（秒）
+const DIMENSION_PROBE_CONCURRENCY = Number(process.env.DIMENSION_PROBE_CONCURRENCY || 4); // 尺寸探测并发数
+const BATCH_LOG_FLUSH_INTERVAL = Number(process.env.BATCH_LOG_FLUSH_INTERVAL || 5000); // 批量日志刷新间隔
+const CACHE_CLEANUP_DAYS = Number(process.env.CACHE_CLEANUP_DAYS || 1); // 缓存清理天数
+
+// --- AI配置 ---
+const AI_QUEUE_MAX = Number(process.env.AI_QUEUE_MAX || 50); // AI队列最大长度
+const AI_QUEUE_TIMEOUT_MS = Number(process.env.AI_QUEUE_TIMEOUT_MS || 60000); // AI队列超时
+const AI_TASK_TIMEOUT_MS = Number(process.env.AI_TASK_TIMEOUT_MS || 120000); // AI任务超时
+const AI_MAX_CONCURRENT = Number(process.env.AI_MAX_CONCURRENT || process.env.AI_CONCURRENCY || 2); // AI最大并发数
+
+// --- Worker配置 ---
+const WORKER_MEMORY_MB = Number(process.env.WORKER_MEMORY_MB || 256); // Worker内存限制
+const THUMB_INITIAL_WORKERS = Number(process.env.THUMB_INITIAL_WORKERS || 0); // 初始缩略图worker数量
+const TASK_SCHEDULER_CONCURRENCY = Math.max(1, Number(process.env.TASK_SCHEDULER_CONCURRENCY || 2)); // 任务调度器并发数
 
 // --- HLS视频配置 ---
 const USE_FILE_SYSTEM_HLS_CHECK = (process.env.USE_FILE_SYSTEM_HLS_CHECK || 'true').toLowerCase() === 'true'; // 使用文件系统检查HLS
@@ -69,8 +120,8 @@ function getAdaptiveHlsConfig() {
   try {
     const loadAvg = require('os').loadavg && require('os').loadavg();
     systemLoad = loadAvg ? loadAvg[0] : 0;
-  } catch {
-    // 忽略负载获取错误
+  } catch (error) {
+    logger.silly(formatLog(LOG_PREFIXES.CONFIG, `获取系统负载失败，采用默认配置: ${error && error.message}`));
   }
 
   // 计算负载因子 (0-1之间)
@@ -121,7 +172,7 @@ const { HLS_CACHE_TTL_MS, HLS_MIN_CHECK_INTERVAL_MS, HLS_BATCH_DELAY_MS } = getA
 const HLS_CHECK_BATCH_SIZE = parseInt(process.env.HLS_CHECK_BATCH_SIZE) || 10; // HLS检查批次大小
 
 // --- 文件监听配置 ---
-const DISABLE_WATCH = (process.env.DISABLE_WATCH || 'false').toLowerCase() === 'true'; // 关闭实时文件监听
+const DISABLE_WATCH = (process.env.DISABLE_WATCH || 'true').toLowerCase() === 'true'; // 关闭实时文件监听
 
 module.exports = {
     // 基础配置
@@ -149,15 +200,51 @@ module.exports = {
     MAX_THUMBNAIL_RETRIES,
     INITIAL_RETRY_DELAY,
 
+    // 缩略图配置
+    THUMB_ONDEMAND_QUEUE_MAX,
+    THUMB_BATCH_COOLDOWN_MS,
+    THUMB_TELEMETRY_LOG_INTERVAL_MS,
+    THUMB_OVERFLOW_RETRY_MS,
+    THUMB_ONDEMAND_IDLE_DESTROY_MS,
+    THUMB_ONDEMAND_RESERVE,
+
+    // Sharp配置
+    SHARP_CACHE_MEMORY_MB,
+    SHARP_CACHE_ITEMS,
+    SHARP_CACHE_FILES,
+    SHARP_CONCURRENCY,
+    SHARP_MAX_PIXELS,
+
     // 视频处理配置
     VIDEO_TASK_DELAY_MS,
-    INDEX_STABILIZE_DELAY_MS,
+    VIDEO_MAX_CONCURRENCY,
+    HLS_BATCH_TIMEOUT_MS,
     FFMPEG_THREADS,
-    SHARP_CONCURRENCY,
+
+    // 索引配置
+    INDEX_STABILIZE_DELAY_MS,
     INDEX_BATCH_SIZE,
     INDEX_CONCURRENCY,
 
-    VIDEO_MAX_CONCURRENCY,
+    // 文件服务配置
+    FILE_BATCH_SIZE,
+    FILE_CACHE_DURATION,
+    DIMENSION_CACHE_TTL,
+    DIMENSION_PROBE_CONCURRENCY,
+    BATCH_LOG_FLUSH_INTERVAL,
+    CACHE_CLEANUP_DAYS,
+
+    // AI配置
+    AI_QUEUE_MAX,
+    AI_QUEUE_TIMEOUT_MS,
+    AI_TASK_TIMEOUT_MS,
+    AI_MAX_CONCURRENT,
+
+    // Worker配置
+    WORKER_MEMORY_MB,
+    THUMB_INITIAL_WORKERS,
+    TASK_SCHEDULER_CONCURRENCY,
+
     // HLS配置
     USE_FILE_SYSTEM_HLS_CHECK,
     HLS_CACHE_TTL_MS,
@@ -173,4 +260,7 @@ module.exports = {
 
     // HLS自适应配置
     getAdaptiveHlsConfig,
+
+    // 日志开关
+    ENABLE_AUTH_DEBUG_LOGS,
 };

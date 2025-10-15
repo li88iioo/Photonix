@@ -1,6 +1,9 @@
 const express = require('express');
 const router = express.Router();
+const state = require('../services/state.manager');
 const rateLimit = require('express-rate-limit');
+const logger = require('../config/logger');
+const { getCount, getGroupStats } = require('../repositories');
 let metricsStore;
 try {
   const { redis } = require('../config/redis');
@@ -9,7 +12,9 @@ try {
     const RedisStore = require('rate-limit-redis');
     metricsStore = new RedisStore({ sendCommand: (...args) => redis.call(...args) });
   }
-} catch {}
+} catch (error) {
+  logger.silly(`[Metrics] 初始化Redis限流存储失败，降级为内存: ${error && error.message}`);
+}
 const { getCacheStats } = require('../middleware/cache');
 // 注意：AI队列已移除，AI功能已重构为微服务架构
 
@@ -99,24 +104,30 @@ router.get('/summary', metricsLimiter, async (req, res) => {
         enabled: !!(redis && !redis.isNoRedis),
         isNoRedis: !!(redis && redis.isNoRedis)
       };
-    } catch {}
+    } catch (error) {
+      logger.debug('[Metrics] Redis状态获取失败:', error.message);
+    }
 
     // 索引状态（仓储层）
     let index = null;
     try {
       const idxRepo = require('../repositories/indexStatus.repo');
       index = await idxRepo.getIndexStatusRow();
-    } catch {}
+    } catch (error) {
+      logger.debug('[Metrics] 索引状态获取失败:', error.message);
+    }
 
     // 基础表统计（轻量 COUNT/聚合，可通过 ?fast=1 跳过）
-    const { dbAll } = require('../db/multi-db');
     const fast = ['1','true','yes'].includes(String(req.query.fast || '').toLowerCase());
-    let itemsCount = [{ c: 0 }], ftsCount = [{ c: 0 }], albumCoversCount = [{ c: 0 }], thumbStats = [];
+    let itemsCount = 0;
+    let ftsCount = 0;
+    let albumCoversCount = 0;
+    let thumbStats = [];
     if (!fast) {
-      itemsCount = await dbAll('main', "SELECT COUNT(1) AS c FROM items").catch(() => [{ c: 0 }]);
-      ftsCount = await dbAll('main', "SELECT COUNT(1) AS c FROM items_fts").catch(() => [{ c: 0 }]);
-      albumCoversCount = await dbAll('main', "SELECT COUNT(1) AS c FROM album_covers").catch(() => [{ c: 0 }]);
-      thumbStats = await dbAll('main', "SELECT status, COUNT(1) AS count FROM thumb_status GROUP BY status").catch(() => []);
+      itemsCount = await getCount('items', 'main');
+      ftsCount = await getCount('items_fts', 'main');
+      albumCoversCount = await getCount('album_covers', 'main');
+      thumbStats = await getGroupStats('thumb_status', 'status');
     }
 
     // 进程与缩略图即时指标（安全降级）
@@ -129,15 +140,19 @@ router.get('/summary', metricsLimiter, async (req, res) => {
         rssMB: Math.round((mu.rss || 0) / 1048576),
         heapUsedMB: Math.round((mu.heapUsed || 0) / 1048576)
       };
-    } catch {}
+    } catch (error) {
+      logger.debug('[Metrics] 进程信息获取失败:', error.message);
+    }
     let thumb = { active: 0, queueLen: 0, batchActive: false };
     try {
       thumb = {
-        active: Number(global.__thumbActiveCount || 0),
-        queueLen: Number(global.__thumbOndemandQueueLen || 0),
-        batchActive: Boolean(global.__thumbBatchActive || false)
+        active: state.thumbnail.getActiveCount(),
+        queueLen: state.thumbnail.getQueueLen(),
+        batchActive: state.thumbnail.isBatchActive()
       };
-    } catch {}
+    } catch (error) {
+      logger.debug('[Metrics] 缩略图状态获取失败:', error.message);
+    }
 
     let thumbTaskMetrics = null;
     try {
@@ -145,7 +160,9 @@ router.get('/summary', metricsLimiter, async (req, res) => {
         if (thumbService && typeof thumbService.getThumbnailTaskMetrics === 'function') {
             thumbTaskMetrics = thumbService.getThumbnailTaskMetrics();
         }
-    } catch {}
+    } catch (error) {
+        logger.debug('[Metrics] 缩略图任务指标获取失败:', error.message);
+    }
 
     let schedulerMetrics = null;
     let videoTaskMetrics = null;
@@ -157,7 +174,9 @@ router.get('/summary', metricsLimiter, async (req, res) => {
         if (workerManager && typeof workerManager.getVideoTaskMetrics === 'function') {
             videoTaskMetrics = workerManager.getVideoTaskMetrics();
         }
-    } catch {}
+    } catch (error) {
+        logger.debug('[Metrics] Worker指标获取失败:', error.message);
+    }
 
     if (thumbTaskMetrics) {
         thumb.metrics = thumbTaskMetrics;
@@ -170,9 +189,9 @@ router.get('/summary', metricsLimiter, async (req, res) => {
         redis: redisStatus,
         index,
         db: {
-          items: Number(itemsCount?.[0]?.c || 0),
-          itemsFts: Number(ftsCount?.[0]?.c || 0),
-          albumCovers: Number(albumCoversCount?.[0]?.c || 0),
+          items: Number(itemsCount || 0),
+          itemsFts: Number(ftsCount || 0),
+          albumCovers: Number(albumCoversCount || 0),
           thumbStatus: thumbStats
         },
         process: processInfo,
@@ -186,7 +205,8 @@ router.get('/summary', metricsLimiter, async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (e) {
-    res.status(500).json({ success: false, error: 'SUMMARY_ERROR', message: e.message });
+    const { fromNativeError } = require('../utils/errors');
+    throw fromNativeError(e, { operation: 'getMetricsSummary' });
   }
 });
 

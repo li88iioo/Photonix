@@ -5,6 +5,7 @@
 
 const { dbAll, dbGet } = require('../db/multi-db');
 const logger = require('../config/logger');
+const { safeRedisGet, safeRedisSet } = require('../utils/helpers');
 
 /**
  * 查询性能分析器
@@ -206,11 +207,16 @@ class QueryCacheOptimizer {
                 return null;
             }
 
-            const cached = await this.redis.get(cacheKey);
+            const cached = await safeRedisGet(this.redis, cacheKey, '查询优化器缓存读取');
             if (cached) {
-                this.cacheHits++;
-                this.updateCacheHitRatio();
-                return JSON.parse(cached);
+                try {
+                    this.cacheHits++;
+                    this.updateCacheHitRatio();
+                    return JSON.parse(cached);
+                } catch (error) {
+                    logger.debug('解析缓存数据失败:', error.message);
+                    return null;
+                }
             }
 
             return null;
@@ -227,15 +233,11 @@ class QueryCacheOptimizer {
      * @param {number} ttlSeconds - 缓存时间（秒）
      */
     async cacheResult(cacheKey, result, ttlSeconds = 300) {
-        try {
-            if (!this.redis || this.redis.isNoRedis) {
-                return;
-            }
-
-            await this.redis.set(cacheKey, JSON.stringify(result), 'EX', ttlSeconds);
-        } catch (error) {
-            logger.debug('设置查询缓存失败:', error.message);
+        if (!this.redis || this.redis.isNoRedis) {
+            return;
         }
+
+        await safeRedisSet(this.redis, cacheKey, JSON.stringify(result), 'EX', ttlSeconds, '查询优化器缓存写入');
     }
 
     /**

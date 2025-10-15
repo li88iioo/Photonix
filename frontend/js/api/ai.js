@@ -1,19 +1,25 @@
-// AI 相关 API：生成图片描述、缓存查询与清理
-import { state } from '../state.js';
-import { SETTINGS } from '../constants.js';
-import { elements } from '../dom-elements.js';
-import aiCache from '../ai-cache.js';
-import { showNotification } from '../utils.js';
-import { getAuthToken } from '../auth.js';
-import { safeSetInnerHTML } from '../dom-utils.js';
-import { escapeHtml } from '../security.js';
+/**
+ * @file AI 相关 API：生成图片描述、缓存查询与清理
+ */
+
+import { state } from '../core/state.js';
+import { SETTINGS } from '../core/constants.js';
+import { elements } from '../shared/dom-elements.js';
+import aiCache from '../features/ai/ai-cache.js';
+import { showNotification } from '../shared/utils.js';
+import { getAuthToken } from '../app/auth.js';
+import { safeSetInnerHTML } from '../shared/dom-utils.js';
+import { escapeHtml } from '../shared/security.js';
 import { getAuthHeaders, refreshAuthToken, triggerAuthRequired } from './shared.js';
 
 let currentGenerateController = null;
 let currentImagePath = null;
 let isProcessing = false;
 
-// 从 LocalStorage 获取 AI 配置
+/**
+ * 获取本地存储中的 AI 配置
+ * @returns {Object} AI 配置对象
+ */
 function getLocalAISettings() {
     try {
         return JSON.parse(localStorage.getItem(SETTINGS.AI_LOCAL_KEY)) || {};
@@ -22,7 +28,11 @@ function getLocalAISettings() {
     }
 }
 
-// 从图片 URL 解析相对路径（兼容 /static/ 前缀）
+/**
+ * 从图片 URL 解析出相对路径（兼容 /static/ 前缀）
+ * @param {string} imageUrl 图片 URL
+ * @returns {string} 解析后的图片路径
+ */
 function parseImagePath(imageUrl) {
     const url = new URL(imageUrl, window.location.origin);
     return url.pathname.startsWith('/static/')
@@ -30,12 +40,19 @@ function parseImagePath(imageUrl) {
         : decodeURIComponent(url.pathname);
 }
 
-// 防抖：避免对同一图片重复触发生成
+/**
+ * 判断是否为对同一图片的重复生成请求（防抖）
+ * @param {string} imagePath 图片路径
+ * @returns {boolean} 是否为重复请求
+ */
 function isDuplicateRequest(imagePath) {
     return isProcessing && currentImagePath === imagePath;
 }
 
-// 中止前一个请求并记录当前上下文
+/**
+ * 中止前一个生成请求，并记录当前请求上下文
+ * @param {string} imagePath 图片路径
+ */
 function cleanupPreviousRequest(imagePath) {
     try {
         if (currentGenerateController) currentGenerateController.abort();
@@ -45,13 +62,19 @@ function cleanupPreviousRequest(imagePath) {
     isProcessing = true;
 }
 
-// 校验是否启用 AI（本地设置或全局状态）
+/**
+ * 校验是否启用 AI（本地设置或全局状态）
+ * @returns {boolean} 是否启用 AI
+ */
 function validateAIEnabled() {
     const localAI = getLocalAISettings();
     return localAI.AI_ENABLED === 'true' || state.aiEnabled;
 }
 
-// 如启用密码，需已登录
+/**
+ * 校验认证（如启用密码则需已登录）
+ * @returns {boolean} 是否通过认证校验
+ */
 function validateAuthentication() {
     const isPasswordEnabled = !!state.passwordEnabled;
     if (isPasswordEnabled && !getAuthToken()) {
@@ -61,7 +84,10 @@ function validateAuthentication() {
     return true;
 }
 
-// 校验本地 AI 配置是否完整
+/**
+ * 校验本地 AI 配置是否完整
+ * @returns {Object|null} AI 配置对象，若不完整则返回 null
+ */
 function validateAIConfig() {
     const aiConfig = getLocalAISettings();
     if (!aiConfig.AI_URL || !aiConfig.AI_KEY || !aiConfig.AI_MODEL || !aiConfig.AI_PROMPT) {
@@ -74,14 +100,23 @@ function validateAIConfig() {
     return aiConfig;
 }
 
-// 设置加载中的 UI
+/**
+ * 设置加载中状态的 UI
+ * @param {HTMLElement} container 桌面端容器元素
+ * @param {HTMLElement} mobileContainer 移动端容器元素
+ */
 function setLoadingState(container, mobileContainer) {
     const loadingHtml = '<div class="flex items-center justify-center h-full"><div class="spinner"></div><p class="ml-2">她正在酝酿情绪，请稍候...</p></div>';
     safeSetInnerHTML(container, loadingHtml);
     safeSetInnerHTML(mobileContainer, '酝酿中...');
 }
 
-// 查询 AI 结果缓存
+/**
+ * 查询 AI 结果缓存
+ * @param {string} imagePath 图片路径
+ * @param {Object} aiConfig AI 配置
+ * @returns {Promise<Object|null>} 缓存结果对象或 null
+ */
 async function checkAICache(imagePath, aiConfig) {
     try {
         return await aiCache.check(imagePath, {
@@ -95,14 +130,22 @@ async function checkAICache(imagePath, aiConfig) {
     }
 }
 
-// 渲染生成结果到页面
+/**
+ * 渲染生成的描述结果到页面
+ * @param {string} caption 生成的描述文本
+ */
 function displayCaptionResult(caption) {
     const { captionContainer, captionContainerMobile } = elements;
     captionContainer.textContent = caption;
     captionContainerMobile.textContent = caption;
 }
 
-// 发起生成请求（POST /api/ai/generate）
+/**
+ * 发起生成图片描述的请求（POST /api/ai/generate）
+ * @param {string} imagePath 图片路径
+ * @param {Object} aiConfig AI 配置
+ * @returns {Promise<Response>} fetch 响应对象
+ */
 async function makeAICaptionRequest(imagePath, aiConfig) {
     return fetch('/api/ai/generate', {
         method: 'POST',
@@ -120,7 +163,11 @@ async function makeAICaptionRequest(imagePath, aiConfig) {
     });
 }
 
-// 对指定图片生成AI描述，含缓存命中、401刷新与错误提示
+/**
+ * 对指定图片生成 AI 描述，包含缓存命中、401 刷新与错误提示
+ * @param {string} imageUrl 图片 URL
+ * @returns {Promise<void>}
+ */
 export async function generateImageCaption(imageUrl) {
     const imagePath = parseImagePath(imageUrl);
 
@@ -233,7 +280,13 @@ export async function generateImageCaption(imageUrl) {
     }
 }
 
-// 处理生成结果与错误提示，并写入缓存
+/**
+ * 处理生成结果与错误提示，并写入缓存
+ * @param {Object} data 服务器响应数据
+ * @param {string} imagePath 图片路径
+ * @param {Object} aiConfig AI 配置
+ * @returns {Promise<void>}
+ */
 async function handleGenerationResult(data, imagePath, aiConfig) {
     const { captionContainer, captionContainerMobile } = elements;
 
@@ -297,7 +350,10 @@ async function handleGenerationResult(data, imagePath, aiConfig) {
     throw new Error('服务器返回数据格式错误');
 }
 
-// 获取 AI 缓存统计
+/**
+ * 获取 AI 缓存统计信息
+ * @returns {Promise<Object|null>} 缓存统计信息对象或 null
+ */
 export async function getAICacheStats() {
     try {
         return await aiCache.getStats();
@@ -306,8 +362,27 @@ export async function getAICacheStats() {
     }
 }
 
-// 清空 AI 缓存并提示
+/**
+ * 清空 AI 缓存并提示
+ * @returns {Promise<void>}
+ */
+export async function clearAICache() {
+    try {
+        await aiCache.clear();
+        showNotification('AI缓存已清空', 'success');
+    } catch {
+        showNotification('清空缓存失败', 'error');
+    }
+}
 
+/**
+ * 获取可用的 AI 模型列表
+ * @param {string} apiUrl API 地址
+ * @param {string} apiKey API 密钥
+ * @param {AbortSignal} signal 中止信号
+ * @returns {Promise<Array<string>>} 模型列表
+ * @throws {Error} 当 API 地址或密钥为空时抛出错误
+ */
 export async function fetchAvailableModels(apiUrl, apiKey, signal) {
     if (!apiUrl || !apiKey) {
         throw new Error('请先填写 API 地址和 API Key');
@@ -342,12 +417,4 @@ export async function fetchAvailableModels(apiUrl, apiKey, signal) {
     }
 
     return Array.isArray(data?.models) ? data.models : [];
-}
-export async function clearAICache() {
-    try {
-        await aiCache.clear();
-        showNotification('AI缓存已清空', 'success');
-    } catch {
-        showNotification('清空缓存失败', 'error');
-    }
 }

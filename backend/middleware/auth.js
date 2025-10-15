@@ -3,9 +3,14 @@
  * 处理用户认证和授权，支持密码保护、公开访问控制和JWT令牌验证
  */
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const { getAllSettings } = require('../services/settings.service');
 const logger = require('../config/logger');
+const { ENABLE_AUTH_DEBUG_LOGS } = require('../config');
 const { getUserRole } = require('./permissions');
+const state = require('../services/state.manager');
+
+const shouldLogVerbose = () => ENABLE_AUTH_DEBUG_LOGS;
 
 // 认证缓存，避免重复验证相同的token
 const authCache = new Map();
@@ -91,11 +96,11 @@ module.exports = async function(req, res, next) {
         }
 
         // 检查认证缓存
-        const cacheKey = token.substring(0, 50); // 使用token前50个字符作为缓存键
+        const cacheKey = crypto.createHash('sha256').update(token).digest('hex');
         const cachedAuth = authCache.get(cacheKey);
         const now = Date.now();
         
-        if (cachedAuth && (now - cachedAuth.timestamp) < AUTH_CACHE_TTL) {
+        if (cachedAuth && cachedAuth.token === token && (now - cachedAuth.timestamp) < AUTH_CACHE_TTL) {
             // 使用缓存的认证结果
             req.user = cachedAuth.user;
             req.userRole = cachedAuth.userRole;
@@ -104,17 +109,17 @@ module.exports = async function(req, res, next) {
         }
 
         // 只在开发环境或首次认证时记录详细日志
-        const isFirstAuth = !global.__authLogged;
-        if (isFirstAuth || process.env.NODE_ENV === 'development') {
+        const isFirstAuth = !state.auth.isFirstAuthLogged();
+        if (shouldLogVerbose()) {
             logger.debug(`[${req.requestId || '-'}] [Auth] 开始验证token，JWT_SECRET前缀: ${JWT_SECRET.substring(0, 8)}...`);
             logger.debug(`[${req.requestId || '-'}] [Auth] Token前缀: ${token.substring(0, 20)}...`);
-            global.__authLogged = true;
+            state.auth.setFirstAuthLogged(true);
         }
 
         const decoded = jwt.verify(token, JWT_SECRET);
 
-        // 只在开发环境记录详细解码信息
-        if (process.env.NODE_ENV === 'development') {
+        // 只在允许的环境记录详细解码信息
+        if (shouldLogVerbose()) {
             logger.debug(`[${req.requestId || '-'}] [Auth] Token验证成功，decoded:`, {
                 sub: decoded?.sub,
                 iat: decoded?.iat,
@@ -133,6 +138,7 @@ module.exports = async function(req, res, next) {
 
         // 缓存认证结果
         authCache.set(cacheKey, {
+            token,
             user: req.user,
             userRole: req.userRole,
             userPermissions: req.userPermissions,
@@ -149,7 +155,7 @@ module.exports = async function(req, res, next) {
         }
 
         // 只在开发环境或首次认证时记录完成日志
-        if (isFirstAuth || process.env.NODE_ENV === 'development') {
+        if (shouldLogVerbose()) {
             logger.debug(`[${req.requestId || '-'}] [Auth] 用户认证完成:`, {
                 userId: req.user.id,
                 userRole: req.userRole,

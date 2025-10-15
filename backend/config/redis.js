@@ -1,26 +1,32 @@
 /**
- * Redis配置模块
- * 配置Redis数据库连接和AI任务队列
+ * Redis 配置模块
+ * 用于配置 Redis 数据库连接与设置更新任务队列
  */
 const Redis = require('ioredis');
 const { Queue } = require('bullmq');
 const { REDIS_URL, SETTINGS_QUEUE_NAME } = require('./index');
 const logger = require('./logger');
-// 显式开关：未设置 ENABLE_REDIS=true 时完全使用本地 No-Op，避免连接风暴
+
+/**
+ * 显式 Redis 启用开关。
+ * 未设置 ENABLE_REDIS=true 时使用本地 No-Op，避免意外连接 Redis。
+ */
 const WANT_REDIS = (process.env.ENABLE_REDIS || 'false').toLowerCase() === 'true';
 
 /**
- * Redis连接配置选项
- * 设置重试策略和最大重试次数
+ * Redis 连接参数选项
+ * - retryStrategy: 重试间隔递增，最大不超过 5 秒
+ * - maxRetriesPerRequest: 普通 KV 操作最大重试次数
+ * - connectTimeout: 连接超时时间（毫秒）
+ * - keepAlive: 保持连接存活时间（毫秒）
+ * - lazyConnect: 懒连接模式，由调用方决定何时连接
+ * - reconnectOnError: 错误重连策略
  */
 const redisConnectionOptions = {
-    // 重试策略：每次重试间隔递增，最大不超过5秒
     retryStrategy: times => Math.min(times * 1000, 5000),
-    // 普通 KV 连接可有限次重试
     maxRetriesPerRequest: 5,
     connectTimeout: 10000,
     keepAlive: 10000,
-    // 懒连接：不主动发起连接，调用方按需 connect()
     lazyConnect: true,
     reconnectOnError: (err) => {
         const msg = String(err && err.message || err || '');
@@ -29,17 +35,17 @@ const redisConnectionOptions = {
 };
 
 /**
- * 创建Redis客户端实例
- * 使用配置的URL和连接选项
+ * 创建 Redis 客户端实例（如未启用则为 null）
  */
-// 安全Redis代理：未连接时自动降级为本地No-Op，实现开箱即用
 const realRedis = WANT_REDIS ? new Redis(REDIS_URL, redisConnectionOptions) : null;
 let __redisReady = false;
 
-// 轻量No-Op实现，覆盖项目中常用的方法
+/**
+ * 构建本地 No-Op Redis 客户端，用于无 Redis 场景下兼容常用操作。
+ * 返回典型方法的占位实现。
+ */
 function createRedisShim() {
   const shim = {
-    // 标记：用于调用方判断回退逻辑
     isNoRedis: true,
     async get() { return null; },
     async set() { return null; },
@@ -51,7 +57,7 @@ function createRedisShim() {
     async mget() { return []; },
     async scan() { return ['0', []]; },
     scanStream() {
-      // No-Op readable-like stream
+      // 返回只实现 end 事件的 No-Op 可读流
       return {
         on(event, cb) { if (event === 'end') setImmediate(() => cb()); return this; },
         pause() { return this; },
@@ -63,6 +69,7 @@ function createRedisShim() {
     async sadd() { return 1; },
     async srem() { return 0; },
     pipeline() {
+      // 返回带链式方法的 No-Op pipeline
       return {
         del() { return this; },
         unlink() { return this; },
@@ -72,7 +79,7 @@ function createRedisShim() {
         exec: async () => []
       };
     },
-    // 供 SSE/订阅等场景使用的 duplicate：返回同样的 No-Op 客户端
+    // 复制自己用于订阅场景
     duplicate() { return createRedisShim(); },
     subscribe(channel, cb) {
       if (typeof cb === 'function') { setImmediate(() => cb(null, 0)); }
@@ -88,7 +95,16 @@ function createRedisShim() {
   };
   return shim;
 }
+
+/**
+ * 本地 No-Op Redis 客户端单例
+ */
 const __redisShim = createRedisShim();
+
+/**
+ * Redis 客户端代理
+ * 若连接可用，则转发到真实 Redis，否则转发到 No-Op
+ */
 const redis = new Proxy({}, {
   get(_t, prop) {
     if (prop === 'isNoRedis') return !(__redisReady && !!realRedis);
@@ -98,14 +114,17 @@ const redis = new Proxy({}, {
   }
 });
 
-// 为 BullMQ 队列与 Worker 提供独立连接（避免与普通 KV 读写互相阻塞）
+/**
+ * BullMQ Worker 专用独立 Redis 连接，用于避免任务队列阻塞普通 KV 查询
+ */
 const bullConnection = WANT_REDIS ? new Redis(REDIS_URL, { maxRetriesPerRequest: null, lazyConnect: true }) : null;
 
 /**
- * Redis连接事件监听器
- * 处理连接成功和错误情况
+ * Redis 连接事件监听与日志
+ * - ready/connect 时标记已连接，输出日志
+ * - error 时输出异常日志
+ * - 主动触发连接 (解决 lazyConnect 不自动连的问题)
  */
-// 连接成功时的日志记录
 let __connectionLogged = false;
 if (realRedis) {
   realRedis.on('ready', () => {
@@ -121,33 +140,44 @@ if (realRedis) {
       __connectionLogged = true;
     }
   });
-  // 连接错误时的错误处理和日志记录
   realRedis.on('error', err => logger.error('Redis错误:', err && err.code === 'ECONNREFUSED' ? '无法连接Redis' : err));
 
-  // 主动建立连接（修复lazyConnect问题）
+  // 主动建立连接，避免 lazyConnect 场景下永不连接
   realRedis.connect().catch(err => {
     logger.error('Redis初始连接失败:', err.message);
   });
 }
 
 /**
- * 创建任务队列Shim
- * 为未启用Redis时提供兼容性接口
+ * 创建任务队列的本地 No-Op 实现（未启用 Redis 时用）
+ * - add: 返回占位 id
+ * - getJobs/getJob/getJobCounts: 返回空结果
+ * @param {string} name - 队列名
+ * @returns {object}
  */
 function createQueueShim(name) {
   return {
-    // 投递返回占位 id
     add: async () => ({ id: 'noop' }),
-    // 查询类 API 返回空/空值，避免调用端抛错
     getJobs: async () => [],
     getJob: async () => null,
-    getJobCounts: async () => ({ active: 0, waiting: 0, delayed: 0, completed: 0, failed: 0, paused: 0 })
+    getJobCounts: async () => ({
+      active: 0,
+      waiting: 0,
+      delayed: 0,
+      completed: 0,
+      failed: 0,
+      paused: 0
+    })
   };
 }
 
-// 注意：AI队列已移除，AI功能已重构为微服务架构
+// AI 队列说明：已移除，相关功能改为微服务架构
 
-// 设置更新队列（持久化任务）
+/**
+ * 设置更新队列（即使未启用 Redis 也可调用，无副作用）
+ * - 使用 Queue：启用 Redis 时
+ * - 使用 Queue Shim：禁用 Redis 时
+ */
 let settingsUpdateQueue;
 if (WANT_REDIS) {
   try {
@@ -163,45 +193,62 @@ if (WANT_REDIS) {
     logger.debug(`Settings 任务队列 (${SETTINGS_QUEUE_NAME}) 初始化成功。`);
   } catch (e) {
     settingsUpdateQueue = createQueueShim(SETTINGS_QUEUE_NAME);
-    logger.warn(`Settings 任务队列初始化失败（已降级为本地No-Op）：${e && e.message}`);
+    logger.warn(`Settings 任务队列初始化失败（已降级为本地 No-Op）：${e && e.message}`);
   }
 } else {
   settingsUpdateQueue = createQueueShim(SETTINGS_QUEUE_NAME);
 }
 
 /**
- * 导出Redis客户端和AI任务队列
- * 供其他模块使用
- */
-/**
- * 检查Redis是否可用
- * @param {boolean} requireRedis - 是否需要Redis（默认false，如果为true则在无Redis时返回false）
- * @returns {boolean} Redis是否可用
+ * 检查 Redis 是否可用
+ * @param {boolean} requireRedis - 若为 true, 必须有 Redis 才返回 true（默认 false）
+ * @returns {boolean} - Redis 实际可用性
  */
 function isRedisAvailable(requireRedis = false) {
     if (!WANT_REDIS) {
-        return !requireRedis; // 如果不需要Redis，则返回true；否则返回false
+        return !requireRedis;
     }
     return redis && !redis.isNoRedis && __redisReady;
 }
 
 /**
- * 检查是否应该使用Redis进行限流
- * @returns {boolean} 是否使用Redis限流
+ * 判断是否应使用 Redis 进行限流
+ * @returns {boolean} - 当前限流是否启用 Redis
  */
 function shouldUseRedisForRateLimit() {
     return isRedisAvailable() && (process.env.RATE_LIMIT_USE_REDIS || 'false').toLowerCase() === 'true';
 }
 
 module.exports = {
-    redis,        // Redis客户端实例（普通 KV 用途）
-    settingsUpdateQueue, // 设置更新任务队列（仍在使用）
-    bullConnection, // BullMQ 专用连接（如需在其他模块/worker 共享）
-    // 可观测性：'disabled' | 'connecting' | 'ready'
+    /**
+     * Redis 客户端实例（KV 读写通用，含 No-Op 回退）
+     */
+    redis,
+    /**
+     * 设置更新任务队列（BullMQ 队列或本地 No-Op）
+     */
+    settingsUpdateQueue,
+    /**
+     * BullMQ 专用独立 Redis 连接
+     */
+    bullConnection,
+    /**
+     * 返回 Redis 当前状态：'disabled' | 'connecting' | 'ready'
+     * @returns {string}
+     */
     getAvailability: () => (!WANT_REDIS ? 'disabled' : (__redisReady ? 'ready' : 'connecting')),
-    // Worker 专用 KV 连接（或 No-Op）
-    createWorkerRedis: () => WANT_REDIS ? new Redis(REDIS_URL, { maxRetriesPerRequest: null, lazyConnect: true }) : createRedisShim(),
-    // 工具函数
+    /**
+     * 获取 Worker 专用 KV 连接（或 No-Op 实例）
+     * @returns {Redis|Object}
+     */
+    createWorkerRedis: () =>
+        WANT_REDIS ? new Redis(REDIS_URL, { maxRetriesPerRequest: null, lazyConnect: true }) : createRedisShim(),
+    /**
+     * 检查 Redis 是否可用
+     */
     isRedisAvailable,
+    /**
+     * 判断是否启用 Redis 限流
+     */
     shouldUseRedisForRateLimit,
 };

@@ -181,7 +181,7 @@ async function performLRUCleanup(cacheName, limits) {
 
     } catch (error) {
         // 清理过程中出错，记录但不抛出
-        console.warn(`[SW Cache] LRU cleanup failed for ${cacheName}:`, error);
+        console.warn(`[SW Cache] 缓存清理失败 ${cacheName}:`, error);
     }
 
     return { evictedCount, expiredCount, totalEntries };
@@ -207,10 +207,15 @@ function getCacheTypeFromName(cacheName) {
  * @param {Response} response - 响应对象
  * @returns {Promise<void>}
  */
-async function putWithLRU(cacheType, request, response) {
+async function putWithLRU(cacheType, request, response, options = {}) {
     try {
-        const config = getCacheConfig(cacheType);
-        const cacheName = getCacheNameForType(cacheType);
+        const baseConfig = getCacheConfig(cacheType);
+        const config = {
+            ...baseConfig,
+            ...(options.maxAgeMs ? { MAX_AGE_MS: options.maxAgeMs } : null),
+            ...(options.maxEntries ? { MAX_ENTRIES: options.maxEntries } : null)
+        };
+        const cacheName = options.cacheName || getCacheNameForType(cacheType, options.version || null);
 
         // 检查响应是否适合缓存
         if (!isCacheableResponse(response, request)) {
@@ -220,13 +225,16 @@ async function putWithLRU(cacheType, request, response) {
         const cache = await caches.open(cacheName);
 
         // 为响应添加时间戳
+        const cachedAt = Date.now();
+        const headersObject = Object.fromEntries(response.headers.entries());
+        headersObject['x-cached-at'] = cachedAt.toString();
+        if (options.maxAgeMs && Number.isFinite(options.maxAgeMs)) {
+            headersObject['x-cache-expires-at'] = (cachedAt + options.maxAgeMs).toString();
+        }
         const responseWithTimestamp = new Response(response.clone().body, {
             status: response.status,
             statusText: response.statusText,
-            headers: {
-                ...Object.fromEntries(response.headers.entries()),
-                'x-cached-at': Date.now().toString()
-            }
+            headers: headersObject
         });
 
         // 写入缓存
@@ -241,7 +249,7 @@ async function putWithLRU(cacheType, request, response) {
         await performLRUCleanup(cacheName, config);
 
     } catch (error) {
-        console.warn(`[SW Cache] Failed to cache ${cacheType}:`, error);
+        console.warn(`[SW Cache] 缓存失败 ${cacheType}:`, error);
     }
 }
 
@@ -274,7 +282,7 @@ function initializePeriodicCleanup() {
                 const cacheName = getCacheNameForType(cacheType.toLowerCase());
                 await performLRUCleanup(cacheName, config);
             } catch (error) {
-                console.warn(`[SW Cache] Periodic cleanup failed for ${cacheType}:`, error);
+                console.warn(`[SW Cache] 定时清理失败 ${cacheType}:`, error);
             }
         }, config.CLEANUP_INTERVAL_MS);
     });

@@ -133,7 +133,7 @@ async function getMediaStats(types = ['photo', 'video']) {
  */
 async function getThumbStatusStats() {
     try {
-        return await getStatsByField('thumb_status', 'status', ['exists', 'missing', 'failed', 'pending', 'processing']);
+        return await getStatsByField('thumb_status', 'status', ['exists', 'missing', 'failed', 'pending', 'processing', 'permanent_failed']);
     } catch (error) {
         logger.warn('获取缩略图状态统计失败:', error.message);
         return {};

@@ -10,8 +10,8 @@ const logger = require('../config/logger');
 const { getCachedQueryResult, cacheQueryResult, generateQueryKey } = require('../services/cache.service');
 
 /**
- * SQLite配置管理器
- * 集中管理SQLite优化参数，避免硬编码
+ * SQLite 配置管理器
+ * 统一管理 SQLite 优化参数，防止硬编码
  */
 class SQLiteConfigManager {
     constructor() {
@@ -19,10 +19,10 @@ class SQLiteConfigManager {
     }
 
     /**
-     * 初始化SQLite配置
+     * 初始化 SQLite 配置参数
      */
     initializeConfig() {
-        // 基础PRAGMA配置
+        // 基础 PRAGMA 配置
         this.journalMode = process.env.SQLITE_JOURNAL_MODE || 'WAL';
         this.synchronous = process.env.SQLITE_SYNCHRONOUS || 'NORMAL';
         this.tempStore = process.env.SQLITE_TEMP_STORE || 'MEMORY';
@@ -30,17 +30,17 @@ class SQLiteConfigManager {
         // 内存相关配置（支持环境变量覆盖）
         this.calculateMemoryConfig();
 
-        // 超时配置
+        // 超时相关配置
         this.busyTimeoutDefault = Number.isFinite(parseInt(process.env.SQLITE_BUSY_TIMEOUT, 10))
             ? parseInt(process.env.SQLITE_BUSY_TIMEOUT, 10)
-            : 20000; // ms
+            : 20000; // 毫秒
         this.queryTimeoutDefault = process.env.SQLITE_QUERY_TIMEOUT
             ? parseInt(process.env.SQLITE_QUERY_TIMEOUT, 10)
-            : 30000; // ms
+            : 30000; // 毫秒
     }
 
     /**
-     * 根据系统内存计算SQLite内存配置
+     * 根据系统总内存配置 SQLite 内存参数
      */
     calculateMemoryConfig() {
         const totalMem = os.totalmem();
@@ -72,7 +72,7 @@ class SQLiteConfigManager {
     }
 
     /**
-     * 获取配置对象
+     * 获取 SQLite 配置对象
      */
     getConfig() {
         return {
@@ -87,14 +87,14 @@ class SQLiteConfigManager {
     }
 
     /**
-     * 重新计算配置（内存变化时调用）
+     * 重新计算配置（如内存变化时调用）
      */
     recalculateConfig() {
         this.calculateMemoryConfig();
     }
 }
 
-// 创建单例配置管理器
+// 单例配置管理器
 const sqliteConfigManager = new SQLiteConfigManager();
 
 // 导出配置常量（向后兼容）
@@ -121,16 +121,19 @@ const BUSY_TIMEOUT_MAX = 60000;
 const QUERY_TIMEOUT_MIN = 15000;
 const QUERY_TIMEOUT_MAX = 60000;
 
+/**
+ * 获取当前查询超时时长（毫秒）
+ */
 function getQueryTimeoutMs() {
   return __dynamicQueryTimeoutMs;
 }
 
 /**
- * 为 Promise 添加超时功能
- * @param {Promise} promise - 要执行的 Promise
- * @param {number} ms - 超时毫秒数
- * @param {object} queryInfo - 查询信息，用于日志记录
- * @returns {Promise} - 带超时的 Promise
+ * 给 Promise 添加超时处理
+ * @param {Promise} promise 执行的 Promise
+ * @param {number} ms 超时时长（毫秒）
+ * @param {object} queryInfo 查询信息（日志用）
+ * @returns {Promise} 添加超时处理的 Promise
  */
 const withTimeout = (promise, ms, queryInfo) => {
     let timerId;
@@ -152,27 +155,40 @@ const withTimeout = (promise, ms, queryInfo) => {
     });
 };
 
-// 数据库连接池
+// 数据库连接池对象
 const dbConnections = {};
 
-// 数据库连接健康状态
+// 数据库连接健康状态 Map
 const dbHealthStatus = new Map();
+
+/**
+ * 统计 busy 重试次数
+ * @param {string} sql 查询 SQL
+ */
 function trackBusyRetry(sql) {
   __busyRetryCount += 1;
   if (__busyRetryCount % BUSY_LOG_THRESHOLD === 0) {
-    logger.warn(`[SQLite] BUSY retry x${__busyRetryCount} (sample)`);
+    logger.debug(`[SQLite] BUSY retry x${__busyRetryCount} (sample)`);
   }
   maybeLogTelemetry();
 }
 
+/**
+ * 统计超时次数
+ * @param {string} sql 查询 SQL
+ */
 function trackTimeout(sql) {
   __timeoutCount += 1;
   if (__timeoutCount % TIMEOUT_LOG_THRESHOLD === 0) {
-    logger.warn(`[SQLite] Timeout occurrences x${__timeoutCount} (sample)`);
+    logger.debug(`[SQLite] Timeout occurrences x${__timeoutCount} (sample)`);
   }
   maybeLogTelemetry();
 }
 
+/**
+ * 按时间片记录 telemetry（busy/timeout 统计）
+ * @param {boolean} force 是否强制记录
+ */
 function maybeLogTelemetry(force = false) {
   const now = Date.now();
   if (!force && now - __lastTelemetryAt < TELEMETRY_INTERVAL_MS) {
@@ -191,7 +207,12 @@ function maybeLogTelemetry(force = false) {
   __busyRetryCount = 0;
   __timeoutCount = 0;
 }
-// 去抖: 记录各库"恢复日志"最近一次打印时间，避免短时间重复刷屏
+
+// ---- 日志去抖相关 ----
+
+/**
+ * 记录各库恢复日志打印时间，60秒去抖
+ */
 const __restoreLogTs = new Map();
 const RESTORE_LOG_DEBOUNCE_MS = 60000;
 function __shouldLogRestore(dbType) {
@@ -204,9 +225,11 @@ function __shouldLogRestore(dbType) {
   return false;
 }
 
-// 批量恢复日志去抖，避免短时间内多个数据库恢复产生过多日志
+/**
+ * 批量恢复日志去抖（30秒内只记一次）
+ */
 let __batchRestoreLogTs = 0;
-const BATCH_RESTORE_LOG_DEBOUNCE_MS = 30000; // 30秒内只记录一次批量恢复
+const BATCH_RESTORE_LOG_DEBOUNCE_MS = 30000;
 function __shouldLogBatchRestore() {
   const now = Date.now();
   if (now - __batchRestoreLogTs >= BATCH_RESTORE_LOG_DEBOUNCE_MS) {
@@ -215,9 +238,12 @@ function __shouldLogBatchRestore() {
   }
   return false;
 }
-// 初始化日志去抖机制，避免多个进程重复记录
+
+/**
+ * 初始化日志去抖（5秒内只记一次，防止多 Worker 重复输出）
+ */
 let __initLogTs = 0;
-const INIT_LOG_DEBOUNCE_MS = 5000; // 5秒内只记录一次
+const INIT_LOG_DEBOUNCE_MS = 5000;
 function __shouldLogInit() {
   const now = Date.now();
   if (now - __initLogTs >= INIT_LOG_DEBOUNCE_MS) {
@@ -226,7 +252,10 @@ function __shouldLogInit() {
   }
   return false;
 }
-// 重连日志去抖机制（按库&类型：attempt/success/failure）
+
+/**
+ * 重连日志去抖，按库和类型进行（每类 60 秒内只记一次）
+ */
 const __reconnectLogTs = new Map(); // dbType -> Map(kind -> ts)
 const RECONNECT_LOG_DEBOUNCE_MS = 60000;
 function __shouldLogReconnect(dbType, kind) {
@@ -244,11 +273,16 @@ function __shouldLogReconnect(dbType, kind) {
   return false;
 }
 
-// 连接监控配置
-const DB_HEALTH_CHECK_INTERVAL = Number(process.env.DB_HEALTH_CHECK_INTERVAL || 60000); // 1分钟
+// ---- 连接监控配置 ----
+const DB_HEALTH_CHECK_INTERVAL = Number(process.env.DB_HEALTH_CHECK_INTERVAL || 60000); // 单位：毫秒
 const DB_RECONNECT_ATTEMPTS = Number(process.env.DB_RECONNECT_ATTEMPTS || 3);
 
-// 创建数据库连接的通用函数
+/**
+ * 创建数据库连接（通用）
+ * @param {string} dbPath 数据库文件路径
+ * @param {string} dbName 数据库名（用于日志）
+ * @returns {Promise<sqlite3.Database>}
+ */
 const createDBConnection = (dbPath, dbName) => {
     return new Promise((resolve, reject) => {
         const db = new sqlite3.Database(dbPath, (err) => {
@@ -261,7 +295,7 @@ const createDBConnection = (dbPath, dbName) => {
             
             db.configure('busyTimeout', __dynamicBusyTimeoutMs);
             
-            // 1. 基础PRAGMA设置（必需的数据库配置）
+            // 配置基础 PRAGMA 参数
             try {
                 db.run(`PRAGMA synchronous = ${SQLITE_SYNCHRONOUS};`);
                 db.run(`PRAGMA temp_store = ${SQLITE_TEMP_STORE};`);
@@ -272,30 +306,29 @@ const createDBConnection = (dbPath, dbName) => {
 
                 logger.debug(`${dbName} 数据库基础参数设置成功`);
             } catch (e) {
-                logger.warn(`${dbName} 基础PRAGMA参数设置失败:`, e.message);
+                logger.debug(`${dbName} 基础PRAGMA参数设置失败:`, e.message);
             }
 
-            // 2. 设置连接健康状态
+            // 设置数据库连接健康状态为 connected
             dbHealthStatus.set(dbName, 'connected');
 
-            // 3. 监听连接错误
+            // 监听连接出错
             db.on('error', (err) => {
                 logger.error(`${dbName} 数据库连接错误:`, err.message);
                 dbHealthStatus.set(dbName, 'error');
             });
 
-            // 4. 监听连接关闭
+            // 监听连接关闭
             db.on('close', () => {
                 logger.warn(`${dbName} 数据库连接已关闭`);
                 dbHealthStatus.set(dbName, 'closed');
             });
 
-            // 5. 可选的优化操作（sqlite3 5.1.7兼容性处理）
+            // 可选优化参数（兼容 sqlite3 5.1.7）
             try {
                 db.run('PRAGMA optimize;');
                 logger.debug(`${dbName} 数据库优化参数设置成功`);
             } catch (e) {
-                // PRAGMA optimize在sqlite3 5.1.7中可能不兼容，静默处理
                 logger.debug(`${dbName} 数据库优化参数设置失败（兼容性问题）:`, e.message);
             }
             
@@ -304,7 +337,10 @@ const createDBConnection = (dbPath, dbName) => {
     });
 };
 
-// 初始化所有数据库连接
+/**
+ * 初始化所有数据库连接
+ * @returns {Promise<object>} dbConnections
+ */
 const initializeConnections = async () => {
     try {
         dbConnections.main = await createDBConnection(DB_FILE, '主数据库');
@@ -312,11 +348,11 @@ const initializeConnections = async () => {
         dbConnections.history = await createDBConnection(HISTORY_DB_FILE, '历史记录数据库');
         dbConnections.index = await createDBConnection(INDEX_DB_FILE, '索引数据库');
 
-        // 仅做连接级别配置，避免在此处创建/索引业务表，防止多 Worker 并发下的竞态
+        // 仅做连接级别配置，不创建表，防止并发竞态
         try {
-            // 保留位置：如需极早期建表，请使用迁移或服务启动后的 ensureCoreTables()，不要在此处建表
+            // 如果业务需要请用迁移或 ensureCoreTables()
         } catch (e) {
-            logger.warn('初始化关键表/索引失败（忽略）:', e && e.message);
+            logger.debug('初始化关键表/索引失败（忽略）:', e && e.message);
         }
 
         if (__shouldLogInit()) {
@@ -329,15 +365,23 @@ const initializeConnections = async () => {
     }
 };
 
-// 获取指定数据库连接
+/**
+ * 获取指定数据库连接
+ * @param {string} dbType 数据库类型
+ * @returns {sqlite3.Database}
+ */
 const getDB = (dbType = 'main') => {
     if (!dbConnections[dbType]) {
-        throw new Error(`数据库连接 ${dbType} 不存在`);
+        const { DatabaseError } = require('../utils/errors');
+        throw new DatabaseError(`数据库连接 ${dbType} 不存在`, { dbType, availableTypes: Object.keys(dbConnections) });
     }
     return dbConnections[dbType];
 };
 
-// 关闭所有数据库连接
+/**
+ * 关闭所有数据库连接
+ * @returns {Promise<void[]>}
+ */
 const closeAllConnections = () => {
     return Promise.all(
         Object.entries(dbConnections).map(([name, db]) => {
@@ -355,7 +399,14 @@ const closeAllConnections = () => {
     );
 };
 
-// 通用数据库操作函数
+/**
+ * 通用数据库 DML 操作
+ * @param {string} dbType 数据库类型
+ * @param {string} sql SQL语句
+ * @param {Array} params 参数
+ * @param {string} successMessage 成功输出日志
+ * @returns {Promise<any>}
+ */
 const runAsync = (dbType, sql, params = [], successMessage = '') => {
     const db = getDB(dbType);
     const promise = new Promise((resolve, reject) => {
@@ -371,6 +422,13 @@ const runAsync = (dbType, sql, params = [], successMessage = '') => {
     return withTimeout(promise, getQueryTimeoutMs(), { sql });
 };
 
+/**
+ * 通用数据库 run 操作（无日志，无 successMessage）
+ * @param {string} dbType
+ * @param {string} sql
+ * @param {Array} params
+ * @returns {Promise<any>}
+ */
 const dbRun = (dbType, sql, params = []) => {
     const db = getDB(dbType);
     const promise = new Promise((resolve, reject) => {
@@ -382,6 +440,13 @@ const dbRun = (dbType, sql, params = []) => {
     return withTimeout(promise, getQueryTimeoutMs(), { sql });
 };
 
+/**
+ * 通用数据库 all 操作，返回多行
+ * @param {string} dbType
+ * @param {string} sql
+ * @param {Array} params
+ * @returns {Promise<Array>}
+ */
 const dbAll = (dbType, sql, params = []) => {
     const db = getDB(dbType);
     const promise = new Promise((resolve, reject) => {
@@ -393,6 +458,13 @@ const dbAll = (dbType, sql, params = []) => {
     return withTimeout(promise, getQueryTimeoutMs(), { sql });
 };
 
+/**
+ * 通用数据库 get 操作，返回单行
+ * @param {string} dbType
+ * @param {string} sql
+ * @param {Array} params
+ * @returns {Promise<Object|null>}
+ */
 const dbGet = (dbType, sql, params = []) => {
     const db = getDB(dbType);
     const promise = new Promise((resolve, reject) => {
@@ -404,7 +476,13 @@ const dbGet = (dbType, sql, params = []) => {
     return withTimeout(promise, getQueryTimeoutMs(), { sql });
 };
 
-// 检查表和列是否存在
+/**
+ * 检查指定表是否包含指定列
+ * @param {string} dbType 数据库类型
+ * @param {string} table 表名
+ * @param {string} column 列名
+ * @returns {Promise<boolean>}
+ */
 const hasColumn = (dbType, table, column) => {
     const sql = `PRAGMA table_info(${table})`;
     const promise = new Promise((resolve, reject) => {
@@ -413,11 +491,12 @@ const hasColumn = (dbType, table, column) => {
             resolve(rows.some(row => row.name === column));
         });
     });
-    return withTimeout(promise, getQueryTimeoutMs(), { sql     });
+    return withTimeout(promise, getQueryTimeoutMs(), { sql });
 };
 
 /**
- * 检查数据库连接健康状态
+ * 检查所有数据库连接健康状态，自动重连
+ * @returns {Promise<void>}
  */
 async function checkDatabaseHealth() {
     const dbTypes = ['main', 'settings', 'history', 'index'];
@@ -428,7 +507,7 @@ async function checkDatabaseHealth() {
         if (!db) continue;
 
         try {
-            // 执行简单查询测试连接
+            // 简单查询测试连通性
             await new Promise((resolve, reject) => {
                 db.get('SELECT 1 as test', (err, row) => {
                     if (err) {
@@ -439,7 +518,7 @@ async function checkDatabaseHealth() {
                 });
             });
 
-            // 连接正常（仅在状态从非connected→connected时记录，且60秒内去抖）
+            // 仅在健康状态变化时输出日志且去抖
             if (dbHealthStatus.get(dbType) !== 'connected') {
                 restoredDbs.push(dbType);
                 dbHealthStatus.set(dbType, 'connected');
@@ -448,19 +527,21 @@ async function checkDatabaseHealth() {
             logger.warn(`${dbType} 数据库连接检查失败:`, error.message);
             dbHealthStatus.set(dbType, 'unhealthy');
 
-            // 尝试重新连接
+            // 尝试自动重连
             await attemptReconnect(dbType);
         }
     }
 
-    // 批量记录恢复日志（30秒去抖）
+    // 批量恢复日志输出（30秒去抖）
     if (restoredDbs.length > 0 && __shouldLogBatchRestore()) {
         logger.info(`数据库连接已恢复: ${restoredDbs.join(', ')}`);
     }
 }
 
 /**
- * 尝试重新连接数据库
+ * 尝试重连指定数据库
+ * @param {string} dbType 数据库类型
+ * @returns {Promise<boolean>} 是否重连成功
  */
 async function attemptReconnect(dbType) {
     const maxAttempts = DB_RECONNECT_ATTEMPTS;
@@ -489,7 +570,7 @@ async function attemptReconnect(dbType) {
                 }
             }
             
-            // 重新创建连接
+            // 重新建立连接
             const dbPath = getDbPath(dbType);
             const dbName = getDbName(dbType);
             dbConnections[dbType] = await createDBConnection(dbPath, dbName);
@@ -522,7 +603,9 @@ async function attemptReconnect(dbType) {
 }
 
 /**
- * 获取数据库路径
+ * 获取数据库文件路径
+ * @param {string} dbType 数据库类型
+ * @returns {string} 数据库路径
  */
 function getDbPath(dbType) {
     switch (dbType) {
@@ -530,12 +613,17 @@ function getDbPath(dbType) {
         case 'settings': return SETTINGS_DB_FILE;
         case 'history': return HISTORY_DB_FILE;
         case 'index': return INDEX_DB_FILE;
-        default: throw new Error(`未知的数据库类型: ${dbType}`);
+        default: {
+            const { ValidationError } = require('../utils/errors');
+            throw new ValidationError(`未知的数据库类型: ${dbType}`, { dbType, validTypes: ['main', 'settings', 'history', 'index'] });
+        }
     }
 }
 
 /**
- * 获取数据库名称
+ * 获取数据库名称（用于日志）
+ * @param {string} dbType
+ * @returns {string}
  */
 function getDbName(dbType) {
     switch (dbType) {
@@ -547,17 +635,19 @@ function getDbName(dbType) {
     }
 }
 
-// 启动数据库健康检查
+// ---- 数据库健康检查定时任务 ----
 const dbHealthCheckInterval = setInterval(checkDatabaseHealth, DB_HEALTH_CHECK_INTERVAL);
 
-// 清理数据库健康检查定时器
+/**
+ * 清理健康检查定时器
+ */
 function cleanupDbHealthCheck() {
     if (dbHealthCheckInterval) {
         clearInterval(dbHealthCheckInterval);
     }
 }
 
-// 进程退出时清理数据库连接
+// 进程退出时自动清理连接与定时器
 process.on('beforeExit', async () => {
     cleanupDbHealthCheck();
     await closeAllConnections();
@@ -573,6 +663,12 @@ process.on('SIGTERM', async () => {
     await closeAllConnections();
 });
 
+/**
+ * 检查数据库是否存在指定表
+ * @param {string} dbType 数据库类型
+ * @param {string} table 表名
+ * @returns {Promise<boolean>}
+ */
 const hasTable = (dbType, table) => {
     const sql = `SELECT name FROM sqlite_master WHERE type='table' AND name=?`;
     const promise = new Promise((resolve, reject) => {
@@ -585,8 +681,8 @@ const hasTable = (dbType, table) => {
 };
 
 /**
- * 安全的SQL IN子句构建器
- * @param {Array} values - 值数组
+ * 安全构建 SQL IN 子句
+ * @param {Array} values 值数组
  * @returns {Object} 包含 placeholders 和 values 的对象
  */
 function buildSafeInClause(values) {
@@ -594,7 +690,7 @@ function buildSafeInClause(values) {
         return { placeholders: '(NULL)', values: [] };
     }
 
-    // 验证所有值都是基本类型，防止SQL注入
+    // 仅允许基本类型避免注入
     const validValues = values.filter(value => {
         const type = typeof value;
         return type === 'string' || type === 'number' || value === null || value === undefined;
@@ -612,7 +708,11 @@ function buildSafeInClause(values) {
 }
 
 /**
- * 直接在给定路径上执行只读查询（不依赖全局连接），适用于启动期探测。
+ * 直接在指定路径只读查询数据库（不依赖全局连接，适合启动期用）
+ * @param {string} dbPath
+ * @param {string} sql
+ * @param {Array} params
+ * @returns {Promise<Array>}
  */
 async function dbAllOnPath(dbPath, sql, params = []) {
     return await new Promise((resolve, reject) => {
@@ -633,15 +733,15 @@ async function dbAllOnPath(dbPath, sql, params = []) {
 }
 
 /**
- * 带缓存的数据库查询函数
- * @param {string} dbType - 数据库类型
- * @param {string} sql - SQL查询
- * @param {Array} params - 查询参数
- * @param {Object} cacheOptions - 缓存选项
- * @param {boolean} cacheOptions.useCache - 是否使用缓存
- * @param {number} cacheOptions.ttl - 缓存时间（秒）
- * @param {string[]} cacheOptions.tags - 缓存标签
- * @returns {Promise<Array>} 查询结果
+ * 带缓存的 dbAll 查询
+ * @param {string} dbType 数据库类型
+ * @param {string} sql
+ * @param {Array} params
+ * @param {Object} cacheOptions 缓存选项
+ * @param {boolean} cacheOptions.useCache 是否使用缓存
+ * @param {number} cacheOptions.ttl 缓存有效时间(秒)
+ * @param {string[]} cacheOptions.tags 缓存标签
+ * @returns {Promise<Array>}
  */
 async function dbAllWithCache(dbType, sql, params = [], cacheOptions = {}) {
     const { useCache = false, ttl = 300, tags = [] } = cacheOptions;
@@ -653,12 +753,12 @@ async function dbAllWithCache(dbType, sql, params = [], cacheOptions = {}) {
             return cachedResult;
         }
 
-        // 缓存未命中，执行查询
+        // 未命中缓存，执行查询
         const result = await dbAll(dbType, sql, params);
 
-        // 异步缓存结果（不阻塞查询）
+        // 缓存异步写
         cacheQueryResult(queryKey, result, tags, ttl).catch(error => {
-            logger.warn('缓存查询结果失败:', error);
+            logger.debug('缓存查询结果失败:', error);
         });
 
         return result;
@@ -668,15 +768,15 @@ async function dbAllWithCache(dbType, sql, params = [], cacheOptions = {}) {
 }
 
 /**
- * 带缓存的数据库单行查询函数
- * @param {string} dbType - 数据库类型
- * @param {string} sql - SQL查询
- * @param {Array} params - 查询参数
- * @param {Object} cacheOptions - 缓存选项
- * @param {boolean} cacheOptions.useCache - 是否使用缓存
- * @param {number} cacheOptions.ttl - 缓存时间（秒）
- * @param {string[]} cacheOptions.tags - 缓存标签
- * @returns {Promise<Object|null>} 查询结果
+ * 带缓存的 dbGet 查询（单行）
+ * @param {string} dbType
+ * @param {string} sql
+ * @param {Array} params
+ * @param {Object} cacheOptions
+ * @param {boolean} cacheOptions.useCache
+ * @param {number} cacheOptions.ttl
+ * @param {string[]} cacheOptions.tags
+ * @returns {Promise<Object|null>}
  */
 async function dbGetWithCache(dbType, sql, params = [], cacheOptions = {}) {
     const { useCache = false, ttl = 300, tags = [] } = cacheOptions;
@@ -688,12 +788,12 @@ async function dbGetWithCache(dbType, sql, params = [], cacheOptions = {}) {
             return cachedResult;
         }
 
-        // 缓存未命中，执行查询
+        // 未命中缓存，执行查询
         const result = await dbGet(dbType, sql, params);
 
-        // 异步缓存结果（不阻塞查询）
+        // 缓存异步写
         cacheQueryResult(queryKey, result, tags, ttl).catch(error => {
-            logger.warn('缓存查询结果失败:', error);
+            logger.debug('缓存查询结果失败:', error);
         });
 
         return result;
@@ -722,35 +822,42 @@ module.exports = {
     dbAllOnPath,
     /**
      * 动态调节 SQLite 超时参数（全局）
-     * busyTimeoutDeltaMs/queryTimeoutDeltaMs 可正可负，内部自动裁剪到[min,max]
+     * @param {Object} param0
+     * @param {number} [param0.busyTimeoutDeltaMs]
+     * @param {number} [param0.queryTimeoutDeltaMs]
+     * @returns {Object} 调整后超时参数
      */
     adaptDbTimeouts: ({ busyTimeoutDeltaMs = 0, queryTimeoutDeltaMs = 0 } = {}) => {
         __dynamicBusyTimeoutMs = Math.max(BUSY_TIMEOUT_MIN, Math.min(BUSY_TIMEOUT_MAX, __dynamicBusyTimeoutMs + (busyTimeoutDeltaMs | 0)));
         __dynamicQueryTimeoutMs = Math.max(QUERY_TIMEOUT_MIN, Math.min(QUERY_TIMEOUT_MAX, __dynamicQueryTimeoutMs + (queryTimeoutDeltaMs | 0)));
         try {
-            // 同步到已打开连接（新连接会用最新值）
+            // 同步到所有打开连接（新连接天然获得新参数）
             Object.values(dbConnections).forEach(db => {
-                try { db.configure && db.configure('busyTimeout', __dynamicBusyTimeoutMs); } catch {}
+                try {
+                    db.configure && db.configure('busyTimeout', __dynamicBusyTimeoutMs);
+                } catch (error) {
+                    logger.silly(`[DB] 更新数据库 busyTimeout 配置失败: ${error && error.message}`);
+                }
             });
-        } catch {}
+        } catch (error) {
+            logger.silly(`[DB] 批量更新 busyTimeout 配置失败: ${error && error.message}`);
+        }
         logger.debug(`DB 超时自适应: busy=${__dynamicBusyTimeoutMs}ms, query=${__dynamicQueryTimeoutMs}ms`);
         return { busyTimeoutMs: __dynamicBusyTimeoutMs, queryTimeoutMs: __dynamicQueryTimeoutMs };
     },
     /**
      * 批量执行预编译语句（Prepared Statement）
-     * - 默认内部管理事务（BEGIN IMMEDIATE/COMMIT/ROLLBACK）
-     * - 支持分块提交，降低长事务风险
-     * - 若在外部事务中调用，可将 manageTransaction 设为 false
+     * 默认自动管理事务并支持分块提交
      * @param {('main'|'settings'|'history'|'index')} dbType
-     * @param {string} sql - 预编译 SQL，例如 INSERT ... VALUES (?, ?, ?)
-     * @param {Array<Array<any>>} rows - 参数数组列表
+     * @param {string} sql 预编译 SQL
+     * @param {Array<Array<any>>} rows 参数数组
      * @param {Object} options
      * @param {number} [options.chunkSize=500]
      * @param {boolean} [options.manageTransaction=true]
      * @param {string} [options.begin='BEGIN IMMEDIATE']
      * @param {string} [options.commit='COMMIT']
      * @param {string} [options.rollback='ROLLBACK']
-     * @returns {Promise<number>} processed - 成功执行的行数
+     * @returns {Promise<number>} processed 成功行数
      */
     runPreparedBatch: async function runPreparedBatch(dbType, sql, rows, options = {}) {
         const db = getDB(dbType);
@@ -763,7 +870,7 @@ module.exports = {
 
         const stmt = db.prepare(sql);
 
-        // 智能事务：默认管理事务；若检测到处于事务内，则不再 BEGIN
+        // 智能事务：自动判断内外层事务
         let shouldManageTx = manageTxOpt !== false;
         let began = false;
         if (shouldManageTx) {
@@ -773,7 +880,7 @@ module.exports = {
             } catch (e) {
                 const msg = String(e && e.message || '');
                 if (/(within a transaction|cannot start.*transaction|transaction.*active)/i.test(msg)) {
-                    shouldManageTx = false; // 已在外层事务中
+                    shouldManageTx = false; // 已在外层事务
                 } else {
                     throw e;
                 }
@@ -806,8 +913,71 @@ module.exports = {
     }
 };
 
+/**
+ * 通用事务包装器
+ * 自动管理事务（BEGIN/COMMIT/ROLLBACK），在闭包内执行核心数据库操作
+ *
+ * @param {string} dbType 数据库类型
+ * @param {Function} fn 执行体（异步函数）
+ * @param {Object} options
+ * @param {string} [options.mode='IMMEDIATE'] 事务模式
+ * @returns {Promise<any>}
+ *
+ * @example
+ * await withTransaction('main', async () => {
+ *   await dbRun('main', 'DELETE FROM items WHERE path=?', [path]);
+ *   await dbRun('main', 'DELETE FROM thumb_status WHERE path=?', [path]);
+ * });
+ */
+async function withTransaction(dbType, fn, options = {}) {
+    const mode = options.mode || 'IMMEDIATE';
+    const beginSql = `BEGIN ${mode}`;
+    const commitSql = 'COMMIT';
+    const rollbackSql = 'ROLLBACK';
+
+    // 检查是否已置于事务中
+    let shouldManage = true;
+    try {
+        await dbRun(dbType, beginSql);
+    } catch (e) {
+        const msg = String(e && e.message || '');
+        if (/(within a transaction|cannot start.*transaction|transaction.*active)/i.test(msg)) {
+            // 嵌套事务，跳过 BEGIN
+            shouldManage = false;
+            logger.debug(`[withTransaction] 检测到嵌套事务，跳过BEGIN (${dbType})`);
+        } else {
+            throw e;
+        }
+    }
+
+    try {
+        // 执行用户闭包
+        const result = await fn();
+        
+        // 自动提交事务（如果我们开启的）
+        if (shouldManage) {
+            await dbRun(dbType, commitSql);
+        }
+        
+        return result;
+    } catch (error) {
+        // 如异常自动回滚
+        if (shouldManage) {
+            try {
+                await dbRun(dbType, rollbackSql);
+                logger.debug(`[withTransaction] 已回滚事务 (${dbType}): ${error.message}`);
+            } catch (rollbackError) {
+                logger.debug(`[withTransaction] 回滚失败 (${dbType}):`, rollbackError.message);
+            }
+        }
+        throw error;
+    }
+}
+
+// 导出部分底层监控方法和事务封装
 module.exports.trackBusyRetry = trackBusyRetry;
 module.exports.maybeLogTelemetry = maybeLogTelemetry;
+module.exports.withTransaction = withTransaction;
 
-// 导出 withTimeout 以便启动流程等处统一超时语义
-module.exports.withTimeout = withTimeout; 
+// 导出 withTimeout，便于统一超时处理
+module.exports.withTimeout = withTimeout;

@@ -4,6 +4,7 @@
  */
 const { redis } = require('../config/redis');
 const logger = require('../config/logger');
+const { safeRedisGet, safeRedisDel, safeRedisSet } = require('../utils/helpers');
 
 const TAG_PREFIX = 'tag:';
 const QUERY_CACHE_PREFIX = 'query:';
@@ -107,7 +108,7 @@ async function cacheQueryResult(queryKey, data, tags = [], ttl = QUERY_CACHE_TTL
         const serializedData = JSON.stringify(data);
 
         // 设置缓存数据
-        await redis.setex(cacheKey, ttl, serializedData);
+        await safeRedisSet(redis, cacheKey, serializedData, 'EX', ttl, '查询缓存写入');
 
         // 添加标签关联
         if (tags.length > 0) {
@@ -116,7 +117,7 @@ async function cacheQueryResult(queryKey, data, tags = [], ttl = QUERY_CACHE_TTL
 
         logger.debug(`[Cache] 查询结果已缓存: ${queryKey}`);
     } catch (error) {
-        logger.warn('缓存查询结果失败:', error);
+        logger.debug('缓存查询结果失败:', error);
     }
 }
 
@@ -128,21 +129,21 @@ async function cacheQueryResult(queryKey, data, tags = [], ttl = QUERY_CACHE_TTL
 async function getCachedQueryResult(queryKey) {
     if (!redis || redis.isNoRedis) return null;
 
-    try {
-        const cacheKey = `${QUERY_CACHE_PREFIX}${queryKey}`;
-        const cachedData = await redis.get(cacheKey);
+    const cacheKey = `${QUERY_CACHE_PREFIX}${queryKey}`;
+    const cachedData = await safeRedisGet(redis, cacheKey, '查询缓存读取');
 
-        if (cachedData) {
+    if (cachedData) {
+        try {
             const data = JSON.parse(cachedData);
             logger.debug(`[Cache] 查询结果命中缓存: ${queryKey}`);
             return data;
+        } catch (error) {
+            logger.debug('解析缓存数据失败:', error);
+            return null;
         }
-
-        return null;
-    } catch (error) {
-        logger.warn('获取缓存查询结果失败:', error);
-        return null;
     }
+
+    return null;
 }
 
 /**
@@ -155,13 +156,9 @@ async function invalidateQueryCache(queryKeys) {
     const keysToInvalidate = Array.isArray(queryKeys) ? queryKeys : [queryKeys];
     if (keysToInvalidate.length === 0) return;
 
-    try {
-        const cacheKeys = keysToInvalidate.map(key => `${QUERY_CACHE_PREFIX}${key}`);
-        await redis.del(...cacheKeys);
-        logger.debug(`[Cache] 已失效 ${cacheKeys.length} 个查询缓存`);
-    } catch (error) {
-        logger.warn('失效查询缓存失败:', error);
-    }
+    const cacheKeys = keysToInvalidate.map(key => `${QUERY_CACHE_PREFIX}${key}`);
+    await safeRedisDel(redis, cacheKeys, '失效查询缓存');
+    logger.debug(`[Cache] 已失效 ${cacheKeys.length} 个查询缓存`);
 }
 
 /**

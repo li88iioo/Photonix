@@ -13,7 +13,6 @@
 - 后端未引入 dotenv
   - Docker Compose：使用 env_file: .env 注入（根目录放置 .env）
   - 本机/PM2：以进程环境注入（PowerShell/Bash；或 PM2 ecosystem.config.js 的 env 字段）
-更新日期：2025-09-26
 
 性能调优目标：支持50万张图片高效处理，提供从1核1GB到16核16GB的完整配置方案
 
@@ -64,7 +63,16 @@
 - 代码引用：backend/config/index.js、config/logger.js、workers/*
 - 示例：LOG_LEVEL=info
 
-4) PHOTOS_DIR
+4) LOG_JSON
+- 作用：以 JSON 格式输出日志，便于集中式日志/可观测平台采集与分析
+- 默认值：false（彩色人类可读格式）
+- 取值/格式：true | false
+- 推荐修改场景：生产环境接入 Loki/ELK/Datadog 等日志系统
+- 风险：开启后本地阅读不友好；建议结合 `X-Trace-Id` 与 `X-Span-Id` 进行查询
+- 代码引用：backend/config/logger.js
+- 示例：LOG_JSON=true
+
+5) PHOTOS_DIR
 - 作用：媒体库根目录（图片/视频）
 - 默认值：/app/photos
 - 取值/格式：绝对路径（容器内）
@@ -73,7 +81,7 @@
 - 代码引用：backend/config/index.js、services/file.service.js、workers/indexing-worker.js
 - 示例：PHOTOS_DIR=/app/photos
 
-5) DATA_DIR
+6) DATA_DIR
 - 作用：应用数据目录（数据库/缩略图/HLS 等）
 - 默认值：/app/data
 - 取值/格式：绝对路径（容器内）
@@ -82,7 +90,7 @@
 - 代码引用：backend/config/index.js、db/*
 - 示例：DATA_DIR=/app/data
 
-6) REDIS_URL
+7) REDIS_URL
 - 作用：Redis 连接（缓存/限流/队列/PubSub）
 - 默认值：redis://localhost:6379（开发）/ 生产推荐 redis://redis:6379
 - 取值/格式：redis://[user:pass@]host:port[/db]
@@ -91,7 +99,7 @@
 - 代码引用：backend/config/index.js、config/redis.js、middleware/rateLimiter.js、services/*、workers/*
 - 示例：REDIS_URL=redis://redis:6379
 
-7) JWT_SECRET
+8) JWT_SECRET
 - 作用：JWT 签名密钥
 - 默认值：无（必须提供）
 - 取值/格式：32+ 随机字符串
@@ -100,7 +108,7 @@
 - 代码引用：backend/middleware/auth.js、controllers/auth.controller.js
 - 示例：JWT_SECRET=g3A4...32plusRandom
 
-8) ADMIN_SECRET
+9) ADMIN_SECRET
 - 作用：后台敏感操作校验密钥
 - 默认值：admin（必须修改）
 - 取值/格式：强口令
@@ -224,7 +232,29 @@
 - 示例：REFRESH_RATE_WINDOW_MS=60000
 - 示例：REFRESH_RATE_MAX=60
 
-10) SETTINGS_REDIS_CACHE
+10) AUTH_DEBUG_LOGS
+- 作用：显式开启认证模块的详细调试日志（包括 Token/Secret 前缀，仅建议本地排障时短期使用）
+- 默认值：未设置（关闭）
+- 取值/格式：true | false
+- 推荐配置方案：开发环境调试认证问题时临时设为 true；生产环境保持未设置
+- 风险：在生产开启将把敏感信息写入日志
+- 代码引用：backend/middleware/auth.js
+- 示例：AUTH_DEBUG_LOGS=true
+
+11) BROWSE_CACHE_TTL / SEARCH_CACHE_TTL
+- 作用：后端 Redis 路由缓存 TTL（秒），分别用于目录浏览与全文搜索接口
+- 默认值：180 / 180
+- 取值/格式：>=30 的整数秒
+- 推荐配置方案：
+  - 与前端 Service Worker TTL 保持一致（默认即可）
+  - 若需更长缓存命中，可结合前端 TTL 一同上调（例如 300 秒）
+  - 若要求实时性（频繁变更内容），可临时下调至 60 秒
+- 风险：过大可能在更新后短时间返回旧数据；过小则增加 Redis/后端负载
+- 代码引用：backend/routes/browse.routes.js、backend/routes/search.routes.js
+- 示例：BROWSE_CACHE_TTL=180
+- 示例：SEARCH_CACHE_TTL=180
+
+12) SETTINGS_REDIS_CACHE
 - 作用：启用设置项的 Redis 缓存
 - 默认值：false
 - 取值/格式：true | false
@@ -237,12 +267,77 @@
 
 ### C. 可选（按场景启用）
 
-1) DISABLE_WATCH / WATCH_USE_POLLING / WATCH_POLL_INTERVAL / WATCH_POLL_BINARY_INTERVAL
+**安全增强与性能优化参数**
+
+1) MAX_PATH_LENGTH
+- 作用：请求路径的最大允许字符数，防止超长路径攻击
+- 默认值：1024
+- 取值/格式：512-4096的整数（字符）
+- 推荐配置方案：
+  - 一般场景：1024（默认值，适合大多数文件系统）
+  - 深层嵌套目录：2048（处理超深目录结构）
+  - 安全加固环境：512（严格限制）
+- 风险：设置过小可能拒绝合法的深层路径；过大削弱防护效果
+- 代码引用：backend/middleware/pathValidator.js
+- 示例：MAX_PATH_LENGTH=1024
+
+2) MAX_PATH_DEPTH
+- 作用：路径的最大允许层级深度，防止目录遍历攻击
+- 默认值：20
+- 取值/格式：5-50的整数（层级）
+- 推荐配置方案：
+  - 一般场景：20（默认值，适合大多数组织结构）
+  - 复杂相册：30-40（支持深层分类）
+  - 安全加固环境：10（严格限制）
+- 风险：设置过小可能拒绝合法的深层相册；过大削弱防护效果
+- 代码引用：backend/middleware/pathValidator.js
+- 示例：MAX_PATH_DEPTH=20
+
+3) THUMB_WORKER_MEMORY_MB
+- 作用：缩略图Worker的最大内存限制（MB），独立于其他Worker
+- 默认值：512
+- 取值/格式：256-2048的整数（MB）
+- 推荐配置方案：
+  - 处理≤1080p图片：256-384MB
+  - 处理4K图片（3840×2160）：384-512MB（默认值）
+  - 处理8K图片（7680×4320）：512-768MB
+  - 处理超高分辨率/RAW：1024-2048MB
+- 风险：过低导致大图片OOM失败；过高占用过多系统内存
+- 代码引用：backend/services/worker.manager.js
+- 示例：THUMB_WORKER_MEMORY_MB=512
+
+4) SHARP_MAX_PIXELS
+- 作用：Sharp图像处理库允许的最大像素数，防止超大图片导致OOM
+- 默认值：50000000（约7000×7000，5000万像素）
+- 取值/格式：10000000-200000000的整数（像素）
+- 推荐配置方案：
+  - 一般场景：50000000（默认，支持8K图片33M像素）
+  - 专业摄影/RAW：100000000-150000000（1亿-1.5亿像素）
+  - 极端高分辨率：200000000（2亿像素，需配合THUMB_WORKER_MEMORY_MB≥1024）
+- 风险：设置过低拒绝合法大图；过高可能OOM导致Worker崩溃
+- 内存估算：像素数 × 4字节 × 2（解码+编码） ≈ 峰值内存
+- 代码引用：backend/workers/thumbnail-worker.js
+- 示例：SHARP_MAX_PIXELS=50000000
+
+5) THUMB_POOL_MAX
+- 作用：缩略图线程池的最大数量，独立于NUM_WORKERS
+- 默认值：NUM_WORKERS（继承全局配置）
+- 取值/格式：1-32的整数
+- 推荐配置方案：
+  - 低配环境（≤4核）：2-4
+  - 中配环境（8核）：6-8
+  - 高配环境（16核）：12-16
+  - 超高配环境（32核+）：16-24
+- 风险：设置过低无法充分利用CPU；过高导致内存/CPU竞争激烈
+- 代码引用：backend/services/adaptive.service.js
+- 示例：THUMB_POOL_MAX=8
+
+6) DISABLE_WATCH / WATCH_USE_POLLING / WATCH_POLL_INTERVAL / WATCH_POLL_BINARY_INTERVAL
 - 作用：文件监听策略（网络盘/NFS 可使用轮询）
-- 默认值：false / false / 1000 / 1500
+- 默认值：true / false / 2000 / 3000（若未配置 WATCH_*，仅禁用实时监听）
 - 取值/格式：布尔 / 毫秒整数
-- 推荐修改场景：NFS/SMB/网络盘监听不稳时启用轮询并禁用 watch
-- 风险：轮询增加 IO；禁用 watch 依赖手动/后台维护
+- 推荐修改场景：希望恢复实时监听时将 DISABLE_WATCH 设为 false；NFS/SMB/网络盘监听不稳时保留禁用并按需启用轮询
+- 风险：轮询增加 IO；禁用 watch 依赖手动/计划同步
 - 代码引用：backend/services/indexer.service.js、config/index.js
 - 示例：
   - DISABLE_WATCH=true
@@ -420,6 +515,9 @@
 - 风险：启用时Redis不可用会导致限流失效
 - 代码引用：backend/middleware/rateLimiter.js
 - 示例：RATE_LIMIT_USE_REDIS=true
+- 关联参数：
+  - RATE_LIMIT_REDIS_WAIT_MS（默认5000）：限流中间件在启动时等待 Redis 就绪的最大时长（毫秒），避免因握手延迟而降级到内存模式。超时仍会自动回退。
+  - RATE_LIMIT_REDIS_POLL_INTERVAL_MS（默认200）：等待窗口内的检查间隔（毫秒）。增大可降低启动期间的 Redis 压力，减小可加快检测响应。
 
 18) METRICS_TOKEN
 - 作用：访问metrics端点的认证令牌
@@ -663,6 +761,9 @@
 - 风险：过小锁竞争激烈，过大锁占用时间长
 - 代码引用：backend/server.js
 - 示例：INDEX_LOCK_TTL_SEC=7200
+- 关联参数：
+  - INDEX_WORKER_REDIS_WAIT_MS（默认5000）：索引工作线程在初始化尺寸缓存时等待 Redis 就绪的最大时长（毫秒），防止因握手延迟退化为本地缓存。
+  - INDEX_WORKER_REDIS_POLL_INTERVAL_MS（默认200）：等待期间的轮询间隔（毫秒），根据 Redis 启动速度和资源情况调节。
 
 42) ADAPTIVE_BOOST_THRESHOLD
 - 作用：自适应性能提升阈值
@@ -805,11 +906,19 @@ REDIS_URL=redis://redis:6379
 JWT_SECRET=<32+ 强随机>
 ADMIN_SECRET=<强口令>
 
+# 安全限制（防止超长路径攻击）
+MAX_PATH_LENGTH=1024
+MAX_PATH_DEPTH=20
+
 # 内存优化（1G环境关键）
 WORKER_MEMORY_MB=256
+THUMB_WORKER_MEMORY_MB=256
 UV_THREADPOOL_SIZE=2
 FFMPEG_THREADS=1
 SHARP_CONCURRENCY=1
+
+# Sharp像素限制（低配环境降低）
+SHARP_MAX_PIXELS=30000000
 
 # 数据库优化（低配环境）
 SQLITE_BUSY_TIMEOUT=30000
@@ -830,7 +939,6 @@ DETECTED_MEMORY_GB=1
 # Sharp内存限制（1G环境必需）
 SHARP_CACHE_MEMORY_MB=16
 SHARP_CACHE_ITEMS=50
-SHARP_MAX_PIXELS=268435456
 
 # AI限制（可选，低配环境建议限制）
 AI_DAILY_LIMIT=50
@@ -838,6 +946,7 @@ AI_PER_IMAGE_COOLDOWN_SEC=120
 
 # 缩略图优化
 THUMB_ONDEMAND_RESERVE=1
+THUMB_POOL_MAX=1
 
 # NFS/网络盘建议（如果使用）
 # DISABLE_WATCH=true
@@ -873,10 +982,24 @@ SETTINGS_REDIS_CACHE=true
 
 中型生产（4C/8G）
 ```
+#安全限制（默认值，适合大多数场景）
+MAX_PATH_LENGTH=1024
+MAX_PATH_DEPTH=20
+
+# 内存与性能优化
 WORKER_MEMORY_MB=512
+THUMB_WORKER_MEMORY_MB=512
 UV_THREADPOOL_SIZE=4
 FFMPEG_THREADS=2
 SHARP_CONCURRENCY=2
+
+# Sharp像素限制（支持8K图片）
+SHARP_MAX_PIXELS=50000000
+
+# 并发优化
+THUMB_POOL_MAX=6
+
+# 限流与缓存
 RATE_LIMIT_WINDOW_MINUTES=15
 RATE_LIMIT_MAX_REQUESTS=100
 SETTINGS_REDIS_CACHE=true
@@ -934,11 +1057,15 @@ $env:PORT="13001"; $env:NODE_ENV="production"; node backend/server.js
 - [ ] JWT_SECRET 为强随机 32+ 字符；ADMIN_SECRET 为强口令
 - [ ] REDIS_URL 指向生产 Redis；网络/权限正确
 - [ ] PHOTOS_DIR / DATA_DIR 均已持久化挂载
+- [ ] 安全参数已配置（MAX_PATH_LENGTH=1024, MAX_PATH_DEPTH=20）
+- [ ] Worker内存根据图片分辨率配置（THUMB_WORKER_MEMORY_MB，处理8K图建议≥512MB）
+- [ ] Sharp像素限制符合业务需求（SHARP_MAX_PIXELS，默认50M像素支持8K）
 - [ ] 限流策略符合预期（RATE_LIMIT_* / REFRESH_RATE_*）
-- [ ] NFS/网络盘采用 WATCH_* 轮询并考虑 DISABLE_WATCH
+- [ ] NFS/网络盘保持 DISABLE_WATCH=true，按需启用 WATCH_* 轮询参数
 - [ ] 首日观察 CPU/内存/IO，按需微调 SHARP_CONCURRENCY / FFMPEG_THREADS / UV_THREADPOOL_SIZE
 - [ ] （可选）SETTINGS_REDIS_CACHE=true 降低 DB 压力
 - [ ] （可选）根据反代策略评估 ENABLE_APP_CSP
+- [ ] （可选）根据CPU核心数配置 THUMB_POOL_MAX 以充分利用资源
 
 ---
 

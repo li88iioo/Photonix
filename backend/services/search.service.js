@@ -4,6 +4,7 @@
  */
 const path = require('path');
 const { dbAll } = require('../db/multi-db');
+const logger = require('../config/logger');
 const { createNgrams } = require('../utils/search.utils');
 const { findCoverPhotosBatch } = require('./file.service');
 const { PHOTOS_DIR, API_BASE } = require('../config');
@@ -15,19 +16,33 @@ const { PHOTOS_DIR, API_BASE } = require('../config');
  * @param {number} limit - 每页数量
  * @returns {Promise<object>} 包含搜索结果、分页信息等的对象
  */
+function normalizeQuery(rawQuery) {
+    if (!rawQuery || typeof rawQuery !== 'string') return '';
+    return rawQuery
+        .normalize('NFKC')
+        .replace(/[^\p{L}\p{N}\s._-]+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function isFtsSyntaxError(error) {
+    const message = error && error.message ? String(error.message) : '';
+    return /fts/i.test(message) && (/syntax error/i.test(message) || /malformed/i.test(message));
+}
+
 async function performSearch(query, page, limit) {
     const offset = (page - 1) * limit;
+    const sanitizedQuery = normalizeQuery(query);
 
-    // 清理搜索查询，移除特殊字符
-    const sanitizedQuery = query.replace(/[(){}[\]/\\."*?!:^~+-,]/g, ' ').trim();
     if (!sanitizedQuery) {
         return { query, results: [], page: 1, totalPages: 1, totalResults: 0, limit };
     }
-    
-    // 创建n-gram搜索查询
-    const ftsQuery = createNgrams(sanitizedQuery, 1, 2);
 
-    // 构建优化的查询条件
+    const ftsQuery = createNgrams(sanitizedQuery, 1, 2);
+    if (!ftsQuery) {
+        return { query, results: [], page: 1, totalPages: 1, totalResults: 0, limit };
+    }
+
     let whereCondition = 'items_fts.name MATCH ?';
     const queryParams = [ftsQuery];
     const leafAlbumPredicate = `(
@@ -43,94 +58,102 @@ async function performSearch(query, page, limit) {
     )`;
 
     whereCondition += ` AND ${leafAlbumPredicate}`;
+    const excludePermanentFailed = `NOT EXISTS (SELECT 1 FROM thumb_status ts WHERE ts.path = i.path AND ts.status = 'permanent_failed')`;
+    whereCondition += ` AND ${excludePermanentFailed}`;
 
-    // 计算总数（使用预计算的叶子相册）
-    const totalCountSql = `
-        SELECT COUNT(1) AS count
-        FROM items_fts
-        JOIN items i ON items_fts.rowid = i.id
-        WHERE ${whereCondition}
-    `;
-    const totalRow = await dbAll('main', totalCountSql, queryParams);
-    const totalResults = totalRow?.[0]?.count || 0;
-    const totalPages = Math.ceil(totalResults / limit);
+    try {
+        const totalCountSql = `
+            SELECT COUNT(1) AS count
+            FROM items_fts
+            JOIN items i ON items_fts.rowid = i.id
+            WHERE ${whereCondition}
+        `;
+        const totalRow = await dbAll('main', totalCountSql, queryParams);
+        const totalResults = totalRow?.[0]?.count || 0;
+        const totalPages = Math.ceil(Math.max(totalResults, 1) / limit);
 
-    // 获取分页数据（使用相同的优化条件）
-    const unifiedSql = `
-        SELECT i.id, i.path, i.type, i.mtime, i.width, i.height, items_fts.rank, i.name
-        FROM items_fts
-        JOIN items i ON items_fts.rowid = i.id
-        WHERE ${whereCondition}
-        ORDER BY CASE i.type WHEN 'album' THEN 0 ELSE 1 END, items_fts.rank ASC
-        LIMIT ? OFFSET ?
-    `;
+        const unifiedSql = `
+            SELECT i.id, i.path, i.type, i.mtime, i.width, i.height, items_fts.rank, i.name
+            FROM items_fts
+            JOIN items i ON items_fts.rowid = i.id
+            WHERE ${whereCondition}
+            ORDER BY CASE i.type WHEN 'album' THEN 0 ELSE 1 END, items_fts.rank ASC
+            LIMIT ? OFFSET ?
+        `;
 
-    // 添加分页参数
-    const paginatedParams = [...queryParams, limit, offset];
-    const paginatedResults = await dbAll('main', unifiedSql, paginatedParams);
+        const paginatedParams = [...queryParams, limit, offset];
+        const paginatedResults = await dbAll('main', unifiedSql, paginatedParams);
 
-    // 批量获取相册封面
-    const albumResultsForCover = paginatedResults.filter(r => r.type === 'album');
-    const albumPaths = albumResultsForCover.map(r => path.join(PHOTOS_DIR, r.path));
-    const coversMap = await findCoverPhotosBatch(albumPaths);
+        const albumResultsForCover = paginatedResults.filter(r => r.type === 'album');
+        const albumPaths = albumResultsForCover.map(r => path.join(PHOTOS_DIR, r.path));
+        const coversMap = await findCoverPhotosBatch(albumPaths);
 
-    // 处理结果，添加封面和URL信息
-    const resultsWithData = await Promise.all(paginatedResults.map(async (result) => {
-        if (!result) return null;
-        
-        let parentPath = path.dirname(result.path).replace(/\\/g, '/');
-        if (parentPath === '.') parentPath = '';
-        
-        if (result.type === 'album') {
-            const fullAbsPath = path.join(PHOTOS_DIR, result.path);
-            const coverInfo = coversMap.get(fullAbsPath);
-            
-            let coverUrl = 'data:image/svg+xml,...';
-            let coverWidth = 1, coverHeight = 1;
-            
-            if (coverInfo && coverInfo.path) {
-                const relativeCoverPath = path.relative(PHOTOS_DIR, coverInfo.path);
-                // 附上封面文件自身的mtime作为版本号，确保封面变更后客户端能获取最新版本（标准化为整数）
-                const coverMtime = Math.floor(coverInfo.mtime || Date.now());
-                coverUrl = `${API_BASE}/api/thumbnail?path=${encodeURIComponent(relativeCoverPath)}&v=${coverMtime}`;
-                coverWidth = coverInfo.width;
-                coverHeight = coverInfo.height;
+        const resultsWithData = await Promise.all(paginatedResults.map(async (result) => {
+            if (!result) return null;
+
+            let parentPath = path.dirname(result.path).replace(/\\/g, '/');
+            if (parentPath === '.') parentPath = '';
+
+            if (result.type === 'album') {
+                const fullAbsPath = path.join(PHOTOS_DIR, result.path);
+                const coverInfo = coversMap.get(fullAbsPath);
+
+                let coverUrl = 'data:image/svg+xml,...';
+                let coverWidth = 1, coverHeight = 1;
+
+                if (coverInfo && coverInfo.path) {
+                    const relativeCoverPath = path.relative(PHOTOS_DIR, coverInfo.path);
+                    const coverMtime = Math.floor(coverInfo.mtime || Date.now());
+                    coverUrl = `${API_BASE}/api/thumbnail?path=${encodeURIComponent(relativeCoverPath)}&v=${coverMtime}`;
+                    coverWidth = coverInfo.width;
+                    coverHeight = coverInfo.height;
+                }
+
+                return {
+                    ...result,
+                    path: result.path.replace(/\\/g, '/'),
+                    coverUrl,
+                    parentPath,
+                    coverWidth,
+                    coverHeight,
+                    mtime: result.mtime
+                };
             }
-            
-            return { 
-                ...result, 
-                path: result.path.replace(/\\/g, '/'), 
-                coverUrl, 
-                parentPath, 
-                coverWidth, 
-                coverHeight,
-                mtime: result.mtime
-            };
-        } else { // video
-            const mtime = Math.floor(result.mtime || Date.now()); // 确保mtime有效并标准化为整数
+
+            const mtime = Math.floor(result.mtime || Date.now());
             const originalUrl = `/static/${result.path.split(path.sep).map(encodeURIComponent).join('/')}`;
             const thumbnailUrl = `${API_BASE}/api/thumbnail?path=${encodeURIComponent(result.path)}&v=${mtime}`;
-            return { 
-                ...result, 
-                path: result.path.replace(/\\/g, '/'), 
-                originalUrl, 
-                thumbnailUrl, 
+            return {
+                ...result,
+                path: result.path.replace(/\\/g, '/'),
+                originalUrl,
+                thumbnailUrl,
                 parentPath,
-                mtime: mtime, // 返回确保有效的mtime
+                mtime,
                 width: result.width || 1920,
                 height: result.height || 1080
             };
+        }));
+
+        return {
+            query,
+            results: resultsWithData.filter(Boolean),
+            page,
+            totalPages: Math.max(totalPages, 1),
+            totalResults,
+            limit
+        };
+    } catch (error) {
+        if (isFtsSyntaxError(error)) {
+            logger.warn('[搜索] FTS 查询包含不安全输入，已回退为空结果', {
+                originalQuery: query,
+                sanitizedQuery,
+                message: error.message
+            });
+            return { query, results: [], page: 1, totalPages: 1, totalResults: 0, limit };
         }
-    }));
-    
-    return {
-        query,
-        results: resultsWithData.filter(Boolean),
-        page,
-        totalPages,
-        totalResults,
-        limit
-    };
+        throw error;
+    }
 }
 
 module.exports = {

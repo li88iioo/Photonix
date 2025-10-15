@@ -101,7 +101,7 @@ class TempFileManager {
                         await this.cleanupTempFile(entryPath);
                     }
                 } catch (error) {
-                    // 忽略单个文件清理失败
+                    logger.debug(`[TempFileManager] 扫描临时文件失败（忽略）: ${entryPath}`, error && error.message);
                 }
             });
 

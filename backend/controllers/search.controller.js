@@ -2,8 +2,8 @@
  * 搜索控制器模块
  * 处理全文搜索相关的请求
  */
-const { dbAll } = require('../db/multi-db');
 const { performSearch } = require('../services/search.service');
+const { getCount } = require('../repositories/stats.repo');
 const logger = require('../config/logger');
 
 /**
@@ -17,11 +17,11 @@ exports.searchItems = async (req, res) => {
         return res.status(400).json({ code: 'INVALID_QUERY', message: '搜索关键词不能为空', requestId: req.requestId });
     }
 
-    // 检查索引是否就绪
+    // 检查索引是否就绪（使用优化的getCount避免全表扫描）
     try {
-        const itemCount = await dbAll('main', "SELECT COUNT(*) as count FROM items");
-        const ftsCount = await dbAll('main', "SELECT COUNT(*) as count FROM items_fts");
-        if (!itemCount || !ftsCount || itemCount[0].count === 0 || ftsCount[0].count === 0) {
+        const itemCount = await getCount('items', 'main');
+        const ftsCount = await getCount('items_fts', 'main');
+        if (itemCount === 0 || ftsCount === 0) {
             return res.status(503).json({ code: 'SEARCH_UNAVAILABLE', message: '搜索索引正在构建中，请稍后再试', requestId: req.requestId });
         }
     } catch (error) {

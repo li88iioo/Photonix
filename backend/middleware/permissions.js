@@ -1,13 +1,17 @@
 /**
- * 权限控制中间件模块
- * 提供细粒度的权限控制，支持基于角色的访问控制(RBAC)
+ * @file 权限控制中间件模块
+ * @description 实现基于角色的访问控制（RBAC），支持细粒度权限检查。当前仅区分普通用户和访客两种角色。
  */
 
 const logger = require('../config/logger');
 
 /**
- * 用户角色枚举
- * 注意：项目没有完整的账户系统，只有普通用户和访客两种角色
+ * 用户角色常量枚举
+ * @readonly
+ * @enum {string}
+ * @property {string} USER  - 认证用户，仅有普通用户角色
+ * @property {string} GUEST - 未认证用户，访客角色
+ * @note 当前项目无账户体系，仅区分普通用户和访客
  */
 const ROLES = {
     USER: 'user',
@@ -15,25 +19,30 @@ const ROLES = {
 };
 
 /**
- * 权限枚举
- * 注意：项目没有完整的账户系统，所有认证用户都是普通用户角色
+ * 权限常量枚举
+ * @readonly
+ * @enum {string}
+ * @property {string} GENERATE_THUMBNAILS - 生成缩略图权限
+ * @property {string} VIEW_THUMBNAILS     - 查看缩略图权限
+ * @property {string} SEARCH_FILES        - 文件搜索权限
+ * @property {string} VIEW_SETTINGS       - 查看系统设置权限
+ * @property {string} USE_AI_FEATURES     - 使用AI功能权限
+ * @note 本项目所有认证用户均为普通用户身份，相关权限按需指定
  */
 const PERMISSIONS = {
-    // 核心功能权限（项目实际需要的）
-    GENERATE_THUMBNAILS: 'generate:thumbnails',  // 缩略图批量补全
-    VIEW_THUMBNAILS: 'view:thumbnails',         // 查看缩略图
-    SEARCH_FILES: 'search:files',               // 文件搜索
-    VIEW_SETTINGS: 'view:settings',             // 查看设置
-    USE_AI_FEATURES: 'use:ai_features'          // AI功能
-
-    // 注意：移除了以下权限，因为项目不需要
-    // READ_FILES, WRITE_FILES, DELETE_FILES - 文件操作权限
-    // ADVANCED_SEARCH - 高级搜索权限
+    GENERATE_THUMBNAILS: 'generate:thumbnails',  // 生成缩略图
+    VIEW_THUMBNAILS: 'view:thumbnails',          // 查看缩略图
+    SEARCH_FILES: 'search:files',                // 文件搜索
+    VIEW_SETTINGS: 'view:settings',              // 查看设置
+    USE_AI_FEATURES: 'use:ai_features'           // AI核心功能
+    // 文件操作以及高级搜索等权限未启用
 };
 
 /**
- * 角色权限映射
- * 注意：项目没有完整的账户系统，只有普通用户和访客两种角色
+ * 角色 - 权限映射表
+ * @type {Object.<string, string[]>}
+ * @desc 配置各角色所拥有的权限列表
+ * @note 仅包含"普通用户"和"访客"两类角色
  */
 const ROLE_PERMISSIONS = {
     [ROLES.USER]: [
@@ -52,13 +61,16 @@ const ROLE_PERMISSIONS = {
 };
 
 /**
- * 获取用户角色
- * @param {Object} req - 请求对象
- * @returns {string} 用户角色
+ * 获取当前请求用户角色
+ * @function
+ * @param {import('express').Request} req - Express请求对象
+ * @returns {string} 用户角色字符串（user/guest）
+ * @description
+ *   判断逻辑：
+ *     1. 存在 req.user 且存在 user.id 视为认证用户，角色为 USER
+ *     2. 否则视为访客，角色为 GUEST
  */
 function getUserRole(req) {
-    // 简化权限模型：项目没有账户系统
-    // 所有认证用户都是普通用户，未认证用户是访客
     if (req.user && req.user.id) {
         return ROLES.USER;
     }
@@ -66,10 +78,11 @@ function getUserRole(req) {
 }
 
 /**
- * 检查用户是否有指定权限
+ * 检查指定用户角色是否包含给定权限
+ * @function
  * @param {string} userRole - 用户角色
  * @param {string} requiredPermission - 所需权限
- * @returns {boolean} 是否有权限
+ * @returns {boolean} 是否具有该权限
  */
 function hasPermission(userRole, requiredPermission) {
     const rolePermissions = ROLE_PERMISSIONS[userRole] || [];
@@ -77,10 +90,15 @@ function hasPermission(userRole, requiredPermission) {
 }
 
 /**
- * 权限检查中间件生成器
- * @param {string|string[]} requiredPermissions - 所需权限
- * @param {Object} options - 配置选项
- * @returns {Function} Express中间件函数
+ * 权限中间件生成器
+ * @function
+ * @param {string|string[]} requiredPermissions - 期望检测的权限（单个或权限数组）
+ * @param {Object} [options={}] - 可选配置
+ * @returns {function(import('express').Request, import('express').Response, import('express').NextFunction):void}
+ *  Express中间件，检查用户是否具备所有指定权限
+ *
+ * @example
+ *   router.post('/ai', requirePermission(PERMISSIONS.USE_AI_FEATURES), handler)
  */
 function requirePermission(requiredPermissions, options = {}) {
     const permissions = Array.isArray(requiredPermissions) ? requiredPermissions : [requiredPermissions];
@@ -90,7 +108,7 @@ function requirePermission(requiredPermissions, options = {}) {
             const userRole = getUserRole(req);
             const userPermissions = ROLE_PERMISSIONS[userRole] || [];
 
-            // 检查是否拥有所有必需权限
+            // 判断用户是否拥有所有必需权限
             const hasAllPermissions = permissions.every(permission =>
                 userPermissions.includes(permission)
             );
@@ -118,7 +136,7 @@ function requirePermission(requiredPermissions, options = {}) {
                 });
             }
 
-            // 将用户信息添加到请求对象
+            // 添加用户角色和权限至请求对象
             req.userRole = userRole;
             req.userPermissions = userPermissions;
 
@@ -135,17 +153,16 @@ function requirePermission(requiredPermissions, options = {}) {
 }
 
 /**
- * 注意：移除了以下高级权限函数，因为项目中不需要
- * - conditionalPermission (条件权限检查)
- * - methodBasedPermissions (基于请求方法的权限映射)
- * - fileOperationPermission (文件操作权限检查)
- *
- * 如需这些高级功能，可以重新添加
+ * 移除说明：
+ * - 条件权限检查函数 conditionalPermission
+ * - 基于请求方法的权限映射函数 methodBasedPermissions
+ * - 文件操作权限检查 fileOperationPermission
+ * 项目当前未使用以上高级权限机制，如需请自行添加。
  */
 
 /**
- * 注意：项目没有管理员角色，requireAdmin函数已移除
- * 如需管理员功能，请使用ADMIN_SECRET环境变量进行验证
+ * 管理员角色和 requireAdmin 函数已移除。
+ * 若需管理功能请使用环境变量 ADMIN_SECRET 做额外验证。
  */
 
 module.exports = {
@@ -153,9 +170,9 @@ module.exports = {
     PERMISSIONS,
     ROLE_PERMISSIONS,
     requirePermission,
-    // conditionalPermission,     // 已移除：项目不需要条件权限检查
-    // methodBasedPermissions,    // 已移除：项目不需要基于请求方法的权限映射
-    // fileOperationPermission,   // 已移除：项目不需要文件操作权限检查
+    // conditionalPermission,     // 已移除：无条件权限检查需求
+    // methodBasedPermissions,    // 已移除：无方法基权限需求
+    // fileOperationPermission,   // 已移除：无文件操作权限需求
     getUserRole,
     hasPermission
 };

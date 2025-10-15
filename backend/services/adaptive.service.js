@@ -8,8 +8,10 @@
 const os = require('os');
 const logger = require('../config/logger');
 const { redis } = require('../config/redis');
+const { safeRedisSet } = require('../utils/helpers');
 const { NUM_WORKERS } = require('../config');
 const { getThumbProcessingStats } = require('../repositories/stats.repo');
+const state = require('./state.manager');
 
 const MODE_KEY = 'adaptive:mode';
 const FF_THREADS_KEY = 'adaptive:ffmpeg_threads';
@@ -103,7 +105,8 @@ function selectModeAuto() {
         if (la > cpus * 0.8) return 'low';
         if (la > cpus * 0.5) return 'medium';
         return 'high';
-    } catch {
+    } catch (autoErr) {
+        logger.debug('[Adaptive] 自动选择模式失败，回退至 medium:', autoErr && autoErr.message);
         return 'medium';
     }
 }
@@ -115,30 +118,37 @@ function resolveMode() {
     return selectModeAuto();
 }
 
+/**
+ * 根据性能模式派生配置画像
+ * 注意：此处的 thumbMaxConcurrency 是初始建议值，实际运行时会由
+ * maybeAutoScaleThumbPool() 根据backlog和系统负载动态调整
+ * @param {string} mode - 性能模式 ('low' | 'medium' | 'high')
+ * @returns {Object} 配置画像
+ */
 function deriveProfile(mode) {
-    // 统一并发画像：缩略图并发、HLS回填开关、ffmpeg 线程/预设
+    // 基于NUM_WORKERS（已考虑CPU核心数）派生初始并发建议
     const cpuBased = Math.max(1, Math.floor(NUM_WORKERS));
     switch (mode) {
         case 'low':
             return {
-                thumbMaxConcurrency: 1,
+                thumbMaxConcurrency: 1,  // 低负载模式：最小并发
                 disableHlsBackfill: true,
                 ffmpegThreads: 1,
                 ffmpegPreset: process.env.FFMPEG_PRESET || 'veryfast',
             };
         case 'medium':
             return {
-                thumbMaxConcurrency: Math.max(1, Math.floor(cpuBased / 3)), // 降低并发度：从/2改为/3
+                thumbMaxConcurrency: Math.max(1, Math.floor(cpuBased / 3)),
                 disableHlsBackfill: false,
-                ffmpegThreads: Math.max(1, Math.min(1, cpuBased)), // 降低ffmpeg线程：从2改为1
+                ffmpegThreads: Math.max(1, Math.min(1, cpuBased)),
                 ffmpegPreset: process.env.FFMPEG_PRESET || 'veryfast',
             };
         case 'high':
         default:
             return {
-                thumbMaxConcurrency: Math.max(1, Math.min(cpuBased, 2)), // 降低最大并发：从4改为2
+                thumbMaxConcurrency: Math.max(1, Math.min(cpuBased, 2)),  // 初始建议，可动态扩容到NUM_WORKERS
                 disableHlsBackfill: false,
-                ffmpegThreads: Math.max(1, Math.min(2, cpuBased)), // 降低ffmpeg线程：从4改为2
+                ffmpegThreads: Math.max(1, Math.min(2, cpuBased)),
                 ffmpegPreset: process.env.FFMPEG_PRESET || 'veryfast',
             };
     }
@@ -147,21 +157,14 @@ function deriveProfile(mode) {
 async function publishProfile(mode, profile) {
     try {
         const ttl = 60; // 秒
-        const redisOps = [
-            redis.set(MODE_KEY, mode, 'EX', ttl),
-            redis.set(FF_THREADS_KEY, String(profile.ffmpegThreads || 1), 'EX', ttl),
-            redis.set(FF_PRESET_KEY, String(profile.ffmpegPreset || 'veryfast'), 'EX', ttl),
-            redis.set(DISABLE_HLS_BACKFILL_KEY, profile.disableHlsBackfill ? '1' : '0', 'EX', ttl),
-            redis.set(THUMB_MAX_CONCURRENT_KEY, String(profile.thumbMaxConcurrency || 1), 'EX', ttl)
-        ];
-
-        // 并行执行所有Redis操作，如果某个失败则记录但不中断其他操作
-        const results = await Promise.allSettled(redisOps);
-        const failures = results.filter(r => r.status === 'rejected').length;
-
-        if (failures > 0) {
-            logger.warn(`[Adaptive] ${failures}/${redisOps.length} 个Redis配置同步失败`);
-        }
+        // 使用safeRedisSet包装所有Redis操作，并行执行
+        await Promise.all([
+            safeRedisSet(redis, MODE_KEY, mode, 'EX', ttl, '自适应模式'),
+            safeRedisSet(redis, FF_THREADS_KEY, String(profile.ffmpegThreads || 1), 'EX', ttl, 'FFmpeg线程数'),
+            safeRedisSet(redis, FF_PRESET_KEY, String(profile.ffmpegPreset || 'veryfast'), 'EX', ttl, 'FFmpeg预设'),
+            safeRedisSet(redis, DISABLE_HLS_BACKFILL_KEY, profile.disableHlsBackfill ? '1' : '0', 'EX', ttl, '禁用HLS回填'),
+            safeRedisSet(redis, THUMB_MAX_CONCURRENT_KEY, String(profile.thumbMaxConcurrency || 1), 'EX', ttl, '缩略图并发上限')
+        ]);
 
         lastPublishTs = Date.now();
     } catch (e) {
@@ -193,7 +196,8 @@ let lastScaleTs = 0;
 async function getThumbBacklogCount() {
     try {
         return await getThumbProcessingStats();
-    } catch {
+    } catch (statsErr) {
+        logger.debug('[Adaptive] 获取缩略图 backlog 失败（忽略）:', statsErr && statsErr.message);
         return 0;
     }
 }
@@ -213,7 +217,8 @@ function hasResourceBudget() {
 
         const memOk = rss / total <= MEMORY_BUDGET_RATIO;
         return { loadOk, memOk, cpus };
-    } catch {
+    } catch (budgetErr) {
+        logger.debug('[Adaptive] 评估资源预算失败（忽略）:', budgetErr && budgetErr.message);
         return { loadOk: true, memOk: true, cpus: 1 };
     }
 }
@@ -231,7 +236,8 @@ function resourceSnapshot() {
         const rssGb = process.memoryUsage().rss / (1024 * 1024 * 1024);
         const la = (os.loadavg && os.loadavg()[0]) || 0;
         return { cpus, cpuSource, totalGb, memSource, budgetGb, rssGb, load: la };
-    } catch {
+    } catch (snapshotErr) {
+        logger.debug('[Adaptive] 采集资源快照失败（忽略）:', snapshotErr && snapshotErr.message);
         return { cpus: 1, cpuSource: 'unknown', totalGb: 1, memSource: 'unknown', budgetGb: Number(process.env.ADAPTIVE_MEMORY_BUDGET_RATIO || 0.7), rssGb: 0, load: 0 };
     }
 }
@@ -297,9 +303,9 @@ async function getCurrentSystemState() {
     const heavy = await isHeavy();
 
     // 需求门槛：仅在存在真实需求时才允许扩容
-    const demandActive = (global.__thumbOndemandQueueLen || 0) > 0
-        || global.__thumbBatchActive === true
-        || (global.__thumbActiveCount || 0) > 0;
+    const demandActive = state.thumbnail.getQueueLen() > 0
+        || state.thumbnail.isBatchActive()
+        || state.thumbnail.getActiveCount() > 0;
 
     return { backlog, loadOk, memOk, cpus, heavy, demandActive };
 }
@@ -318,8 +324,10 @@ async function maybeAutoScaleThumbPool() {
         // 获取当前系统状态
         const { backlog, loadOk, memOk, cpus, heavy, demandActive } = await getCurrentSystemState();
 
-        // 目标上限：不超过 CPU 核心与 4 之间的较小值
-        const hardMax = Math.max(1, Math.min(cpus, 4));
+        // 目标上限：遵循全局NUM_WORKERS配置，同时支持环境变量覆盖
+        // 默认值：min(CPU核心数, NUM_WORKERS)，确保不超过系统资源
+        const configuredMax = Number(process.env.THUMB_POOL_MAX || NUM_WORKERS);
+        const hardMax = Math.max(1, Math.min(cpus, configuredMax));
 
         // 检查扩缩容条件
         const scaleUp = shouldScaleUp(heavy, demandActive, backlog, loadOk, memOk);
@@ -351,7 +359,9 @@ function startAdaptiveScheduler() {
     try {
         const snap = resourceSnapshot();
         logger.debug(`[Adaptive] 资源配额: cpu=${snap.cpus}(${snap.cpuSource}), mem=${snap.totalGb.toFixed(1)}GB(${snap.memSource}), 预算=${Math.round(MEMORY_BUDGET_RATIO*100)}%≈${snap.budgetGb.toFixed(1)}GB; 阈值: boost>${BOOST_THRESHOLD}, decay<${DECAY_THRESHOLD}, 冷却=${Math.round(COOLDOWN_MS/1000)}s, 池上限=min(CPU,4)`);
-    } catch {}
+    } catch (snapshotLogErr) {
+        logger.debug('[Adaptive] 记录资源配额失败（忽略）:', snapshotLogErr && snapshotLogErr.message);
+    }
 
     if (ticker) return;
     ticker = setInterval(async () => {

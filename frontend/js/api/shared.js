@@ -1,29 +1,56 @@
-// API 共享工具模块
-// 提供：日志、认证头构建、去重请求、错误处理、刷新令牌等能力
-import { CACHE, isDevelopment } from '../constants.js';
-import { showNotification } from '../utils.js';
-import { getAuthToken, removeAuthToken, setAuthToken } from '../auth.js';
-import { createModuleLogger } from '../logger.js';
-import { executeAsync, ErrorTypes, ErrorSeverity } from '../error-handler.js';
+/**
+ * @file shared.js
+ * @description
+ *   API 共享工具模块，提供日志、认证头构建、去重请求、错误处理、刷新令牌等能力。
+ */
 
-// 模块级日志记录器
+import { CACHE, isDevelopment } from '../core/constants.js';
+import { showNotification } from '../shared/utils.js';
+import { getAuthToken, removeAuthToken, setAuthToken } from '../app/auth.js';
+import { createModuleLogger } from '../core/logger.js';
+import { executeAsync, ErrorTypes, ErrorSeverity } from '../core/error-handler.js';
+
+/**
+ * API 模块级日志记录器
+ * @type {object}
+ */
 export const apiLogger = createModuleLogger('API');
 
-// in-flight 请求缓存，用于并发去重
+/**
+ * 并发去重中的 in-flight 请求缓存
+ * @type {Map}
+ */
 const inFlightRequests = new Map();
-// 最近窗口命中缓存（短时返回相同结果，降低抖动）
+
+/**
+ * 最近窗口命中缓存（短时返回相同结果，降低抖动）
+ * @type {Map}
+ */
 const recentWindow = new Map();
 
-// 去重命中统计（仅开发环境输出）
+/**
+ * 去重命中统计，仅开发环境输出
+ * @type {object}
+ * @property {number} totalRequests 总请求数
+ * @property {number} cacheHits 缓存命中数
+ */
 const dedupStats = {
     totalRequests: 0,
     cacheHits: 0
 };
 
-// 限流触发登录事件，避免短时间内多次弹出
+/**
+ * 限流触发登录事件，避免短时间内多次弹出
+ * @type {number}
+ */
 let lastAuthRequiredAt = 0;
 
-// 构建请求去重键（方法+URL+Body）
+/**
+ * 构建请求去重键（方法+URL+Body）
+ * @param {string} url 请求 URL
+ * @param {object} [options={}] 请求选项
+ * @returns {string} 请求键
+ */
 function buildRequestKey(url, options = {}) {
     const method = (options.method || 'GET').toUpperCase();
     let bodyKey = '';
@@ -37,7 +64,10 @@ function buildRequestKey(url, options = {}) {
     return `${method} ${url} ${bodyKey}`;
 }
 
-// 获取去重时间窗口（支持运行时覆盖）
+/**
+ * 获取去重时间窗口（支持运行时覆盖）
+ * @returns {number} 去重时间窗口（毫秒）
+ */
 function getDedupWindowMs() {
     if (window.__APP_SETTINGS?.apiDedupWindowMs !== undefined) {
         return window.__APP_SETTINGS.apiDedupWindowMs;
@@ -45,7 +75,10 @@ function getDedupWindowMs() {
     return CACHE.DEDUP_WINDOW_MS;
 }
 
-// 记录并周期性输出去重统计
+/**
+ * 记录并周期性输出去重统计
+ * @param {boolean} hit 是否命中缓存
+ */
 function recordDedupStats(hit) {
     if (!isDevelopment()) return;
     dedupStats.totalRequests++;
@@ -54,7 +87,7 @@ function recordDedupStats(hit) {
         const hitRate = dedupStats.totalRequests === 0
             ? 0
             : ((dedupStats.cacheHits / dedupStats.totalRequests) * 100).toFixed(1);
-        apiLogger.debug('API去重统计', {
+        apiLogger.debug('API 去重统计', {
             totalRequests: dedupStats.totalRequests,
             cacheHits: dedupStats.cacheHits,
             hitRate: `${hitRate}%`
@@ -62,7 +95,14 @@ function recordDedupStats(hit) {
     }
 }
 
-// 包装 fetch，带重试与统一日志
+/**
+ * 包装 fetch，带重试与统一日志
+ * @param {string} url 请求 URL
+ * @param {object} options 请求选项
+ * @param {number} [retries=3] 重试次数
+ * @param {number} [delay=1000] 重试延迟（毫秒）
+ * @returns {Promise<Response>} fetch 响应
+ */
 async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
     return executeAsync(
         async () => {
@@ -95,7 +135,14 @@ async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
     );
 }
 
-// GET/HEAD 请求的 JSON 去重封装；其他方法走直接请求
+/**
+ * GET/HEAD 请求的 JSON 去重封装；其他方法直接请求
+ * @param {string} url 请求 URL
+ * @param {object} [options={}] 请求选项
+ * @param {number} [retries=3] 重试次数
+ * @param {number} [delay=1000] 重试延迟（毫秒）
+ * @returns {Promise<object>} 解析后的 JSON 数据
+ */
 export async function requestJSONWithDedup(url, options = {}, retries = 3, delay = 1000) {
     const method = (options.method || 'GET').toUpperCase();
     if (method !== 'GET' && method !== 'HEAD') {
@@ -166,12 +213,22 @@ export async function requestJSONWithDedup(url, options = {}, retries = 3, delay
     return requestPromise;
 }
 
-// 通用去重+重试请求（不解析JSON）
+/**
+ * 通用去重+重试请求（不解析 JSON）
+ * @param {string} url 请求 URL
+ * @param {object} [options={}] 请求选项
+ * @param {number} [retries=3] 重试次数
+ * @param {number} [delay=1000] 重试延迟（毫秒）
+ * @returns {Promise<Response>} fetch 响应
+ */
 export async function requestWithDedup(url, options = {}, retries = 3, delay = 1000) {
     return fetchWithRetry(url, options, retries, delay);
 }
 
-// 构建带认证的通用请求头
+/**
+ * 构建带认证的通用请求头
+ * @returns {object} 请求头对象
+ */
 export function getAuthHeaders() {
     const headers = { 'Content-Type': 'application/json' };
     const token = getAuthToken();
@@ -179,12 +236,17 @@ export function getAuthHeaders() {
     return headers;
 }
 
-// 兼容旧实现：当前认证缓存由 api-client 统一维护
+/**
+ * 兼容旧实现：当前认证缓存由 api-client 统一维护
+ */
 export function clearAuthHeadersCache() {
     // 兼容旧实现，当前由 api-client 处理认证缓存
 }
 
-// 刷新认证令牌（若存在），返回是否成功
+/**
+ * 刷新认证令牌（若存在），返回是否成功
+ * @returns {Promise<boolean>} 是否刷新成功
+ */
 export async function refreshAuthToken() {
     try {
         const token = getAuthToken();
@@ -208,7 +270,9 @@ export async function refreshAuthToken() {
     }
 }
 
-// 触发需要认证事件，供全局监听跳转登录
+/**
+ * 触发需要认证事件，供全局监听跳转登录
+ */
 export function triggerAuthRequired() {
     try {
         const now = Date.now();
@@ -220,7 +284,11 @@ export function triggerAuthRequired() {
     } catch {}
 }
 
-// 统一 API 错误处理并提示
+/**
+ * 统一 API 错误处理并提示
+ * @param {Error|Response} error 错误对象或响应
+ * @param {string} context 上下文信息
+ */
 export function handleAPIError(error, context) {
     if (error instanceof Response) {
         switch (error.status) {
@@ -249,4 +317,8 @@ export function handleAPIError(error, context) {
     }
 }
 
+/**
+ * 获取认证令牌
+ * @returns {string|null} 认证令牌或null
+ */
 export { getAuthToken };

@@ -40,14 +40,14 @@ try {
 
   // 检查缓存管理器是否正确加载
   if (typeof self.swCacheManager === 'object' && self.swCacheManager) {
-    console.log('[SW] Cache manager loaded successfully');
+    console.log('[SW] 缓存管理器加载成功');
     // 将构建版本传递给缓存管理器，确保缓存名称一致
     self.swCacheManager.__BUILD_REV = __BUILD_REV;
   } else {
-    console.warn('[SW] Cache manager loaded but interface not found');
+    console.warn('[SW] 缓存管理器已加载但未找到接口');
   }
 } catch (error) {
-  console.warn('[SW] Failed to load cache manager:', error);
+  console.warn('[SW] 缓存管理器加载失败:', error);
 }
 
 // 缓存版本控制（自动随构建更新）
@@ -74,7 +74,7 @@ async function cleanupCache(cacheType) {
       await self.swCacheManager.performLRUCleanup(cacheName, config);
     }
   } catch (error) {
-    console.warn(`[SW] Cache cleanup failed for ${cacheType}:`, error);
+    console.warn(`[SW] 缓存清理失败 ${cacheType}:`, error);
   }
 }
 
@@ -94,6 +94,134 @@ const CORE_ASSETS = [
   // --- 外部资源 ---
 
 ];
+
+const API_CACHE_SEGMENTS = {
+  browse: { ttl: 2 * 60 * 1000 },      // 2 分钟
+  search: { ttl: 90 * 1000 },          // 90 秒
+  generic: { ttl: 60 * 1000 }          // 60 秒
+};
+
+const AUTH_CACHE_TTL_MS = 30 * 1000;    // 登录态缓存 30 秒
+
+const SW_MESSAGE = Object.freeze({
+  CLEAR_API_CACHE: 'CLEAR_API_CACHE',
+  MANUAL_REFRESH: 'MANUAL_REFRESH'
+});
+
+function getActiveBuildRev() {
+  return (typeof __BUILD_REV === 'string' && __BUILD_REV) ? __BUILD_REV : 'dev';
+}
+
+function buildApiCacheName(bucket) {
+  return `api-${getActiveBuildRev()}-${bucket}`;
+}
+
+function hashToken(token) {
+  if (!token) return 'auth';
+  return hashString(token).slice(0, 16);
+}
+
+function getSegmentConfig(segment) {
+  return API_CACHE_SEGMENTS[segment] || API_CACHE_SEGMENTS.generic;
+}
+
+function isCacheExpired(response) {
+  const expiresAt = Number(response.headers.get('x-cache-expires-at') || '0');
+  return expiresAt > 0 && expiresAt <= Date.now();
+}
+
+function getApiCacheContext(request, url, hasAuth, segment = 'generic') {
+  if (!request || request.method !== 'GET') {
+    return null;
+  }
+
+  if (hasAuth) {
+    const authHeader = request.headers.get('Authorization') || request.headers.get('authorization');
+    if (!authHeader) return null;
+    const token = authHeader.split(' ')[1] || authHeader;
+    if (!token) return null;
+    const tokenHash = hashToken(token);
+    return {
+      cacheName: buildApiCacheName(`auth-${tokenHash}`),
+      ttlMs: AUTH_CACHE_TTL_MS
+    };
+  }
+
+  const config = getSegmentConfig(segment);
+  if (!config || !config.ttl || config.ttl <= 0) {
+    return null;
+  }
+
+  return {
+    cacheName: buildApiCacheName(`anon-${segment}`),
+    ttlMs: config.ttl
+  };
+}
+
+async function putApiCachedResponse(cacheName, request, response, ttlMs) {
+  if (!response) return;
+
+  if (self.swCacheManager && typeof self.swCacheManager.putWithLRU === 'function') {
+    await self.swCacheManager.putWithLRU('api', request, response, {
+      cacheName,
+      maxAgeMs: ttlMs
+    });
+    return;
+  }
+
+  const cachedAt = Date.now();
+  const headers = new Headers(response.headers);
+  headers.set('x-cached-at', cachedAt.toString());
+  if (ttlMs && Number.isFinite(ttlMs)) {
+    headers.set('x-cache-expires-at', (cachedAt + ttlMs).toString());
+  }
+
+  const bodyBuffer = await response.clone().arrayBuffer();
+  const wrapped = new Response(bodyBuffer, {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  });
+
+  const cache = await caches.open(cacheName);
+  await cache.put(request, wrapped);
+}
+
+async function networkFirstApi(request, cacheContext, options = {}) {
+  if (!cacheContext) {
+    return fetchDirect(request, options.fallbackResponse);
+  }
+
+  const { cacheName, ttlMs } = cacheContext;
+  const cache = await caches.open(cacheName);
+  let cachedResponse = await cache.match(request);
+
+  if (cachedResponse && isCacheExpired(cachedResponse)) {
+    await cache.delete(request);
+    cachedResponse = null;
+  }
+
+  try {
+    const networkResponse = await fetch(request);
+    if (networkResponse && networkResponse.ok && isCacheableResponse(networkResponse, request)) {
+      await putApiCachedResponse(cacheName, request, networkResponse.clone(), ttlMs);
+    }
+    return networkResponse;
+  } catch (error) {
+    if (cachedResponse) {
+      return cachedResponse;
+    }
+    return options.fallbackResponse || new Response('', { status: 503, statusText: '服务不可用' });
+  }
+}
+
+async function fetchDirect(request, fallbackResponse) {
+  try {
+    return await fetch(request);
+  } catch (error) {
+    return fallbackResponse || new Response('', { status: 503, statusText: '服务不可用' });
+  }
+}
 
 // 检查响应是否适合缓存
 function isCacheableResponse(response, request) {
@@ -201,6 +329,15 @@ self.addEventListener('fetch', event => {
     return;
   }
 
+  // SSE 流式接口：禁止缓存，直接透传网络响应
+  if (url.pathname === '/api/events') {
+    event.respondWith(
+      fetch(new Request(request, { cache: 'no-store' }))
+        .catch(() => new Response('', { status: 503, statusText: '服务不可用' }))
+    );
+    return;
+  }
+
   // A. 认证与设置接口：一律网络直连并禁用缓存
   if (url.pathname.startsWith('/api/auth/')) {
     event.respondWith(fetch(new Request(request, { cache: 'no-store' })));
@@ -230,74 +367,15 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // 1. /api/search 采用网络优先
+  // 1. /api/search 采用网络优先 + 细化缓存控制
   if (url.pathname.startsWith('/api/search')) {
-    // 携带 Authorization 时不参与 SW 缓存，避免将私人响应写入共享缓存
-    if (hasAuth) {
-      event.respondWith(fetch(request));
-      return;
-    }
-    event.respondWith(
-      fetch(request)
-        .then(response => {
-          if (isCacheableResponse(response, request)) {
-            const responseForCache = response.clone();
-
-            if (self.swCacheManager && typeof self.swCacheManager.putWithLRU === 'function') {
-              self.swCacheManager.putWithLRU('api', request, responseForCache).catch(() => {});
-            } else {
-              caches.open(API_CACHE_VERSION)
-                .then(cache => cache.put(request, responseForCache))
-                .then(() => cleanupCache('api'))
-                .catch(() => {});
-            }
-
-            return response;
-          }
-          return response;
-        })
-        .catch(() => caches.match(request).then(r => r || new Response('', { status: 503, statusText: '服务不可用' })))
-    );
+    event.respondWith(handleSearchRequest(request, url, hasAuth));
     return;
   }
 
-  // 2. /api/browse/ 采用网络优先 + 短 SWR（仅缓存 200）
+  // 2. /api/browse/ 采用网络优先 + 细化缓存控制
   if (url.pathname.startsWith('/api/browse/')) {
-    // 对于非GET请求（如POST /api/browse/viewed），直接转发不缓存
-    if (request.method !== 'GET') {
-      event.respondWith(
-        fetch(request)
-          .then(response => response)
-          .catch(() => new Response('', { status: 503, statusText: '服务不可用' }))
-      );
-      return;
-    }
-    if (hasAuth) {
-      event.respondWith(fetch(request));
-      return;
-    }
-    
-    // 对于GET请求，采用网络优先策略，并为 200 响应写入短期缓存
-    event.respondWith(
-      fetch(request)
-        .then(networkResponse => {
-          if (networkResponse.status === 200 && isCacheableResponse(networkResponse, request)) {
-            const responseForCache = networkResponse.clone();
-            return caches.open(API_CACHE_VERSION)
-              .then(cache => cache.put(request, responseForCache))
-              .then(() => {
-                cleanupCache('api');
-                return networkResponse;
-              });
-          }
-          return networkResponse;
-        })
-        .catch(error => {
-          console.warn('浏览 API 的网络请求失败:', error);
-          // SWR：返回缓存（若有），无缓存则 503
-          return caches.match(request).then(r => r || new Response('', { status: 503, statusText: '服务不可用' }));
-        })
-    );
+    event.respondWith(handleBrowseRequest(request, url, hasAuth));
     return;
   }
 
@@ -334,37 +412,9 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // 4. 其他 /api/ 采用缓存优先+后台更新（SWR，不包括 /api/search/thumbnail）
+  // 4. 其他 /api/ 采用网络优先 + 细化缓存控制
   if (url.pathname.startsWith('/api/')) {
-    if (request.method !== 'GET') {
-      event.respondWith(
-        fetch(request)
-          .then(response => response)
-          .catch(() => new Response('', { status: 503, statusText: '服务不可用' }))
-      );
-      return;
-    }
-    if (hasAuth) {
-      // 携带 Authorization 的请求完全绕过缓存
-      event.respondWith(fetch(request));
-      return;
-    }
-    event.respondWith(
-      caches.open(API_CACHE_VERSION).then(cache => {
-        return cache.match(request).then(response => {
-          const fetchPromise = fetch(request).then(networkResponse => {
-            if (networkResponse.ok && isCacheableResponse(networkResponse, request)) {
-              const responseForCache = networkResponse.clone();
-              cache.put(request, responseForCache).catch(err => {
-                console.warn('API 响应缓存失败:', err);
-              });
-            }
-            return networkResponse;
-          }).catch(() => new Response('', { status: 503, statusText: '服务不可用' }));
-          return response || fetchPromise;
-        });
-      })
-    );
+    event.respondWith(handleGenericApiRequest(request, url, hasAuth));
     return;
   }
 
@@ -484,6 +534,30 @@ self.addEventListener('sync', event => {
     }
 });
 
+async function handleSearchRequest(request, url, hasAuth) {
+  if (request.method !== 'GET') {
+    return fetchDirect(request);
+  }
+  const context = getApiCacheContext(request, url, !!hasAuth, 'search');
+  return networkFirstApi(request, context);
+}
+
+async function handleBrowseRequest(request, url, hasAuth) {
+  if (request.method !== 'GET') {
+    return fetchDirect(request);
+  }
+  const context = getApiCacheContext(request, url, !!hasAuth, 'browse');
+  return networkFirstApi(request, context);
+}
+
+async function handleGenericApiRequest(request, url, hasAuth) {
+  if (request.method !== 'GET') {
+    return fetchDirect(request);
+  }
+  const context = getApiCacheContext(request, url, !!hasAuth, 'generic');
+  return networkFirstApi(request, context);
+}
+
 function syncFailedRequests() {
     return openDb().then(db => {
         const tx = db.transaction(STORE_NAME, 'readonly');
@@ -532,20 +606,45 @@ function openDb() {
 }
 
 // 5. 监听手动刷新消息，清除 API 缓存
+async function clearApiCacheBuckets(scope = 'all', tokenHash = null) {
+    const buildPrefix = `api-${getActiveBuildRev()}`;
+    const cacheKeys = await caches.keys();
+
+    const shouldDelete = (name) => {
+        if (!name.startsWith(buildPrefix)) return false;
+        if (scope === 'all') return true;
+        if (scope === 'anon') return name.includes('-anon-');
+        if (scope === 'auth') {
+            if (tokenHash) {
+                return name.includes(`-auth-${tokenHash}`);
+            }
+            return name.includes('-auth-');
+        }
+        if (scope === 'bucket' && tokenHash) {
+            return name.endsWith(`-${tokenHash}`);
+        }
+        return false;
+    };
+
+    await Promise.all(cacheKeys.filter(shouldDelete).map(name => caches.delete(name)));
+
+    if (self.swCacheManager && typeof self.swCacheManager.manualCleanup === 'function') {
+        try { await self.swCacheManager.manualCleanup('api'); } catch {}
+    }
+}
+
 self.addEventListener('message', event => {
-    if (event.data && event.data.type === 'MANUAL_REFRESH') {
+    if (!event.data || typeof event.data !== 'object') return;
+    const { type, scope, tokenHash } = event.data;
+    if (type === SW_MESSAGE.CLEAR_API_CACHE) {
+        event.waitUntil(clearApiCacheBuckets(scope || 'all', tokenHash || null));
+        return;
+    }
+    if (type === SW_MESSAGE.MANUAL_REFRESH) {
         console.log('Service Worker: 手动刷新 API 数据已触发');
         event.waitUntil(
             (async () => {
-                // 清理与 API 相关的所有缓存（含搜索专用缓存）
-                const keys = await caches.keys();
-                await Promise.all(keys.map(k => {
-                    if (k === API_CACHE_VERSION || k === THUMBNAIL_CACHE_VERSION || k.startsWith('api-') || k.startsWith('thumb-')) {
-                        return caches.delete(k);
-                    }
-                }));
-                console.log('Service Worker: API 缓存已清除');
-                // 只清理被清除的缓存类型
+                await clearApiCacheBuckets('all');
                 cleanupCache('api');
                 cleanupCache('thumbnail');
             })()
