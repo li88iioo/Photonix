@@ -13,7 +13,8 @@ body {
 html {
     overflow-y: scroll;
     scrollbar-gutter: stable;
-    scroll-behavior: smooth;
+    /* ✅ 移除全局平滑滚动 - 路由切换时造成回弹 */
+    /* scroll-behavior: smooth; */
 }
 
 /* 移动端需要原生下拉刷新：默认允许 overscroll；仅桌面端抑制回弹 */
@@ -46,7 +47,6 @@ html, body {
     html { scroll-behavior: auto; }
 }
 
-/* === 增强的加载动画优化 === */
 
 /* 智能加载指示器 */
 .smart-loading {
@@ -204,7 +204,6 @@ html, body {
     50% { transform: scaleY(2); }
 }
 
-/* === 增强的平滑滚动优化 === */
 
 /* 平滑滚动容器 */
 .smooth-scroll-container {
@@ -436,10 +435,12 @@ body { font-family: 'Noto Sans SC', sans-serif; }
     position: relative;
 }
 #content-grid.grid-mode {
-    position: relative;
+    position: relative !important;
     display: grid !important;
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: 1rem;
+    /* ✅ 强制覆盖瀑布流可能设置的容器高度 */
+    height: auto !important;
 }
 #content-grid.grid-mode .grid-item {
     margin: 0 !important;
@@ -447,6 +448,9 @@ body { font-family: 'Noto Sans SC', sans-serif; }
     left: auto !important;
     top: auto !important;
     width: auto !important;
+    height: auto !important;
+    /* ✅ 清除瀑布流可能设置的transform */
+    transform: none !important;
     /* 覆盖瀑布流的虚拟高度，避免高度错乱 */
     content-visibility: visible !important;
     contain-intrinsic-size: auto !important;
@@ -1117,10 +1121,28 @@ body.modal-open .topbar {
   --sg-surface-shadow: 0 8px 20px rgba(0,0,0,0.22);
 }
 
-/* 由于顶栏 fixed，需要为页面内容预留顶部内边距，避免首屏被遮挡
-   使用 CSS 变量动态设置，避免不同布局高度造成遮挡 */
-.with-fixed-topbar .container { padding-top: var(--topbar-offset, 96px); }
-.with-fixed-topbar #page-inner { padding-top: var(--topbar-offset, 96px); }
+/* ✅ 修复：为页面内容预留顶部内边距，避免被topbar遮挡 */
+/* 使用 CSS 变量动态设置，并添加!important确保优先级 */
+.with-fixed-topbar .container { 
+    padding-top: var(--topbar-offset, 96px) !important; 
+}
+.with-fixed-topbar #page-inner { 
+    padding-top: var(--topbar-offset, 96px) !important;
+    padding-bottom: 0.5rem;  /* 8px */
+}
+
+/* 响应式底部间距 */
+@media (min-width: 640px) {
+    .with-fixed-topbar #page-inner {
+        padding-bottom: 1rem;  /* 16px */
+    }
+}
+
+@media (min-width: 768px) {
+    .with-fixed-topbar #page-inner {
+        padding-bottom: 2rem;  /* 32px */
+    }
+}
 .topbar-inner {
   width: 100%;
   margin: 0 auto;
@@ -1714,15 +1736,83 @@ body.modal-open #back-to-top-btn.visible {
     }
 }
 
-/* === 【新增】页面过渡动画样式 === */
+/* ✅ 移除过渡动画 - 局域网环境加载快速，不需要过渡掩饰，反而造成闪烁 */
+/* 注释掉所有过渡，实现即时切换 */
+/*
+#content-grid {
+    transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 #content-grid.grid-leaving {
     opacity: 0;
-    transition: opacity 0.15s ease-in;
+    transition: opacity 0.15s cubic-bezier(0.4, 0, 1, 1);
 }
 
 #content-grid.grid-entering {
     opacity: 1;
-    transition: opacity 0.2s ease-out;
+    transition: opacity 0.2s cubic-bezier(0, 0, 0.2, 1);
+}
+*/
+
+/* ===== 骨架屏已完全移除，使用极简加载器替代 ===== */
+
+/* ===== 极简中心加载指示器（替代骨架屏） ===== */
+.minimal-loader {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    min-height: 400px;
+    opacity: 1;
+    /* transition: opacity 0.2s ease-out; */ /* ✅ 移除过渡，避免闪现 */
+}
+
+.minimal-loader-spinner {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.minimal-loader-spinner span {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #8B5CF6;
+    animation: minimal-wave 1.4s ease-in-out infinite;
+}
+
+.minimal-loader-spinner span:nth-child(1) {
+    animation-delay: -0.32s;
+}
+
+.minimal-loader-spinner span:nth-child(2) {
+    animation-delay: -0.16s;
+}
+
+.minimal-loader-spinner span:nth-child(3) {
+    animation-delay: 0s;
+}
+
+.minimal-loader-text {
+    margin-top: 20px;
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+}
+
+@keyframes minimal-wave {
+    0%, 60%, 100% {
+        transform: translateY(0) scale(1);
+        opacity: 0.6;
+    }
+    30% {
+        transform: translateY(-12px) scale(1.1);
+        opacity: 1;
+    }
 }
 
 
@@ -3420,7 +3510,6 @@ body.settings-open {
     }
 }
 
-/* ===== 无限滚动加载器优化 - 避免重排抖动 ===== */
 
 /* 优化后的加载器容器：始终占据空间，避免重排 */
 #infinite-scroll-loader-container {

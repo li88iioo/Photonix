@@ -30,6 +30,24 @@ function notifyServiceWorker(message) {
 }
 
 /**
+ * 清除存储的认证token
+ * 用于token失效、注销等场景
+ */
+export function clearAuthToken() {
+    try {
+        localStorage.removeItem('photonix_auth_token');
+        authLogger.debug('认证token已清除');
+        
+        // 通知 Service Worker 清除token
+        notifyServiceWorker({ 
+            type: SW_MESSAGE.CLEAR_TOKEN 
+        });
+    } catch (error) {
+        authLogger.warn('清除token失败', { error: error && error.message });
+    }
+}
+
+/**
  * 初始化用户认证
  * 检查本地存储中的用户ID，如果不存在则生成新的UUID
  * @returns {string} 用户的唯一ID
@@ -68,6 +86,28 @@ export async function checkAuthStatus() {
         });
         
         clearTimeout(timeoutId);
+        
+        // ✅ 修复：检测到token无效时，自动清除并重试
+        if (response.status === 401 && token) {
+            authLogger.warn('Token无效或已过期，自动清除并重试');
+            clearAuthToken();  // 清除无效token
+            clearAuthHeadersCache();  // 清除API缓存
+            
+            // 重新请求，不带token
+            try {
+                const retryResponse = await fetch('/api/auth/status');
+                if (!retryResponse.ok) {
+                    if (retryResponse.status === 404) {
+                        return { passwordEnabled: false };
+                    }
+                    throw new Error(`Auth status check failed: ${retryResponse.status}`);
+                }
+                return await retryResponse.json();
+            } catch (retryError) {
+                authLogger.error('重试认证状态检查失败', retryError);
+                throw retryError;
+            }
+        }
         
         if (!response.ok) {
             if (response.status === 404) {

@@ -64,6 +64,20 @@ const { runPreparedBatchWithRetry } = require('../db/sqlite-retry');
                 }, { mode: 'IMMEDIATE' });
                 
                 logger.debug(`批量更新了 ${pathsToUpdate.length} 个路径的查看时间 for user ${userId}`);
+                
+                // ✅ 长期优化1: 异步更新Redis浏览记录缓存
+                try {
+                    const { incrementalUpdateCache } = require('../services/viewedCache.service');
+                    const currentTimestamp = Date.now();
+                    // 异步更新缓存，不阻塞主流程
+                    pathsToUpdate.forEach(p => {
+                        incrementalUpdateCache(userId, p, currentTimestamp).catch(err => {
+                            logger.debug(`[历史线程] 缓存更新失败（忽略）: ${err.message}`);
+                        });
+                    });
+                } catch (cacheError) {
+                    logger.debug(`[历史线程] 缓存服务不可用: ${cacheError.message}`);
+                }
 
                 // 清理缓存的逻辑 - 从旧版本迁移的重要功能
                 const parentDirectoriesToClear = pathsToUpdate.map(p => path.dirname(p)).map(p => p === '.' ? '' : p);

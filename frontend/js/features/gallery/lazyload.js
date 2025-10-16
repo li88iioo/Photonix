@@ -1004,3 +1004,4 @@ export function reobserveImage(img) {
         globalImageObserver.observe(img);
     }
 }
+

@@ -6,7 +6,7 @@
 import { state, clearExpiredAlbumTombstones } from './core/state.js';
 import { initializeAuth, showLoginScreen, getAuthToken, removeAuthToken, checkAuthStatus } from './app/auth.js';
 import { fetchSettings, clearAuthHeadersCache } from './app/api.js';
-import { showSkeletonGrid } from './features/gallery/loading-states.js';
+import { showMinimalLoader } from './features/gallery/loading-states.js';
 import { showNotification } from './shared/utils.js';
 import { initializeSSE } from './app/sse.js';
 import { setupEventListeners } from './features/gallery/listeners.js';
@@ -169,7 +169,7 @@ function startMainApp() {
     if (appStarted) return;
     appStarted = true;
 
-    showSkeletonGrid();
+    showMinimalLoader({ text: '初始化中...' });
     initializeSSE();
     initializeUI();
 

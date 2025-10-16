@@ -229,6 +229,51 @@ export function createSortArrow(isAscending = true) {
 }
 
 /**
+ * 创建返回箭头SVG（用于面包屑导航）
+ * @param {object} options - 配置选项
+ * @param {string} options.width - 宽度
+ * @param {string} options.height - 高度
+ * @param {string} options.marginRight - 右边距
+ * @returns {SVGSVGElement} 返回箭头SVG元素
+ */
+export function createBackArrow({
+    width = '16',
+    height = '16',
+    marginRight = '4px'
+} = {}) {
+    const svg = createSVGElement('svg', {
+        width,
+        height,
+        viewBox: '0 0 24 24',
+        fill: 'none',
+        stroke: 'currentColor',
+        'stroke-width': '2.5',
+        'stroke-linecap': 'round',
+        'stroke-linejoin': 'round'
+    });
+    
+    if (marginRight) {
+        svg.style.marginRight = marginRight;
+    }
+
+    const line = createSVGElement('line', {
+        x1: '19',
+        y1: '12',
+        x2: '5',
+        y2: '12'
+    });
+
+    const polyline = createSVGElement('polyline', {
+        points: '12 19 5 12 12 5'
+    });
+
+    svg.appendChild(line);
+    svg.appendChild(polyline);
+
+    return svg;
+}
+
+/**
  * 创建通用SVG图标
  * @param {object} config - 图标配置
  * @param {string} config.viewBox - viewBox属性

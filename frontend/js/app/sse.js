@@ -281,6 +281,15 @@ async function streamWithAuth(token) {
             signal: controller.signal,
         });
 
+        // 检测到 401（认证失败）时，清除本地无效 token 并触发登录流程，不再尝试重连
+        if (response.status === 401) {
+            sseLog('SSE 认证失败（401），清除无效 token');
+            localStorage.removeItem('photonix_auth_token');
+            // 触发 auth:required 事件，通知应用显示登录页
+            window.dispatchEvent(new CustomEvent('auth:required'));
+            return; // 停止重试
+        }
+
         if (!response.ok || !response.body) {
             throw new Error(`HTTP ${response.status}`);
         }

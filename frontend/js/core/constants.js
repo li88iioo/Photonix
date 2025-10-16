@@ -20,7 +20,7 @@ export const VIRTUAL_SCROLL = {
     MIN_BUFFER_SIZE: 6,                 // 最小缓冲区大小
     MAX_BUFFER_SIZE: 30,                // 最大缓冲区大小
     RESIZE_DEBOUNCE_DELAY: 16,          // 调整大小防抖延迟（毫秒）
-    THRESHOLD: 100,                     // 虚拟滚动启用阈值（项目数量）
+    THRESHOLD: 200,                     // ✅ 虚拟滚动启用阈值（项目数量） - 提升至200优化内存
 };
 
 /**

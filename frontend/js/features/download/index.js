@@ -357,17 +357,7 @@ function startAutoRefresh() {
 }
 
 async function ensureAdminSecret(forcePrompt = false) {
-  // 优先检查是否有有效的Token
-  if (!forcePrompt) {
-    const hasToken = await hasValidAuth();
-    if (hasToken) {
-      setAdminSecret('TOKEN_AUTH'); // 标记使用Token认证
-      markAdminVerified();
-      return 'TOKEN_AUTH';
-    }
-  }
-
-  // 向后兼容：检查是否有存储的密钥
+  // 检查是否有存储的管理员密钥
   if (!forcePrompt && downloadState.adminSecret && isVerificationFresh(downloadState.lastVerifiedAt)) {
     // 如果是Token认证，尝试刷新
     if (downloadState.adminSecret === 'TOKEN_AUTH') {

@@ -62,62 +62,74 @@ let virtualScroller = null;
 
 /**
  * 增量瀑布流布局，仅布局新添加的项目
+ * 优化版：批量处理新项目
  * @param {Array|NodeList} newItems 新添加的项目数组
  */
 export function applyMasonryLayoutIncremental(newItems) {
     const { contentGrid } = elements;
     if (!safeClassList(contentGrid, 'contains', 'masonry-mode')) return;
     if (!newItems || newItems.length === 0) return;
-    if (isLayingOut) return; // 正在布局时丢弃本次请求
+    if (isLayingOut) return;
 
     isLayingOut = true;
     try {
         const numColumns = getMasonryColumns();
         const columnGap = getMasonryConfig('COLUMN_GAP');
 
-        // 首次加载或列数变化，重置所有列高度并全量布局
+        // 首次加载或列数变化，调用全量布局
         if (!masonryColumnHeights.length || contentGrid.children.length === newItems.length) {
-            masonryColumnHeights = Array(numColumns).fill(0);
-            Array.from(contentGrid.children).forEach(item => {
-                const itemWidth = (contentGrid.offsetWidth - (numColumns - 1) * columnGap) / numColumns;
-                const minColumnIndex = masonryColumnHeights.indexOf(Math.min(...masonryColumnHeights));
-                // 设置项目位置和尺寸
-                safeSetStyle(item, {
-                    position: 'absolute',
-                    width: `${itemWidth}px`,
-                    left: `${minColumnIndex * (itemWidth + columnGap)}px`,
-                    top: `${masonryColumnHeights[minColumnIndex]}px`
-                });
-                // 更新列高度
-                const actualItemHeight = getExpectedItemHeight(item, itemWidth);
-                safeSetStyle(item, 'height', `${actualItemHeight}px`);
-                masonryColumnHeights[minColumnIndex] += actualItemHeight + columnGap;
-            });
-        } else {
-            // 增量布局：只布局新项目
-            newItems.forEach(item => {
-                const itemWidth = (contentGrid.offsetWidth - (numColumns - 1) * columnGap) / numColumns;
-                const minColumnIndex = masonryColumnHeights.indexOf(Math.min(...masonryColumnHeights));
-                safeSetStyle(item, {
-                    position: 'absolute',
-                    width: `${itemWidth}px`,
-                    left: `${minColumnIndex * (itemWidth + columnGap)}px`,
-                    top: `${masonryColumnHeights[minColumnIndex]}px`
-                });
-                const actualItemHeight = getExpectedItemHeight(item, itemWidth);
-                safeSetStyle(item, 'height', `${actualItemHeight}px`);
-                masonryColumnHeights[minColumnIndex] += actualItemHeight + columnGap;
-            });
+            isLayingOut = false; // 释放锁，让全量布局接管
+            applyMasonryLayout();
+            return;
+        }
 
-            // 增量布局时也触发可见图片懒加载（减少频率）
+        // ✅ 增量布局：批量处理新项目
+        const containerWidth = contentGrid.offsetWidth;
+        const itemWidth = (containerWidth - (numColumns - 1) * columnGap) / numColumns;
+        
+        // 预读新项目的期望高度
+        const itemsData = Array.from(newItems).map(item => {
+            const expectedHeight = getExpectedItemHeight(item, itemWidth);
+            return { item, expectedHeight };
+        });
+        
+        // 计算新项目位置
+        const positions = itemsData.map(({ item, expectedHeight }) => {
+            const minColumnIndex = masonryColumnHeights.indexOf(Math.min(...masonryColumnHeights));
+            const position = {
+                left: minColumnIndex * (itemWidth + columnGap),
+                top: masonryColumnHeights[minColumnIndex],
+                width: itemWidth,
+                height: expectedHeight
+            };
+            masonryColumnHeights[minColumnIndex] += expectedHeight + columnGap;
+            return position;
+        });
+        
+        // 批量应用样式
+        requestAnimationFrame(() => {
+            Array.from(newItems).forEach((item, index) => {
+                const pos = positions[index];
+                item.style.cssText = `
+                    position: absolute;
+                    width: ${pos.width}px;
+                    height: ${pos.height}px;
+                    transform: translate3d(${pos.left}px, ${pos.top}px, 0);
+                    will-change: transform;
+                `;
+            });
+            
+            // 更新容器高度
+            safeSetStyle(contentGrid, 'height', `${Math.max(...masonryColumnHeights)}px`);
+            
+            // 触发懒加载
             setTimeout(() => {
                 if (!document.querySelector('.lazy-image[style*="opacity"]')) {
                     triggerVisibleImagesLazyLoad();
                 }
-            }, getMasonryConfig('LAZY_LOAD_DELAY'));
-        }
-        // 设置容器高度为最高列的高度
-        safeSetStyle(contentGrid, 'height', `${Math.max(...masonryColumnHeights)}px`);
+            }, 50);
+        });
+        
     } finally {
         isLayingOut = false;
     }
@@ -125,6 +137,7 @@ export function applyMasonryLayoutIncremental(newItems) {
 
 /**
  * 全量瀑布流布局，用于窗口变化或首次加载时
+ * 优化版：批量读取-计算-写入，避免layout thrashing
  */
 export function applyMasonryLayout() {
     const { contentGrid } = elements;
@@ -135,34 +148,65 @@ export function applyMasonryLayout() {
     if (items.length === 0) return;
 
     isLayingOut = true;
+    
     try {
         const numColumns = getMasonryColumns();
         const columnGap = getMasonryConfig('COLUMN_GAP');
         masonryColumnHeights = Array(numColumns).fill(0);
-        items.forEach(item => {
-            const itemWidth = (contentGrid.offsetWidth - (numColumns - 1) * columnGap) / numColumns;
-            const minColumnIndex = masonryColumnHeights.indexOf(Math.min(...masonryColumnHeights));
-            safeSetStyle(item, {
-                position: 'absolute',
-                width: `${itemWidth}px`,
-                left: `${minColumnIndex * (itemWidth + columnGap)}px`,
-                top: `${masonryColumnHeights[minColumnIndex]}px`
-            });
-            const actualItemHeight = getExpectedItemHeight(item, itemWidth);
-            safeSetStyle(item, 'height', `${actualItemHeight}px`);
-            masonryColumnHeights[minColumnIndex] += actualItemHeight + columnGap;
+        
+        // ✅ 阶段1: 批量读取所有尺寸（触发单次reflow）
+        const containerWidth = contentGrid.offsetWidth;
+        const itemWidth = (containerWidth - (numColumns - 1) * columnGap) / numColumns;
+        
+        // 预读所有元素的期望高度
+        const itemsData = items.map(item => {
+            const expectedHeight = getExpectedItemHeight(item, itemWidth);
+            return { item, expectedHeight };
         });
-
-        safeSetStyle(contentGrid, 'height', `${Math.max(...masonryColumnHeights)}px`);
-
-        // 虚拟滚动模式下触发可见图片懒加载
-        setTimeout(() => {
-            const hasVirtualScrollMode = safeClassList(contentGrid, 'contains', 'virtual-scroll-mode');
-            const hasUnloadedImages = contentGrid.querySelector('.lazy-image:not(.loaded)');
-            if (hasVirtualScrollMode && hasUnloadedImages) {
-                triggerVisibleImagesLazyLoad();
-            }
-        }, getMasonryConfig('LAYOUT_DELAY'));
+        
+        // ✅ 阶段2: 纯计算阶段（无DOM操作）
+        const positions = itemsData.map(({ item, expectedHeight }) => {
+            const minColumnIndex = masonryColumnHeights.indexOf(Math.min(...masonryColumnHeights));
+            const position = {
+                left: minColumnIndex * (itemWidth + columnGap),
+                top: masonryColumnHeights[minColumnIndex],
+                width: itemWidth,
+                height: expectedHeight
+            };
+            masonryColumnHeights[minColumnIndex] += expectedHeight + columnGap;
+            return position;
+        });
+        
+        // ✅ 阶段3: 使用requestAnimationFrame批量写入（单次reflow）
+        requestAnimationFrame(() => {
+            // 使用transform代替top/left以利用GPU加速
+            items.forEach((item, index) => {
+                const pos = positions[index];
+                
+                // 使用cssText批量设置样式，减少重排
+                item.style.cssText = `
+                    position: absolute;
+                    width: ${pos.width}px;
+                    height: ${pos.height}px;
+                    transform: translate3d(${pos.left}px, ${pos.top}px, 0);
+                    will-change: transform;
+                `;
+            });
+            
+            // 设置容器高度
+            const maxHeight = Math.max(...masonryColumnHeights);
+            safeSetStyle(contentGrid, 'height', `${maxHeight}px`);
+            
+            // 触发懒加载（延迟以优化性能）
+            setTimeout(() => {
+                const hasVirtualScrollMode = safeClassList(contentGrid, 'contains', 'virtual-scroll-mode');
+                const hasUnloadedImages = contentGrid.querySelector('.lazy-image:not(.loaded)');
+                if (hasVirtualScrollMode && hasUnloadedImages) {
+                    triggerVisibleImagesLazyLoad();
+                }
+            }, 50); // 减少延迟到50ms
+        });
+        
     } finally {
         isLayingOut = false;
     }

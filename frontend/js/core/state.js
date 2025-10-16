@@ -97,6 +97,7 @@ const appStateStore = map({
     scrollPositionBeforeModal: null,
     activeThumbnail: null,
     preSearchHash: '#/',
+    fromSearchHash: null,
 
     // 滚动位置缓存
     scrollPositions: new Map(),
@@ -319,7 +320,7 @@ const ALLOWED_STATE_KEYS = new Set([
     'captionDebounceTimer', 'currentAbortController', 'searchDebounceTimer',
 
     // 媒体和 URL 状态
-    'currentObjectURL', 'scrollPositionBeforeModal', 'activeThumbnail', 'preSearchHash',
+    'currentObjectURL', 'scrollPositionBeforeModal', 'activeThumbnail', 'preSearchHash', 'fromSearchHash',
 
     // 滚动位置缓存
     'scrollPositions',

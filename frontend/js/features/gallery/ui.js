@@ -9,7 +9,7 @@ import { getAllViewed } from '../../shared/indexeddb-helper.js';
 import { applyMasonryLayout, triggerMasonryUpdate } from './masonry.js';
 import { MATH, UI } from '../../core/constants.js';
 import { uiLogger } from '../../core/logger.js';
-import { createProgressCircle, createPlayButton, createGridIcon, createMasonryIcon, createSortArrow, createDeleteIcon } from '../../shared/svg-utils.js';
+import { createProgressCircle, createPlayButton, createGridIcon, createMasonryIcon, createSortArrow, createDeleteIcon, createBackArrow } from '../../shared/svg-utils.js';
 import { elements } from '../../shared/dom-elements.js';
 import { safeSetInnerHTML, safeClassList, safeSetStyle, safeCreateElement, safeGetElementById, safeQuerySelectorAll } from '../../shared/dom-utils.js';
 
@@ -56,27 +56,73 @@ function formatTime(timestamp) {
 }
 
 /**
+ * 智能排序缓存（避免频繁查询IndexedDB）
+ */
+let sortCache = {
+	viewedPaths: null,
+	timestamp: 0,
+	CACHE_TTL: 30000 // ✅ 优化3: 5秒 → 30秒缓存有效期
+};
+
+/**
  * 根据已查看状态对相册进行排序
- * 仅在 sort=smart 时生效
+ * 优化版：避免与后端排序冲突，仅在必要时执行
+ * 
+ * 排序逻辑说明：
+ * - smart + 根目录：后端按时间排序 + 前端按查看状态分组（未查看优先）
+ * - smart + 子目录：后端已按浏览时间排序，前端跳过（避免冲突）
+ * - viewed_desc：后端已排序，前端辅助增强
+ * - name/mtime：后端完全处理，前端跳过
  */
 export async function sortAlbumsByViewed() {
 	const hash = window.location.hash;
 	const questionMarkIndex = hash.indexOf('?');
 	const urlParams = new URLSearchParams(questionMarkIndex !== -1 ? hash.substring(questionMarkIndex) : '');
 	const currentSort = urlParams.get('sort') || 'smart';
-	if (currentSort !== 'smart') return;
-	const viewedAlbumsData = await getAllViewed();
-	const viewedAlbumPaths = viewedAlbumsData.map(item => item.path);
+	
+	// ✅ 优化2: viewed_desc也启用前端增强排序
+	const shouldSort = currentSort === 'smart' || currentSort === 'viewed_desc';
+	if (!shouldSort) return;
+	
+	// ✅ 优化1: 检测是否为子目录（后端已处理浏览排序，避免冲突）
+	const pathPart = hash.split('?')[0].substring(2); // 移除 '#/'
+	const isSubdirectory = pathPart.length > 0;
+	
+	// smart模式下，子目录已由后端排序，前端跳过（避免冲突和性能浪费）
+	if (currentSort === 'smart' && isSubdirectory) {
+		return;
+	}
+	
+	// 使用30秒缓存，避免频繁查询IndexedDB
+	const now = Date.now();
+	if (!sortCache.viewedPaths || now - sortCache.timestamp > sortCache.CACHE_TTL) {
+		const viewedAlbumsData = await getAllViewed();
+		sortCache.viewedPaths = viewedAlbumsData.map(item => item.path);
+		sortCache.timestamp = now;
+	}
+	
+	const viewedAlbumPaths = sortCache.viewedPaths;
 	const albumElements = Array.from(safeQuerySelectorAll('.album-link'));
+	
+	// 如果没有相册元素，直接返回
+	if (albumElements.length === 0) return;
+	
+	// 排序：未查看的相册排在前面
 	albumElements.sort((a, b) => {
 		const viewedA = viewedAlbumPaths.includes(a.dataset.path);
 		const viewedB = viewedAlbumPaths.includes(b.dataset.path);
-		if (viewedA && !viewedB) return 1;
-		if (!viewedA && viewedB) return -1;
-		return 0;
+		if (viewedA && !viewedB) return 1;  // 已查看后置
+		if (!viewedA && viewedB) return -1; // 未查看前置
+		return 0; // 同类保持原序（后端排序）
 	});
-	const grid = elements.contentGrid; if (!grid) return;
-	albumElements.forEach(el => grid.appendChild(el));
+	
+	const grid = elements.contentGrid;
+	if (!grid) return;
+	
+	// 使用DocumentFragment批量插入，避免多次reflow
+	const fragment = document.createDocumentFragment();
+	albumElements.forEach(el => fragment.appendChild(el));
+	grid.appendChild(fragment); // 单次DOM操作，触发1次reflow
 }
 
 /**
@@ -105,6 +151,20 @@ export function renderBreadcrumb(path) {
 		breadcrumbNav.append(breadcrumbLinks, sortContainer);
 	}
 	const container = createElement('div', { classes: ['flex', 'flex-wrap', 'items-center'] });
+	
+	// 如果来自搜索页，添加"返回搜索"链接
+	if (state.fromSearchHash) {
+		const searchLink = createElement('a', { 
+			classes: ['text-purple-400', 'hover:text-purple-300', 'flex', 'items-center'],
+			attributes: { href: state.fromSearchHash, title: '返回搜索结果' }
+		});
+		searchLink.appendChild(createBackArrow());
+		searchLink.appendChild(document.createTextNode('搜索'));
+		
+		container.appendChild(searchLink);
+		container.appendChild(createElement('span', { classes: ['mx-2', 'text-gray-500'], textContent: '|' }));
+	}
+	
 	container.appendChild(createElement('a', { classes: ['text-purple-400', 'hover:text-purple-300'], attributes: { href: `#/${sortParam}` }, textContent: '首页' }));
 	parts.forEach((part, index) => {
 		currentPath += (currentPath ? '/' : '') + part;
@@ -670,52 +730,61 @@ function createLayoutToggle() {
 		btn.appendChild(tooltipSpan);
 		btn.setAttribute('aria-pressed', isGrid ? 'true' : 'false');
 	}
-	const clickHandler = () => {
-		try {
-			const current = state.layoutMode;
-			const next = current === 'grid' ? 'masonry' : 'grid';
-			state.update('layoutMode', next);
-			try { localStorage.setItem('sg_layout_mode', next); } catch {}
-		} catch (error) {
-			uiLogger.error('切换布局模式出错', error);
-		}
-	};
-	btn.addEventListener('click', clickHandler);
+	// 不再直接绑定事件，改用事件委托（在 listeners.js 中处理）
+	// 这样可以避免按钮重新创建时事件丢失的问题
 	updateLabel();
 	wrap.appendChild(btn);
 	return { container: wrap, button: btn };
 }
 
 /**
- * 应用当前布局模式到内容容器
+ * 应用当前布局模式到内容容器。
+ * 
+ * 此函数根据 `state.layoutMode` 的值，将内容容器（grid）切换为“网格”或“瀑布流”布局，并相应管理样式与布局逻辑。
  */
 export function applyLayoutMode() {
 	const grid = elements.contentGrid;
 	if (!grid) return;
 	const mode = state.layoutMode;
+
 	if (mode === 'grid') {
+		// 切换至网格模式
+
+		// 1. 移除瀑布流模式的类
 		safeClassList(grid, 'remove', 'masonry-mode');
-		safeClassList(grid, 'add', 'grid-mode');
-		// 清除瀑布流产生的内联样式
+
+		// 2. 移除所有子元素的内联样式
 		Array.from(grid.children).forEach(item => {
-			safeSetStyle(item, {
-				position: '',
-				width: '',
-				left: '',
-				top: ''
-			});
+			item.removeAttribute('style');
 		});
-		safeSetStyle(grid, 'height', '');
-		// 清理瀑布流写入的高度，避免影响网格模式布局
-		Array.from(grid.children).forEach(item => { safeSetStyle(item, 'height', ''); });
-		// 统一网格卡片纵横比（可按需改为 1/1 或 16/9）
+
+		// 3. 移除容器自身的内联样式（如高度）
+		grid.removeAttribute('style');
+
+		// 4. 触发重排，确保样式变动生效
+		void grid.offsetHeight;
+
+		// 5. 添加网格模式的类
+		safeClassList(grid, 'add', 'grid-mode');
+
+		// 6. 设置网格的纵横比样式变量
 		safeSetStyle(grid, '--grid-aspect', '1/1');
+
 	} else {
+		// 切换至瀑布流模式
+
+		// 1. 移除网格模式的类
 		safeClassList(grid, 'remove', 'grid-mode');
+
+		// 2. 移除容器自身的内联样式
+		grid.removeAttribute('style');
+
+		// 3. 添加瀑布流模式的类
 		safeClassList(grid, 'add', 'masonry-mode');
-		requestAnimationFrame(() => {
-			applyMasonryLayout();
-			triggerMasonryUpdate();
-		});
+
+		// 4. 立即执行瀑布流布局与刷新
+		//    不再延迟布局，防止内容闪烁，已移除 CSS 动画相关等待。
+		applyMasonryLayout();
+		triggerMasonryUpdate();
 	}
 }

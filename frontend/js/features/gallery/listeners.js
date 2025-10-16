@@ -27,10 +27,11 @@ let deleteLongPressTarget = null;
 let activeAlbumDeleteOverlay = null;
 
 /**
- * 动态安全导入 loading-states 模块并显示骨架屏
+ * 动态安全导入 minimal-loader 模块并显示加载器
+ * @deprecated 已改为由 router.js 统一控制加载状态
  */
-function safeLoadSkeletonGrid() {
-    import('./loading-states.js').then(m => m.showSkeletonGrid()).catch(() => {});
+function safeLoadMinimalLoader() {
+    // 已废弃：加载状态由 router 统一管理
 }
 
 /**
@@ -49,6 +50,21 @@ function toggleMediaBlur() {
  * @param {Event} e - 点击事件对象
  */
 function handleDocumentClick(e) {
+    // 0. 处理布局切换按钮点击（事件委托）
+    if (e.target.closest('#layout-toggle-btn')) {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+            const current = state.layoutMode;
+            const next = current === 'grid' ? 'masonry' : 'grid';
+            state.update('layoutMode', next);
+            try { localStorage.setItem('sg_layout_mode', next); } catch {}
+        } catch (error) {
+            listenersLogger.error('切换布局模式出错', error);
+        }
+        return;
+    }
+    
     // 1. 关闭移动端搜索层
     const topbar = safeGetElementById('topbar');
     if (topbar && safeClassList(topbar, 'contains', 'topbar--search-open')) {
@@ -268,6 +284,69 @@ async function handleScroll(type) {
  * 滚动处理核心逻辑
  * @param {string} type - 滚动类型
  */
+// ✅ 预加载缓存：避免重复请求
+const prefetchCache = {
+    browse: new Map(), // key: `${path}_${page}`, value: Promise<data>
+    search: new Map()  // key: `${query}_${page}`, value: Promise<data>
+};
+
+/**
+ * 清理预加载缓存（路由切换时调用）
+ * @export
+ */
+export function clearPrefetchCache() {
+    prefetchCache.browse.clear();
+    prefetchCache.search.clear();
+    listenersLogger.debug('预加载缓存已清理');
+}
+
+// 暴露到全局，供 router.js 调用
+if (typeof window !== 'undefined') {
+    window.clearPrefetchCache = clearPrefetchCache;
+}
+
+/**
+ * 预加载下一页数据（静默加载，不渲染）
+ * @param {string} type - 'browse' 或 'search'
+ */
+async function prefetchNextPage(type) {
+    const currentPage = type === 'browse' ? state.currentBrowsePage : state.currentSearchPage;
+    const totalPages = type === 'browse' ? state.totalBrowsePages : state.totalSearchPages;
+    
+    // 已到最后一页，无需预加载
+    if (currentPage > totalPages) return;
+    
+    const nextPage = currentPage;
+    const cacheKey = type === 'browse' 
+        ? `${state.currentBrowsePath}_${nextPage}`
+        : `${state.currentSearchQuery}_${nextPage}`;
+    
+    const cache = prefetchCache[type];
+    
+    // 已经在预加载或已缓存，跳过
+    if (cache.has(cacheKey)) return;
+    
+    // 创建预加载请求（使用顶部已导入的 fetchBrowseResults 和 fetchSearchResults）
+    const signal = AbortBus.next('prefetch');
+    const fetchPromise = type === 'browse'
+        ? fetchBrowseResults(state.currentBrowsePath, nextPage, signal)
+        : fetchSearchResults(state.currentSearchQuery, nextPage, signal);
+    
+    // 缓存Promise
+    cache.set(cacheKey, fetchPromise);
+    
+    try {
+        await fetchPromise;
+        listenersLogger.debug(`预加载成功: ${type} page ${nextPage}`);
+    } catch (error) {
+        // 预加载失败不影响正常流程，静默处理
+        cache.delete(cacheKey);
+        if (error.name !== 'AbortError') {
+            listenersLogger.debug(`预加载失败: ${type} page ${nextPage}`, error.message);
+        }
+    }
+}
+
 async function handleScrollCore(type) {
     // 获取对应类型的状态
     const isLoading = type === 'browse' ? state.isBrowseLoading : state.isSearchLoading;
@@ -282,7 +361,8 @@ async function handleScrollCore(type) {
             safeClassList(firstChild, 'contains', 'empty-state') ||
             safeClassList(firstChild, 'contains', 'connecting-container') ||
             safeClassList(firstChild, 'contains', 'error-container') ||
-            firstChild.id === 'skeleton-grid'
+            firstChild.id === 'skeleton-grid' ||
+            firstChild.id === 'minimal-loader'
         );
         if (isBlockedState) {
             // 优化：使用新容器控制可见性，避免重排抖动
@@ -294,7 +374,14 @@ async function handleScrollCore(type) {
     // 正在加载或已到最后一页则跳过
     if (isLoading || currentPage > totalPages) return;
 
-    // 优化：滚动位置检查，距离底部 500px 时触发加载
+    // ✅ 预加载优化：滚动到80%时触发预加载
+    const scrollPercentage = (window.scrollY + window.innerHeight) / document.documentElement.scrollHeight;
+    if (scrollPercentage >= 0.8 && scrollPercentage < 0.95) {
+        // 静默预加载下一页，不阻塞当前滚动
+        prefetchNextPage(type).catch(() => {});
+    }
+
+    // 优化：滚动位置检查，距离底部 500px 时触发渲染
     if (window.scrollY > 100 && (window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 500) {
         // 设置加载状态
         if (type === 'browse') state.isBrowseLoading = true;
@@ -305,14 +392,36 @@ async function handleScrollCore(type) {
         
         try {
             let data;
-            // 分页统一 scroll 分组信号，便于路由切换时批量取消
-            const signal = AbortBus.next('scroll');
             
-            // 根据类型获取数据
-            if (type === 'browse') {
-                data = await fetchBrowseResults(state.currentBrowsePath, currentPage, signal);
-            } else {
-                data = await fetchSearchResults(state.currentSearchQuery, currentPage, signal);
+            // ✅ 尝试从预加载缓存获取数据
+            const cacheKey = type === 'browse'
+                ? `${state.currentBrowsePath}_${currentPage}`
+                : `${state.currentSearchQuery}_${currentPage}`;
+            
+            const cache = prefetchCache[type];
+            
+            if (cache.has(cacheKey)) {
+                // 使用预加载的数据，无需重新请求
+                listenersLogger.debug(`使用预加载缓存: ${type} page ${currentPage}`);
+                try {
+                    data = await cache.get(cacheKey);
+                    cache.delete(cacheKey); // 用完即删，避免内存泄漏
+                } catch (error) {
+                    // 预加载数据损坏，降级到正常请求
+                    cache.delete(cacheKey);
+                    listenersLogger.warn(`预加载缓存失效，降级请求: ${type} page ${currentPage}`);
+                    data = null;
+                }
+            }
+            
+            // 缓存未命中或失效，发起正常请求
+            if (!data) {
+                const signal = AbortBus.next('scroll');
+                if (type === 'browse') {
+                    data = await fetchBrowseResults(state.currentBrowsePath, currentPage, signal);
+                } else {
+                    data = await fetchSearchResults(state.currentSearchQuery, currentPage, signal);
+                }
             }
             
             if (!data) return;
@@ -329,21 +438,45 @@ async function handleScrollCore(type) {
             if (type === 'browse') state.totalBrowsePages = data.totalPages;
             else state.totalSearchPages = data.totalPages;
 
-            // 渲染新内容，批量 DOM 操作
+            // ✅ 渐进式渲染优化：无限滚动也应用分批加载策略
+            const SCROLL_BATCH_SIZE = 12; // 滚动加载每批12张
+            const firstBatch = items.slice(0, SCROLL_BATCH_SIZE);
+            const remainingBatch = items.slice(SCROLL_BATCH_SIZE);
+            
             const prevCount = elements.contentGrid.children.length;
+            
+            // 立即渲染第一批
             const renderResult = type === 'browse' 
-                ? renderBrowseGrid(items, state.currentPhotos.length)
-                : renderSearchGrid(items, state.currentPhotos.length);
+                ? renderBrowseGrid(firstBatch, state.currentPhotos.length)
+                : renderSearchGrid(firstBatch, state.currentPhotos.length);
             
-            const { contentElements, newMediaUrls, fragment } = renderResult;
+            const { contentElements: firstElements, newMediaUrls: firstUrls, fragment } = renderResult;
             
-            // 批量插入 DOM 元素
+            // 批量插入第一批 DOM 元素
             if (fragment && fragment.children.length > 0) {
                 elements.contentGrid.appendChild(fragment);
             } else {
-                elements.contentGrid.append(...contentElements);
+                elements.contentGrid.append(...firstElements);
             }
-            state.currentPhotos = state.currentPhotos.concat(newMediaUrls);
+            state.currentPhotos = state.currentPhotos.concat(firstUrls);
+            
+            // 后续内容在下一帧渲染，避免阻塞
+            if (remainingBatch.length > 0) {
+                requestAnimationFrame(() => {
+                    const remainingResult = type === 'browse'
+                        ? renderBrowseGrid(remainingBatch, state.currentPhotos.length)
+                        : renderSearchGrid(remainingBatch, state.currentPhotos.length);
+                    
+                    const { contentElements: remainingElements, newMediaUrls: remainingUrls } = remainingResult;
+                    elements.contentGrid.append(...remainingElements);
+                    state.currentPhotos = state.currentPhotos.concat(remainingUrls);
+                    
+                    // 延迟批次也需要懒加载和布局
+                    setupLazyLoading();
+                    const newRemainingItems = Array.from(elements.contentGrid.children).slice(prevCount + firstBatch.length);
+                    applyMasonryLayoutIncremental(newRemainingItems);
+                });
+            }
 
             // 更新页码
             if (type === 'browse') state.currentBrowsePage++;
@@ -557,11 +690,7 @@ function setupCurrentPageEvents() {
                 state.currentLayoutWidth = containerWidth;
                 applyMasonryLayout();
             }
-            // 刷新骨架屏高度，消除留白
-            const skeletonGrid = safeGetElementById('skeleton-grid');
-            if (skeletonGrid) {
-                safeLoadSkeletonGrid();
-            }
+            // 骨架屏已废弃，无需刷新
         }, 60);
     });
 

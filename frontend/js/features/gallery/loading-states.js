@@ -1,6 +1,7 @@
 /**
  * @file loading-states.js
- * @description 智能加载状态管理系统，提供渐进式加载、骨架屏和错误状态处理
+ * @description 统一加载状态管理系统
+ * 提供极简加载器、错误状态、空状态等多种加载反馈
  */
 
 import { state } from '../../core/state.js';
@@ -9,6 +10,80 @@ import { createModuleLogger } from '../../core/logger.js';
 import { safeSetInnerHTML, safeGetElementById, safeClassList, safeSetStyle } from '../../shared/dom-utils.js';
 
 const loadingLogger = createModuleLogger('LoadingStates');
+
+/**
+ * 显示极简中心加载指示器（替代骨架屏）
+ * @param {Object} options - 配置选项
+ * @param {string} options.text - 加载文本，默认为 "加载中..."
+ * @returns {void}
+ */
+export function showMinimalLoader(options = {}) {
+    const { text = '加载中...' } = options;
+    
+    const grid = elements.contentGrid;
+    if (!grid) return;
+    
+    // 清理虚拟滚动器
+    const scroller = state.virtualScroller;
+    if (scroller) {
+        scroller.destroy();
+        state.update('virtualScroller', null);
+    }
+    
+    // 移除所有布局类，避免干扰
+    safeClassList(grid, 'remove', 'grid-mode');
+    safeClassList(grid, 'remove', 'masonry-mode');
+    safeClassList(grid, 'remove', 'virtual-scroll-mode');
+    
+    // 创建居中的加载容器
+    const loaderHTML = `
+        <div id="minimal-loader" class="minimal-loader">
+            <div class="minimal-loader-spinner">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+            <div class="minimal-loader-text">${text.replace(/[<>]/g, '')}</div>
+        </div>
+    `;
+    
+    safeSetInnerHTML(grid, loaderHTML);
+    
+    // 确保容器有足够高度支撑居中布局
+    const minHeight = Math.max(400, window.innerHeight - 200);
+    safeSetStyle(grid, 'minHeight', `${minHeight}px`);
+}
+
+/**
+ * 隐藏极简加载指示器
+ * @returns {void}
+ */
+export function hideMinimalLoader() {
+    const grid = elements.contentGrid;
+    if (!grid) return;
+    
+    const loader = grid.querySelector('#minimal-loader');
+    if (loader) {
+        // 淡出动画
+        safeSetStyle(loader, 'opacity', '0');
+        setTimeout(() => {
+            if (loader.parentNode === grid) {
+                grid.removeChild(loader);
+            }
+        }, 200);
+    }
+}
+
+/**
+ * 检查极简加载指示器是否正在显示
+ * @returns {boolean}
+ */
+export function isMinimalLoaderVisible() {
+    const grid = elements.contentGrid;
+    if (!grid) return false;
+    
+    return !!grid.querySelector('#minimal-loader');
+}
 
 /**
  * 加载状态管理器
@@ -214,11 +289,17 @@ export function showNetworkError() {
 
 /**
  * 显示首占屏骨架位网格，避免内容加载前出现空白
+ * @deprecated 已废弃，使用 showMinimalLoader() 替代
  * @function
  * @param {number} [preferredCount] - 可选的建议骨架数量
+ * @param {Object} [options] - 可选配置
+ * @param {Array} [options.items] - 预加载的图片数据（用于精确尺寸）
  * @returns {void}
  */
-export function showSkeletonGrid(preferredCount) {
+export function showSkeletonGrid(preferredCount, options = {}) {
+    // 已废弃：直接调用极简加载器
+    showMinimalLoader({ text: '加载中...' });
+    return;
     try {
         const grid = elements.contentGrid;
         if (!grid) return;
@@ -226,10 +307,21 @@ export function showSkeletonGrid(preferredCount) {
         const appContainer = safeGetElementById('app-container');
         const appVisible = appContainer && safeClassList(appContainer, 'contains', 'opacity-100');
         if (!appVisible) return;
-        // 统一加载态样式：网格页面的 loading 全部使用瀑布流样式
+        
+        // ✅ 智能检测布局模式（从state或grid的class）
+        const isGridMode = state.layoutMode === 'grid' || 
+                          safeClassList(grid, 'contains', 'grid-mode');
+        
+        // ✅ 关键修复：清除 content-grid 的所有布局类，避免CSS Grid继承冲突
+        // 骨架屏会通过自己的内联样式完全控制布局
         safeClassList(grid, 'remove', 'grid-mode');
-        safeClassList(grid, 'add', 'masonry-mode');
+        safeClassList(grid, 'remove', 'masonry-mode');
+        
+        // ✅ 根据布局模式动态设置纵横比
+        const aspectRatio = isGridMode ? '1 / 1' : '2 / 3';
+        
         // 注入一次骨架动画样式（无需重新构建CSS）
+        // 更新：移除固定aspect-ratio，改为通过内联样式动态设置
         if (!safeGetElementById('skeleton-style')) {
             const style = document.createElement('style');
             style.id = 'skeleton-style';
@@ -244,7 +336,7 @@ export function showSkeletonGrid(preferredCount) {
                 #skeleton-grid .skeleton-card {
                     position: relative;
                     width: 100%;
-                    aspect-ratio: 2 / 3;
+                    /* aspect-ratio 通过内联样式动态设置 */
                     border-radius: 0.5rem;
                     overflow: hidden;
                     background: #1f2937; /* bg-gray-800 */
@@ -291,15 +383,28 @@ export function showSkeletonGrid(preferredCount) {
         }
         grid.removeAttribute(retryKey);
         const isSmall = window.innerWidth <= 640;
-        const gap = isSmall ? 12 : 16;        // 与样式中的 --gap 对齐
-        const minCol = isSmall ? 160 : 210;   // 与样式中的 --min-col 对齐
+        const gap = isSmall ? 12 : 16;  // 与 CSS 的 gap 对齐
+        
+        // ✅ 关键修复：使用与实际内容完全一致的列宽规则
+        // 网格模式：与 style.css 第439行的 minmax(240px, 1fr) 保持一致
+        // 瀑布流模式：可以更灵活（因为瀑布流本身就是不规则布局）
+        const minCol = isGridMode 
+            ? 240  // 必须与 CSS grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)) 一致
+            : (isSmall ? 160 : 210);  // 瀑布流可以更密集
 
         // 估算列数：根据容器宽度动态计算网格列数
         const columns = Math.max(1, Math.floor((containerWidth + gap) / (minCol + gap)));
 
-        // 推算单卡尺寸（保持与 aspect-ratio: 2/3 一致）
+        // ✅ 根据布局模式推算单卡尺寸
         const columnWidth = Math.max(1, Math.floor((containerWidth - gap * (columns - 1)) / columns));
-        const cardHeight = Math.floor(columnWidth * 3 / 2);
+        let cardHeight;
+        if (isGridMode) {
+            // 网格模式：1/1 正方形
+            cardHeight = columnWidth;
+        } else {
+            // 瀑布流模式：2/3 长方形
+            cardHeight = Math.floor(columnWidth * 3 / 2);
+        }
 
         // 计算从容器顶到视口底的可用高度，尽量填满而不过多留白
         const availableHeight = Math.max(0, window.innerHeight - (containerRect.top || 0) - 8);
@@ -324,10 +429,23 @@ export function showSkeletonGrid(preferredCount) {
         // cssText设置保持原样，批量设置CSS样式
         skeletonGrid.style.cssText = gridStyle;
 
-        // 创建骨架卡片
+        // ✅ 创建骨架卡片，动态设置纵横比
         for (let i = 0; i < count; i++) {
             const skeletonCard = document.createElement('div');
             skeletonCard.className = 'skeleton-card';
+            
+            // ✅ 支持预加载尺寸（方案C）
+            if (options.items && options.items[i]) {
+                const item = options.items[i];
+                const itemRatio = item.coverWidth && item.coverHeight 
+                    ? item.coverWidth / item.coverHeight 
+                    : aspectRatio;
+                skeletonCard.style.aspectRatio = itemRatio;
+            } else {
+                // 使用布局模式对应的默认纵横比
+                skeletonCard.style.aspectRatio = aspectRatio;
+            }
+            
             skeletonGrid.appendChild(skeletonCard);
         }
 
