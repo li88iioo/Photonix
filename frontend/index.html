@@ -9,18 +9,15 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="manifest" href="/manifest.json">   
-    <link rel="preload" href="/output.css" as="style">
+    <link rel="preload" href="/assets/css/output.css" as="style">
     <link rel="modulepreload" href="/js/dist/main.js">
-    <!-- AI密语漫画字体 -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap" rel="stylesheet">
+    <!-- AI密语字体文件 -->
     <style>
         body, html {
-            font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif;
+            font-family: 'ZCOOL KuaiLe', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif;
         }
     </style>
-    <link rel="stylesheet" href="/output.css">
+    <link rel="stylesheet" href="/assets/css/output.css">
 </head>
 <body class="bg-gray-900 text-white selection:bg-purple-500 selection:text-white">
     <div id="app-container" class="transition-opacity duration-500 opacity-0 with-fixed-topbar" style="--topbar-offset: 112px;">
@@ -54,10 +51,13 @@
                             </svg>
                         </button>
                         <button id="settings-btn" class="sg-icon-btn--light" title="设置" aria-label="设置">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none"
-                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <circle cx="12" cy="12" r="3"></circle>
-                                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                            <svg xmlns="http://www.w3.org/2000/svg" 
+                                 width="24" height="24" 
+                                 viewBox="0 0 24 24" 
+                                 fill="currentColor" 
+                                 aria-hidden="true">
+                              <title>设置</title>
+                              <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.44,0.17-0.48,0.41L9.22,5.25C8.63,5.49,8.1,5.81,7.6,6.19L5.21,5.23C4.99,5.16,4.74,5.22,4.62,5.44L2.7,8.76 C2.59,8.96,2.64,9.23,2.82,9.37l2.03,1.58C4.82,11.36,4.8,11.68,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94 l0.38,2.44c0.04,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.48-0.41l0.38-2.44c0.59-0.24,1.12-0.56,1.62-0.94 l2.39,0.96c0.22,0.08,0.47,0.02,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
                             </svg>
                         </button>
                     </div>
@@ -78,6 +78,19 @@
                     <div class="flex items-center justify-center">
                         <div class="spinner"></div>
                         <p class="ml-4 text-gray-400">正在加载更多...</p>
+                    </div>
+                </div>
+                <!-- 首页快捷键提示 -->
+                <div id="gallery-shortcuts-hint" class="gallery-shortcuts-hint">
+                    <div class="shortcuts-hint-content">
+                        <div class="shortcuts-hint-title">快捷键提示</div>
+                        <div class="shortcuts-hint-grid">
+                            <div class="shortcut-item"><kbd>B</kbd><span>全局模糊</span></div>
+                            <div class="shortcut-item"><kbd>F</kbd><span>全屏模式</span></div>
+                            <div class="shortcut-item"><kbd>S</kbd><span>搜索</span></div>
+                            <div class="shortcut-item"><kbd>G</kbd><span>切换布局</span></div>
+                        </div>
+                        <div class="shortcuts-hint-footer">提示：在图片模态框中可使用滚轮或左右键翻页</div>
                     </div>
                 </div>
             </div>

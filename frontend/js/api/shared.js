@@ -201,6 +201,13 @@ export async function requestJSONWithDedup(url, options = {}, retries = 3, delay
                 throw error;
             }
             return await response.json();
+        } catch (error) {
+            // 特殊处理 AbortError，避免在控制台显示过多的中止错误
+            if (error.name === 'AbortError') {
+                apiLogger.debug('请求被中止', { url, method: options.method || 'GET' });
+                throw error;
+            }
+            throw error;
         } finally {
             inFlightRequests.delete(key);
             recentWindow.set(key, { time: Date.now(), promise: null });

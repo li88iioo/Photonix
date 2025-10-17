@@ -52,7 +52,6 @@ COPY backend/ ./backend/
 
 # 拷贝前端构建产物到后端可服务的 public 目录
 COPY --from=frontend-builder /app/frontend/index.html ./backend/public/
-COPY --from=frontend-builder /app/frontend/output.css ./backend/public/
 COPY --from=frontend-builder /app/frontend/manifest.json ./backend/public/
 COPY --from=frontend-builder /app/frontend/sw.js ./backend/public/
 COPY --from=frontend-builder /app/frontend/sw-cache-manager.js ./backend/public/

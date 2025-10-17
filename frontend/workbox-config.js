@@ -5,7 +5,6 @@ module.exports = {
   globDirectory: '.',
   globPatterns: [
     'index.html',
-    'output.css',
     'manifest.json',
     'assets/**/*',
     'js/dist/**/*.js'

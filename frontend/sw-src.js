@@ -82,7 +82,7 @@ async function cleanupCache(cacheType) {
 const CORE_ASSETS = [
   '/',
   '/index.html',
-  '/output.css', // 更新为最终生成的 CSS 文件
+  '/assets/css/output.css', // 更新为最终生成的 CSS 文件
   '/manifest.json',
 
   // --- JS 模块 ---

@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "npm run build:css && npm run build:js && npm run build:sw",
-    "build:css": "tailwindcss -i ./style.css -o ./output.css --minify",
+    "build:css": "tailwindcss -i ./assets/css/style.css -o ./assets/css/output.css --minify",
     "build:js": "npx esbuild js/main.js --bundle --minify --format=esm --splitting --outdir=js/dist",
     "build:js:dev": "npx esbuild js/main.js --bundle --format=esm --splitting --outdir=js/dist --sourcemap --source-root=/js",
     "build:sw": "npx workbox-cli injectManifest workbox-config.js",

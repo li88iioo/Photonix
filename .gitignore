@@ -4,7 +4,8 @@ backend/node_modules/
 frontend/node_modules/
 
 # Build artifacts
-frontend/output.css
+frontend/assets/css/output.css
+frontend/sw.js
 frontend/js/dist/
 backend/public/
 

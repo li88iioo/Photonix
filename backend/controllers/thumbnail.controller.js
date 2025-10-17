@@ -192,8 +192,12 @@ async function getThumbnail(req, res) {
         }
 
         // 路径检查（防止路径遍历攻击）
+        // 注意：必须检查路径段是否为".."，而不是简单的includes('..')
+        // 因为文件名可能包含"..."（如"ご主人様...優しくしてください_"）
         const normalizedPath = path.normalize(relativePath).replace(/\\/g, '/');
-        if (normalizedPath.includes('..') || normalizedPath.startsWith('/')) {
+        const pathSegments = normalizedPath.split('/').filter(Boolean);
+        const hasPathTraversal = pathSegments.some(seg => seg === '..' || seg === '.');
+        if (hasPathTraversal || normalizedPath.startsWith('/')) {
             return res.status(400).json({ error: '无效的文件路径' });
         }
 

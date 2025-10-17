@@ -48,6 +48,12 @@ export async function fetchSearchResults(query, page, signal) {
         try {
             return await performRequest();
         } catch (error) {
+            // 特殊处理 AbortError，避免在控制台显示过多的中止错误
+            if (error.name === 'AbortError') {
+                apiLogger.debug('搜索请求被中止', { query, page });
+                throw error;
+            }
+            
             if (error.status === 503 || error.status === 504) {
                 // 503/504 重试机制
                 const delays = [5000, 10000, 20000];

@@ -2,6 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 定义本地 ZCOOL KuaiLe 字体 (TTF格式) */
+@font-face {
+  font-family: 'ZCOOL KuaiLe';
+  src: url('/assets/fonts/ZCOOLKuaiLe-Regular.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* 处理状态栏沉浸安全区域 */
 body {
     padding-top: env(safe-area-inset-top);
@@ -9,12 +18,21 @@ body {
     padding-right: env(safe-area-inset-right);
     padding-bottom: env(safe-area-inset-bottom);
 }
+
 /* 修复抖动 */
 html {
     overflow-y: scroll;
     scrollbar-gutter: stable;
     /* ✅ 移除全局平滑滚动 - 路由切换时造成回弹 */
     /* scroll-behavior: smooth; */
+}
+
+/* 确保 SVG 图标和图标按钮不使用 ZCOOL KuaiLe 字体 */
+svg, svg *, .sg-icon-btn--light, .sg-icon-btn--light *, #settings-btn, #settings-btn *, 
+button svg, button svg *, .modal-close-button svg, .modal-close-button svg *,
+.search-submit-btn svg, .search-submit-btn svg *, #mobile-search-btn svg, #mobile-search-btn svg *,
+.close-btn svg, .close-btn svg * {
+    font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif !important;
 }
 
 /* 移动端需要原生下拉刷新：默认允许 overscroll；仅桌面端抑制回弹 */
@@ -486,6 +504,7 @@ body { font-family: 'Noto Sans SC', sans-serif; }
 @media (min-width: 640px) { .grid-item { margin-bottom: 1rem; } }
 #content-grid.grid-mode .grid-item { contain-intrinsic-size: 300px 400px; }
 #modal { 
+    z-index: 9999; /* 确保模态框在最顶层，高于topbar(1000)和下载页(1500) */
     transition: opacity 0.3s ease;
     background-color: rgba(17, 24, 39, 0.7);
     backdrop-filter: blur(20px);
@@ -781,6 +800,97 @@ body { font-family: 'Noto Sans SC', sans-serif; }
 
 #navigation-hint.show-hint {
     animation: showAndFade 4s ease-in-out forwards;
+}
+
+/* === 首页快捷键提示 === */
+.gallery-shortcuts-hint {
+    position: fixed;
+    bottom: 2rem;
+    right: 2rem;
+    z-index: 100;
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+    pointer-events: none;
+    transition: opacity 0.5s ease, transform 0.5s ease;
+}
+
+.gallery-shortcuts-hint.show {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    animation: shortcutsShowAndFade 6s ease-in-out forwards;
+}
+
+.shortcuts-hint-content {
+    background: rgba(31, 41, 55, 0.95);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 1rem;
+    padding: 1.5rem;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+    min-width: 280px;
+}
+
+.shortcuts-hint-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 1rem;
+    text-align: center;
+}
+
+.shortcuts-hint-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.shortcut-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: #d1d5db;
+}
+
+.shortcut-item kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.75rem;
+    height: 1.75rem;
+    padding: 0 0.5rem;
+    background: linear-gradient(180deg, rgba(139, 92, 246, 0.2), rgba(79, 70, 229, 0.15));
+    border: 1px solid rgba(139, 92, 246, 0.3);
+    border-radius: 0.375rem;
+    font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #a78bfa;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.shortcuts-hint-footer {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    text-align: center;
+    padding-top: 0.75rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+@keyframes shortcutsShowAndFade {
+    0% { opacity: 0; transform: translateY(20px) scale(0.95); }
+    10% { opacity: 1; transform: translateY(0) scale(1); }
+    85% { opacity: 1; transform: translateY(0) scale(1); }
+    100% { opacity: 0; transform: translateY(20px) scale(0.95); }
+}
+
+/* 移动端隐藏快捷键提示 */
+@media (max-width: 768px) {
+    .gallery-shortcuts-hint {
+        display: none;
+    }
 }
 
 .hint-content {

@@ -9,7 +9,7 @@ import { applyMasonryLayout, getMasonryColumns, applyMasonryLayoutIncremental, t
 import { closeModal, navigateModal, _handleThumbnailClick, _navigateToAlbum, startFastNavigate, stopFastNavigate } from '../../app/modal.js';
 import { SwipeHandler } from './touch.js';
 import { fetchBrowseResults, fetchSearchResults, deleteAlbum } from '../../app/api.js';
-import { renderBrowseGrid, renderSearchGrid } from './ui.js';
+import { renderBrowseGrid, renderSearchGrid, updateLayoutToggleButton, applyLayoutMode } from './ui.js';
 import { AbortBus } from '../../core/abort-bus.js';
 import { setupLazyLoading } from './lazyload.js';
 import { UI, getCommonScrollConfig } from '../../core/constants.js';
@@ -59,8 +59,20 @@ function handleDocumentClick(e) {
             const next = current === 'grid' ? 'masonry' : 'grid';
             state.update('layoutMode', next);
             try { localStorage.setItem('sg_layout_mode', next); } catch {}
+            
+            // 修复：使用直接导入的函数更新UI
+            setTimeout(() => {
+                // 应用布局模式
+                applyLayoutMode();
+                
+                // 更新按钮图标
+                if (elements.layoutToggleBtn) {
+                    updateLayoutToggleButton(elements.layoutToggleBtn);
+                }
+            }, 0);
         } catch (error) {
             listenersLogger.error('切换布局模式出错', error);
+            console.error('切换布局模式出错:', error);
         }
         return;
     }

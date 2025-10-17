@@ -27,7 +27,13 @@ const thumbQuerySchema = Joi.object({
   path: Joi.string()
     .min(1)
     .max(2048)  // 与 pathValidator 的 MAX_PATH_LENGTH 保持一致，支持超长中文路径
-    .custom((value, helpers)=> value.includes('..') ? helpers.error('any.invalid') : value, 'path traversal guard')
+    .custom((value, helpers) => {
+      // 检查路径段是否为".."，而不是简单的includes('..')
+      // 避免误判包含"..."的合法文件名（如"内容..._"）
+      const segments = value.split(/[/\\]/).filter(Boolean);
+      const hasTraversal = segments.some(seg => seg === '..' || seg === '.');
+      return hasTraversal ? helpers.error('any.invalid') : value;
+    }, 'path traversal guard')
     .required()
 });
 

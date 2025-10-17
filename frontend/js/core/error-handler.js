@@ -111,7 +111,7 @@ class ErrorHandler {
         
         // 捕获未处理的 Promise 拒绝
         window.addEventListener('unhandledrejection', (event) => {
-            // 🔧 修复：过滤浏览器扩展错误
+            // 过滤浏览器扩展错误
             if (isExtensionError(event.reason)) {
                 // 开发模式下记录日志，方便调试
                 if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
@@ -120,6 +120,15 @@ class ErrorHandler {
                     });
                 }
                 event.preventDefault(); // 阻止在控制台显示红色错误
+                return;
+            }
+            
+            // 过滤 AbortError，避免在控制台显示过多的中止错误
+            if (event.reason && event.reason.name === 'AbortError') {
+                errorLogger.debug('忽略 AbortError (unhandledrejection)', {
+                    reason: event.reason?.message || String(event.reason)
+                });
+                event.preventDefault();
                 return;
             }
             
@@ -132,7 +141,7 @@ class ErrorHandler {
 
         // 捕获全局 JavaScript 错误
         window.addEventListener('error', (event) => {
-            // 🔧 修复：过滤浏览器扩展错误
+            // 过滤浏览器扩展错误
             if (isExtensionError(event.error || event.message, event.filename)) {
                 // 开发模式下记录日志，方便调试
                 if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {

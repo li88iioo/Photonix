@@ -10,7 +10,7 @@ import { applyMasonryLayout, triggerMasonryUpdate } from './masonry.js';
 import { MATH, UI } from '../../core/constants.js';
 import { uiLogger } from '../../core/logger.js';
 import { createProgressCircle, createPlayButton, createGridIcon, createMasonryIcon, createSortArrow, createDeleteIcon, createBackArrow } from '../../shared/svg-utils.js';
-import { elements } from '../../shared/dom-elements.js';
+import { elements, reinitializeElements } from '../../shared/dom-elements.js';
 import { safeSetInnerHTML, safeClassList, safeSetStyle, safeCreateElement, safeGetElementById, safeQuerySelectorAll } from '../../shared/dom-utils.js';
 
 // 向后兼容导出 elements
@@ -358,23 +358,30 @@ export function displaySearchMedia(result, index) {
 		playBtn.appendChild(playSvg);
 		overlay.append(playBtn);
 		kids.push(overlay);
-		const title = createElement('div', { classes: ['album-title'], textContent: result.name });
-		const metaKids = [createElement('span', { classes: ['album-type'], textContent: '视频' })];
-		if (timeText) metaKids.push(createElement('span', { classes: ['album-time'], textContent: timeText }));
-		const infoOverlay = createElement('div', { classes: ['card-info-overlay'], children: [title, createElement('div', { classes: ['album-meta'], children: metaKids })] });
-		kids.push(infoOverlay);
 	} else {
 		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': result.thumbnailUrl, alt: result.name } }));
 	}
-	if (!isVideo && timeText) kids.push(createElement('div', { classes: ['absolute','bottom-2','right-2','bg-black/50','text-white','text-sm','px-2','py-1','rounded','shadow-lg'], textContent: timeText }));
-	const relativeDiv = isVideo
-		? createElement('div', { classes: ['relative'], attributes: { style: `aspect-ratio: ${aspectRatio}` }, children: kids })
-		: createElement('div', { classes: ['aspect-w-1','aspect-h-1','relative'], children: kids });
-	const containerClasses = isVideo
-		? ['album-card','group','block','bg-gray-800','rounded-lg','overflow-hidden','shadow-lg','hover:shadow-purple-500/30','transition-shadow']
-		: ['photo-item','group','block','bg-gray-800','rounded-lg','overflow-hidden','cursor-pointer'];
-	const card = createElement('div', { classes: containerClasses, children: [relativeDiv] });
-	const nameDiv = isVideo ? null : createElement('div', { classes: ['mt-2'], children: [createElement('p', { classes: ['text-xs','text-gray-400','truncate'], textContent: result.name })] });
+	// 为所有媒体添加时间戳（视频和图片）
+	if (timeText) kids.push(createElement('div', { classes: ['absolute','bottom-2','right-2','bg-black/50','text-white','text-sm','px-2','py-1','rounded','shadow-lg'], textContent: timeText }));
+	
+	// 使用动态aspect-ratio保持原始比例，确保播放按钮居中
+	const containerStyle = `aspect-ratio: ${aspectRatio};`;
+	const relativeDiv = createElement('div', { 
+		classes: ['relative','w-full','h-full'], 
+		attributes: {
+			style: containerStyle,
+			'data-aspect-ratio': aspectRatio.toFixed(2),
+			'data-original-width': result.width || 0,
+			'data-original-height': result.height || 0
+		}, 
+		children: kids 
+	});
+	
+	// 视频和图片都使用photo-item类，保持一致性
+	const card = createElement('div', { classes: ['photo-item','group','block','bg-gray-800','rounded-lg','overflow-hidden','cursor-pointer'], children: [relativeDiv] });
+	
+	// 在卡片下方显示文件名（视频和图片都显示）
+	const nameDiv = createElement('div', { classes: ['mt-2'], children: [createElement('p', { classes: ['text-xs','text-gray-400','truncate'], textContent: result.name })] });
 	const attrs = { 'data-url': result.originalUrl, 'data-index': index, 'data-width': result.width || 1, 'data-height': result.height || 1 };
 	return createElement('div', { classes: ['grid-item','photo-link'], attributes: attrs, children: nameDiv ? [card, nameDiv] : [card] });
 }
@@ -689,12 +696,19 @@ function iconHtml(kind) {
  * 初始化 UI 相关的状态订阅
  */
 export function initializeUI() {
-    stateManager.subscribe(['layoutMode'], () => {
+    stateManager.subscribe(['layoutMode'], (changedKeys, currentState) => {
+        uiLogger.debug('布局模式已更改', { changedKeys, currentState: currentState.layoutMode });
+        
         applyLayoutMode();
 
+        // 确保DOM元素是最新的
+        reinitializeElements();
         const btn = elements.layoutToggleBtn;
         if (btn) {
+            uiLogger.debug('更新布局切换按钮', { layoutMode: currentState.layoutMode });
             updateLayoutToggleButton(btn);
+        } else {
+            uiLogger.warn('找不到布局切换按钮元素');
         }
     });
 }
@@ -703,12 +717,14 @@ export function initializeUI() {
  * 更新布局切换按钮的显示状态
  * @param {HTMLElement} btn 按钮元素
  */
-function updateLayoutToggleButton(btn) {
+export function updateLayoutToggleButton(btn) {
     try {
         const isGrid = state.layoutMode === 'grid';
 
         // XSS 安全：安全 DOM 操作替代 innerHTML
-        safeSetInnerHTML(btn, '');
+        while (btn.firstChild) {
+            btn.removeChild(btn.firstChild);
+        }
 
         // 添加图标
         const icon = createLayoutIcon(isGrid ? 'grid' : 'masonry');
@@ -717,7 +733,7 @@ function updateLayoutToggleButton(btn) {
         // 添加工具提示文本
         const tooltipSpan = document.createElement('span');
         tooltipSpan.className = 'layout-tooltip';
-        safeSetStyle(tooltipSpan, 'marginLeft', '4px');
+        tooltipSpan.style.marginLeft = '4px';
         tooltipSpan.textContent = isGrid ? '瀑布流布局' : '网格布局';
         btn.appendChild(tooltipSpan);
 
@@ -744,7 +760,7 @@ function createLayoutToggle() {
 		btn.appendChild(icon);
 		const tooltipSpan = document.createElement('span');
 		tooltipSpan.className = 'layout-tooltip';
-		safeSetStyle(tooltipSpan, 'marginLeft', '4px');
+		tooltipSpan.style.marginLeft = '4px';
 		tooltipSpan.textContent = isGrid ? '瀑布流布局' : '网格布局';
 		btn.appendChild(tooltipSpan);
 		btn.setAttribute('aria-pressed', isGrid ? 'true' : 'false');

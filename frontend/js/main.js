@@ -24,6 +24,38 @@ const mainLogger = createModuleLogger('Main');
 let appStarted = false;
 
 /**
+ * 显示首页快捷键提示（仅首次访问）
+ */
+function showGalleryShortcutsHint() {
+    // 移动端不显示
+    if (window.innerWidth <= 768) return;
+
+    // 检查是否已经显示过
+    const hasShown = localStorage.getItem('hasShownGalleryShortcuts');
+    if (hasShown) return;
+
+    // 等待页面完全加载后显示
+    setTimeout(() => {
+        const hintEl = document.getElementById('gallery-shortcuts-hint');
+        if (!hintEl) return;
+
+        safeClassList(hintEl, 'add', 'show');
+        
+        // 标记已显示，下次不再显示
+        try {
+            localStorage.setItem('hasShownGalleryShortcuts', 'true');
+        } catch (e) {
+            mainLogger.warn('无法保存快捷键提示状态', e);
+        }
+
+        // 6秒后自动隐藏（动画会处理）
+        setTimeout(() => {
+            safeClassList(hintEl, 'remove', 'show');
+        }, 6000);
+    }, 1500); // 延迟1.5秒，让用户先看到页面内容
+}
+
+/**
  * 生成与 frontend/assets/icon.svg 相同的 SVG，并设置为 favicon（运行时注入，避免静态依赖）
  */
 function applyAppIcon() {
@@ -179,6 +211,9 @@ function startMainApp() {
         mainLogger.error('路由器加载失败', e);
     }
     loadAppSettings();
+
+    // 显示首页快捷键提示（仅首次访问，仅PC端）
+    showGalleryShortcutsHint();
 
     // 🔧 修复问题2：网络状态通知去抖，避免移动设备/内网穿透环境频繁提示
     let offlineNotificationTimer = null;
