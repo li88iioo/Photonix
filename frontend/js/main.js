@@ -180,9 +180,34 @@ function startMainApp() {
     }
     loadAppSettings();
 
-    // 设置全局网络和认证相关事件监听
-    window.addEventListener('offline', () => showNotification('网络已断开', 'warning', UI.NOTIFICATION_DURATION_WARNING));
-    window.addEventListener('online', () => showNotification('网络已恢复', 'success', UI.NOTIFICATION_DURATION_SUCCESS));
+    // 🔧 修复问题2：网络状态通知去抖，避免移动设备/内网穿透环境频繁提示
+    let offlineNotificationTimer = null;
+    let wasOfflineNotified = false;
+    
+    window.addEventListener('offline', () => {
+        // 延迟3秒后才显示通知，避免短暂断连误报
+        if (offlineNotificationTimer) clearTimeout(offlineNotificationTimer);
+        offlineNotificationTimer = setTimeout(() => {
+            if (!navigator.onLine) { // 再次确认确实断开
+                showNotification('网络连接不稳定', 'warning', UI.NOTIFICATION_DURATION_WARNING);
+                wasOfflineNotified = true;
+            }
+        }, 3000);
+    });
+    
+    window.addEventListener('online', () => {
+        // 清除待显示的offline通知
+        if (offlineNotificationTimer) {
+            clearTimeout(offlineNotificationTimer);
+            offlineNotificationTimer = null;
+        }
+        // 只有之前显示过断开通知，才显示恢复通知
+        if (wasOfflineNotified) {
+            showNotification('网络已恢复', 'success', UI.NOTIFICATION_DURATION_SUCCESS);
+            wasOfflineNotified = false;
+        }
+    });
+    
     window.addEventListener('auth:required', () => {
         removeAuthToken();
         setUIState('login');

@@ -26,7 +26,7 @@ const validatePath = require('../middleware/pathValidator');
 const thumbQuerySchema = Joi.object({
   path: Joi.string()
     .min(1)
-    .max(1024)  // 与 pathValidator 的 MAX_PATH_LENGTH 保持一致
+    .max(2048)  // 与 pathValidator 的 MAX_PATH_LENGTH 保持一致，支持超长中文路径
     .custom((value, helpers)=> value.includes('..') ? helpers.error('any.invalid') : value, 'path traversal guard')
     .required()
 });

@@ -315,6 +315,43 @@ function handleImageLoad(event) {
         safeClassList(parent, 'remove', 'thumbnail-generating');
     }
 
+    const gridItem = img.closest('.grid-item');
+    
+    // ✅ 优化：检查图片实际尺寸是否与预期一致
+    // 只有尺寸不匹配时才触发布局重排，避免不必要的reflow
+    let needsReflow = false;
+    if (gridItem) {
+        const expectedWidth = parseFloat(gridItem.getAttribute('data-width'));
+        const expectedHeight = parseFloat(gridItem.getAttribute('data-height'));
+        const actualWidth = img.naturalWidth;
+        const actualHeight = img.naturalHeight;
+        
+        // 允许2%的误差范围（考虑压缩等因素）
+        const tolerance = 0.02;
+        if (expectedWidth > 0 && expectedHeight > 0 && actualWidth > 0 && actualHeight > 0) {
+            const expectedRatio = expectedHeight / expectedWidth;
+            const actualRatio = actualHeight / actualWidth;
+            const ratioDiff = Math.abs(expectedRatio - actualRatio) / expectedRatio;
+            
+            // 尺寸比例差异超过阈值，需要重排
+            if (ratioDiff > tolerance) {
+                needsReflow = true;
+                lazyloadLogger.debug('图片实际尺寸与预期不符，触发重排', {
+                    expected: `${expectedWidth}x${expectedHeight}`,
+                    actual: `${actualWidth}x${actualHeight}`,
+                    ratioDiff: (ratioDiff * 100).toFixed(2) + '%'
+                });
+            }
+        } else if (!expectedWidth || !expectedHeight) {
+            // 缺失尺寸数据，安全起见触发重排
+            needsReflow = true;
+        }
+        
+        if (gridItem.style) {
+            gridItem.style.removeProperty('height');
+        }
+    }
+
     // 隐藏占位符和加载覆盖层
     const container = img.parentElement;
     if (container) {
@@ -338,7 +375,16 @@ function handleImageLoad(event) {
             processingIndicator.remove();
         }
     }
-    triggerMasonryUpdate();
+    
+    // ✅ 仅在必要时触发布局重排
+    if (needsReflow) {
+        triggerMasonryUpdate();
+        if (gridItem) {
+            requestAnimationFrame(() => {
+                triggerMasonryUpdate();
+            });
+        }
+    }
 }
 
 /**
@@ -893,14 +939,14 @@ export function restorePageLazyState(pageKey) {
         restoreProtection.add(pageKey);
         requestAnimationFrame(() => {
             imagesToMark.forEach(({ img, cachedImage }) => {
-                safeClassList(img, 'add', 'loaded');
+                // 🔧 修复问题1：不添加loaded类，让懒加载系统从浏览器缓存重新加载
+                // safeClassList(img, 'add', 'loaded'); // ❌ 会导致executeLazyLoad直接return
                 img.dataset.thumbStatus = '';
-                img.dataset.wasLoaded = 'true';
+                img.dataset.wasLoaded = 'true'; // ✅ 标记为之前加载过，加速处理
                 img.dataset.loadTime = cachedImage.loadTime;
             });
-            lazyloadLogger.debug('懒加载缓存: 恢复图片状态', {
-                restoredCount,
-                note: '无blob URL'
+            lazyloadLogger.debug('懒加载缓存: 标记图片为wasLoaded，将从浏览器缓存重新加载', {
+                restoredCount
             });
             const layoutTimeoutId = setTimeout(() => {
                 triggerMasonryUpdate();
@@ -950,8 +996,10 @@ function getOrCreateImageObserver() {
             }
         });
     }, {
-        rootMargin: '500px 100px',
-        threshold: 0.1
+        // ✅ 增加rootMargin，提前触发懒加载，避免快速滚动时图片加载不及时
+        // 上下各2000px（针对平滑滚动优化），左右100px
+        rootMargin: '2000px 100px',
+        threshold: 0.01 // 降低阈值，只要1%可见就触发
     });
     globalImageObserver = observer;
     return observer;
@@ -983,6 +1031,14 @@ export function setupLazyLoading() {
         }
     });
     return observer;
+}
+
+/**
+ * 获取全局图片观察器（供外部使用）
+ * @returns {IntersectionObserver|null}
+ */
+export function getGlobalImageObserver() {
+    return globalImageObserver;
 }
 
 /** @type {Map<string, Object>} 页面状态缓存，避免路由切换时重新请求 */

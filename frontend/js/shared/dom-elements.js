@@ -28,8 +28,6 @@ export const elements = {
     captionContainer: safeGetElementById('caption-container'),
     captionContainerMobile: safeGetElementById('caption-container-mobile'),
     captionBubble: safeGetElementById('caption-bubble'),
-    captionBubbleWrapper: safeGetElementById('caption-bubble-wrapper'),
-    toggleCaptionBtn: safeGetElementById('toggle-caption-btn'),
 
     // 导航和搜索
     navigationHint: safeGetElementById('navigation-hint'),

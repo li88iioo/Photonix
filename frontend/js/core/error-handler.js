@@ -85,8 +85,44 @@ class ErrorHandler {
      * @description 设置全局错误处理器，捕获未处理的 Promise 拒绝、全局 JS 错误和资源加载错误
      */
     setupGlobalHandlers() {
+        // 🔧 辅助函数：检查是否来自浏览器扩展
+        const isExtensionError = (error, filename) => {
+            if (!error) return false;
+            
+            // 检查错误消息
+            const message = error.message || String(error);
+            if (message.includes('chrome-extension://') || 
+                message.includes('moz-extension://') ||
+                message.includes('safari-extension://')) {
+                return true;
+            }
+            
+            // 检查文件名
+            if (filename && (
+                filename.includes('chrome-extension://') ||
+                filename.includes('moz-extension://') ||
+                filename.includes('safari-extension://')
+            )) {
+                return true;
+            }
+            
+            return false;
+        };
+        
         // 捕获未处理的 Promise 拒绝
         window.addEventListener('unhandledrejection', (event) => {
+            // 🔧 修复：过滤浏览器扩展错误
+            if (isExtensionError(event.reason)) {
+                // 开发模式下记录日志，方便调试
+                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                    errorLogger.debug('忽略浏览器扩展错误 (unhandledrejection)', { 
+                        reason: event.reason?.message || String(event.reason) 
+                    });
+                }
+                event.preventDefault(); // 阻止在控制台显示红色错误
+                return;
+            }
+            
             this.handleError(event.reason, {
                 type: ErrorTypes.UNKNOWN,
                 severity: ErrorSeverity.MEDIUM,
@@ -96,6 +132,19 @@ class ErrorHandler {
 
         // 捕获全局 JavaScript 错误
         window.addEventListener('error', (event) => {
+            // 🔧 修复：过滤浏览器扩展错误
+            if (isExtensionError(event.error || event.message, event.filename)) {
+                // 开发模式下记录日志，方便调试
+                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                    errorLogger.debug('忽略浏览器扩展错误 (error)', { 
+                        error: event.error?.message || String(event.error),
+                        filename: event.filename 
+                    });
+                }
+                event.preventDefault(); // 阻止在控制台显示红色错误
+                return;
+            }
+            
             this.handleError(event.error || event.message, {
                 type: ErrorTypes.UNKNOWN,
                 severity: ErrorSeverity.HIGH,
@@ -346,9 +395,12 @@ class ErrorHandler {
      * @param {Object} errorInfo 错误信息
      */
     handleNetworkError(errorInfo) {
-        // 检查网络状态
+        // 🔧 修复问题2：减少网络错误通知的噪音
+        // 只在真正影响用户操作时才通知（由main.js的offline事件统一处理）
+        // 这里不再重复显示通知，避免内网穿透环境的频繁误报
         if (!navigator.onLine) {
-            showNotification('网络连接已断开，部分功能可能不可用', 'warning', 10000);
+            // 静默记录，不显示通知
+            this.logger.debug('网络连接已断开', errorInfo);
         }
     }
 

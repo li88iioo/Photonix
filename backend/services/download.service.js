@@ -100,22 +100,15 @@ class DownloadManager {
       }
     }
 
-    // 加载历史
-    const history = await this.readJSON(HISTORY_FILE, []);
-
     // 恢复任务到内存Map
     tasks.forEach((task) => {
       this.tasks.set(task.id, task);
     });
 
-    // 恢复历史
-    this.historyTracker.setHistory(history);
-
     // 更新跳过的源列表
     this.skipFeeds = new Set(config.skipFeeds);
 
     // 重新调度运行中的任务
-    await this.reconcileHistoryWithFilesystem();
     for (const task of this.tasks.values()) {
       if (task.status === 'running') {
         this.scheduler.scheduleTask(
@@ -234,6 +227,7 @@ class DownloadManager {
         // 更新历史和统计
         if (batch.length > 0) {
           this.historyTracker.addHistoryBatch(batch);
+          await this.persistState();
         }
 
         task.stats.articlesDownloaded += downloadedArticles;
@@ -683,14 +677,50 @@ class DownloadManager {
   async updateConfig(partialConfig = {}) {
     await this.ensureReady();
     
+    // 保存旧路径用于比较
+    const oldPaths = { ...this.configManager.paths };
+    
+    // 更新配置（会重新解析路径）
     const config = await this.configManager.updateConfig(partialConfig);
+    const newPaths = this.configManager.paths;
     
-    // 重新初始化受影响的模块
-    const baseChanged = config.baseFolder !== this.feedProcessor.config.baseFolder
-      || config.dbFile !== this.historyTracker.config.dbFile;
+    // 检测关键路径是否变化
+    const databasePathChanged = oldPaths.databasePath !== newPaths.databasePath;
+    const logsPathChanged = oldPaths.activityLogPath !== newPaths.activityLogPath
+      || oldPaths.errorLogPath !== newPaths.errorLogPath;
     
-    if (baseChanged) {
+    // 如果数据库路径变化，重新初始化数据库连接
+    if (databasePathChanged) {
+      this.logManager.log('warning', '数据库路径已变更，正在重新初始化...', {
+        scope: '下载器',
+        oldPath: oldPaths.databasePath,
+        newPath: newPaths.databasePath
+      });
+      
+      // 关闭旧连接并重新初始化
       await this.historyTracker.initializeDatabase();
+      
+      // 重新加载任务（因为数据库变了）
+      const tasks = this.taskManager.loadAllTasks();
+      this.tasks.clear();
+      tasks.forEach(task => {
+        this.tasks.set(task.id, task);
+      });
+      
+      this.logManager.log('info', '数据库重新初始化完成', {
+        scope: '下载器',
+        tasksLoaded: this.tasks.size
+      });
+    }
+    
+    // 如果日志路径变化，重新初始化 LogManager
+    if (logsPathChanged) {
+      this.logManager = new LogManager(newPaths);
+      this.logManager.log('info', '日志路径已更新', {
+        scope: '下载器',
+        activityLog: newPaths.activityLogPath,
+        errorLog: newPaths.errorLogPath
+      });
     }
     
     // 更新模块配置
@@ -975,53 +1005,13 @@ class DownloadManager {
    * 持久化状态
    */
   async persistState() {
-    // P1优化: 任务直接保存到数据库
+    // 任务直接保存到数据库
     const tasks = Array.from(this.tasks.values());
     this.taskManager.saveAllTasks(tasks);
-    
-    // 历史仍然保存到JSON（可选：后续也可迁移到数据库）
-    const history = this.historyTracker.getAllHistory();
-    await this.writeJSON(HISTORY_FILE, history.slice(0, 200));
+    // 历史记录已在 addHistoryEntry/addHistoryBatch 中实时写入数据库，无需单独持久化
   }
 
-  /**
-   * 校验历史文件系统一致性
-   */
-  async reconcileHistoryWithFilesystem() {
-    const baseDir = this.configManager.paths.baseFolder;
-    const history = this.historyTracker.getAllHistory();
-    let modified = false;
 
-    for (const entry of history) {
-      const images = Array.isArray(entry.images) ? entry.images : [];
-      const existingImages = [];
-
-      for (const image of images) {
-        if (!image || !image.path) continue;
-        
-        const absolutePath = path.join(baseDir, image.path);
-        try {
-          const stats = await fsp.stat(absolutePath);
-          if (stats.isFile()) {
-            existingImages.push(image);
-          } else {
-            modified = true;
-          }
-        } catch {
-          modified = true;
-        }
-      }
-
-      if (existingImages.length !== images.length) {
-        entry.images = existingImages;
-        modified = true;
-      }
-    }
-
-    if (modified) {
-      await this.persistState();
-    }
-  }
 
   /**
    * 规范化任务数据

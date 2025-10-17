@@ -130,6 +130,9 @@ export async function sortAlbumsByViewed() {
  * @param {string} path 当前路径
  */
 export function renderBreadcrumb(path) {
+	const breadcrumbNav = elements.breadcrumbNav;
+	if (!breadcrumbNav) return;
+	
 	const parts = path ? path.split('/').filter(p => p) : [];
 	let currentPath = '';
 	let sortParam = '';
@@ -138,17 +141,27 @@ export function renderBreadcrumb(path) {
 		const questionMarkIndex = hash.indexOf('?');
 		sortParam = questionMarkIndex !== -1 ? hash.substring(questionMarkIndex) : '';
 	}
-	const breadcrumbNav = elements.breadcrumbNav;
-	if (!breadcrumbNav) return;
+	
+	// 确保 breadcrumbLinks 和 sortContainer 存在
 	let breadcrumbLinks = breadcrumbNav.querySelector('#breadcrumb-links');
-	if (!breadcrumbLinks) {
-		// XSS 安全：使用 DOM 操作替代 innerHTML
+	let sortContainer = breadcrumbNav.querySelector('#sort-container');
+	
+	if (!breadcrumbLinks || !sortContainer) {
+		// 初始化：清空并重建结构
 		while (breadcrumbNav.firstChild) {
 			breadcrumbNav.removeChild(breadcrumbNav.firstChild);
 		}
 		breadcrumbLinks = createElement('div', { classes: ['flex-1', 'min-w-0'], attributes: { id: 'breadcrumb-links' } });
-		const sortContainer = createElement('div', { classes: ['flex-shrink-0', 'ml-4'], attributes: { id: 'sort-container' } });
+		sortContainer = createElement('div', { classes: ['flex-shrink-0', 'ml-4'], attributes: { id: 'sort-container' } });
 		breadcrumbNav.append(breadcrumbLinks, sortContainer);
+	}
+	
+	// ✅ 首页不显示面包屑导航，只清空 breadcrumbLinks，保留 sortContainer
+	if (!path || path === '') {
+		while (breadcrumbLinks.firstChild) {
+			breadcrumbLinks.removeChild(breadcrumbLinks.firstChild);
+		}
+		return;
 	}
 	const container = createElement('div', { classes: ['flex', 'flex-wrap', 'items-center'] });
 	
@@ -306,7 +319,9 @@ export function displayStreamedMedia(type, mediaData, index, showTimestamp) {
 		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': mediaData.thumbnailUrl, alt: '图片缩略图' } }));
 	}
 	if (timeText) kids.push(createElement('div', { classes: ['absolute','bottom-2','right-2','bg-black/50','text-white','text-sm','px-2','py-1','rounded','shadow-lg'], textContent: timeText }));
-	const containerStyle = `aspect-ratio: ${aspectRatio}; min-height: 150px;`;
+	// ✅ 修复：移除min-height，让容器高度完全由aspect-ratio决定
+	// min-height会导致瀑布流布局计算错误，引发元素重叠
+	const containerStyle = `aspect-ratio: ${aspectRatio};`;
 	const relativeDiv = createElement('div', { 
 		classes: ['relative','w-full','h-full'], 
 		attributes: {
@@ -425,24 +440,11 @@ export function renderSortDropdown() {
 	const sortContainer = elements.sortContainer;
 	if (!sortContainer) return;
 
-	// 保证结构：布局切换器 + 分割线 + 排序 wrapper
-	let toggleWrap = sortContainer.querySelector('#layout-toggle-wrap');
+	// ✅ 不再创建布局切换按钮，由 renderLayoutToggleOnly() 统一管理
+	// 只检查按钮是否存在，如果不存在则警告
+	const toggleWrap = sortContainer.querySelector('#layout-toggle-wrap');
 	if (!toggleWrap) {
-		const toggle = createLayoutToggle();
-		sortContainer.appendChild(toggle.container);
-		toggleWrap = toggle.container;
-	}
-
-	// 确保按钮可见
-	if (toggleWrap && !safeClassList(toggleWrap, 'contains', 'visible')) {
-		requestAnimationFrame(() => {
-			safeClassList(toggleWrap, 'add', 'visible');
-		});
-	}
-	if (!sortContainer.querySelector('.layout-divider')) {
-		const divider = document.createElement('div');
-		divider.className = 'layout-divider';
-		sortContainer.appendChild(divider);
+		console.warn('[UI] 布局切换按钮不存在，应该先调用 renderLayoutToggleOnly()');
 	}
 	let sortWrapper = sortContainer.querySelector('#sort-wrapper');
 	if (!sortWrapper) {
@@ -540,17 +542,27 @@ export function renderSortDropdown() {
 /**
  * 仅渲染布局切换按钮到 sort-container（搜索页专用）
  * 避免重复创建按钮导致事件绑定失效
+ * @param {boolean} withAnimation - 是否使用动画（相册页为true，首页/目录页为false）
  */
-export function renderLayoutToggleOnly() {
+export function renderLayoutToggleOnly(withAnimation = false) {
     const sortContainer = elements.sortContainer;
-    if (!sortContainer) return;
-
-    // 检查是否已存在布局切换按钮
-    const existingToggle = sortContainer.querySelector('#layout-toggle-wrap');
-    if (existingToggle) {
-        ensureLayoutToggleVisible();
+    if (!sortContainer) {
+        console.log('[UI] sort-container 不存在');
         return;
     }
+
+    // ✅ 强制清理所有已存在的布局切换按钮（防止重复）
+    const existingToggles = document.querySelectorAll('#layout-toggle-wrap');
+    if (existingToggles.length > 0) {
+        console.log(`[UI] 检测到${existingToggles.length}个布局切换按钮，全部移除`);
+        existingToggles.forEach(toggle => toggle.remove());
+    }
+    
+    // 同时清理所有分割线
+    const existingDividers = sortContainer.querySelectorAll('.layout-divider');
+    existingDividers.forEach(divider => divider.remove());
+    
+    console.log('[UI] 创建新的布局切换按钮');
 
     requestAnimationFrame(() => {
         try {
@@ -560,22 +572,30 @@ export function renderLayoutToggleOnly() {
                 return;
             }
 
-            sortContainer.appendChild(toggle.container);
+            // ✅ 使用 prepend 确保按钮在最前面
+            sortContainer.prepend(toggle.container);
 
-            // 分割线
+            // 分割线也插入到前面（但在按钮后面）
             const divider = document.createElement('div');
             divider.className = 'layout-divider';
-            sortContainer.appendChild(divider);
+            // 插入到按钮后面
+            if (toggle.container.nextSibling) {
+                sortContainer.insertBefore(divider, toggle.container.nextSibling);
+            } else {
+                sortContainer.appendChild(divider);
+            }
 
-            // 强制重新计算布局
-            sortContainer.offsetHeight;
-
-            // 下一帧触发动画，确保按钮可见
-            requestAnimationFrame(() => {
-                if (toggle.container && !safeClassList(toggle.container, 'contains', 'visible')) {
+            // ✅ 根据参数决定是否使用动画
+            if (withAnimation) {
+                // 相册页：使用动画
+                sortContainer.offsetHeight; // 强制重绘
+                requestAnimationFrame(() => {
                     safeClassList(toggle.container, 'add', 'visible');
-                }
-            });
+                });
+            } else {
+                // 首页/目录页：直接可见
+                safeClassList(toggle.container, 'add', 'visible');
+            }
 
         } catch (error) {
             uiLogger.error('渲染布局切换按钮出错', error);
@@ -593,9 +613,8 @@ export function ensureLayoutToggleVisible() {
 
     const toggleWrap = sortContainer.querySelector('#layout-toggle-wrap');
     if (toggleWrap && !safeClassList(toggleWrap, 'contains', 'visible')) {
-        requestAnimationFrame(() => {
-            safeClassList(toggleWrap, 'add', 'visible');
-        });
+        // ✅ 直接设置为可见，不使用动画
+        safeClassList(toggleWrap, 'add', 'visible');
     }
 }
 
@@ -753,9 +772,16 @@ export function applyLayoutMode() {
 		// 1. 移除瀑布流模式的类
 		safeClassList(grid, 'remove', 'masonry-mode');
 
-		// 2. 移除所有子元素的内联样式
+		// 2. ✅ 重置子元素样式，但不移除position，避免"全屏闪过"
 		Array.from(grid.children).forEach(item => {
-			item.removeAttribute('style');
+			// 移除瀑布流的定位属性，但保持position以避免布局跳动
+			item.style.removeProperty('transform');
+			item.style.removeProperty('width');
+			item.style.removeProperty('height');
+			item.style.removeProperty('will-change');
+			item.style.removeProperty('left');
+			item.style.removeProperty('top');
+			// position会由CSS的grid-mode规则覆盖为static
 		});
 
 		// 3. 移除容器自身的内联样式（如高度）

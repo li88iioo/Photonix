@@ -18,8 +18,6 @@ export function updateConfigForm(config = {}) {
 
   const mappings = {
     'base-folder': config.baseFolder || '',
-    'db-file': config.dbFile || '',
-    'error-log-file': config.errorLogFile || '',
     'max-concurrent-feeds': config.maxConcurrentFeeds || '',
     'max-concurrent-downloads': config.maxConcurrentDownloads || '',
     'request-timeout': config.requestTimeout || '',
@@ -85,8 +83,6 @@ export function getConfigValues() {
 
   const payload = {
     baseFolder: get('base-folder')?.value || '',
-    dbFile: get('db-file')?.value || '',
-    errorLogFile: get('error-log-file')?.value || '',
     allowFallbackToSourceSite: allowFallback,
     imageValidation: {
       enabled: validationEnabled,

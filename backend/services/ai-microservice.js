@@ -119,9 +119,10 @@ class AIMicroservice {
     constructor() {
         this.activeTasks = new Map(); // 活跃任务跟踪
         this.taskQueue = []; // 任务队列
-        this.queueLimit = Number(process.env.AI_QUEUE_MAX || 50);
-        this.queueTimeoutMs = Number(process.env.AI_QUEUE_TIMEOUT_MS || 60000);
-        this.taskTimeoutMs = Number(process.env.AI_TASK_TIMEOUT_MS || 120000);
+        // 🔧 平衡修复：降低队列限制，防止内存堆积（可通过环境变量调整）
+        this.queueLimit = Number(process.env.AI_QUEUE_MAX || 15); // 平衡值：15
+        this.queueTimeoutMs = Number(process.env.AI_QUEUE_TIMEOUT_MS || 45000); // 平衡值：45秒
+        this.taskTimeoutMs = Number(process.env.AI_TASK_TIMEOUT_MS || 90000); // 平衡值：90秒
         this.maxConcurrent = this.resolveInitialConcurrency();
         this.isProcessing = false; // 处理状态
         this.initializeAxios();
@@ -130,7 +131,8 @@ class AIMicroservice {
     resolveInitialConcurrency() {
         const configured = Number(process.env.AI_MAX_CONCURRENT || process.env.AI_CONCURRENCY);
         if (Number.isFinite(configured) && configured > 0) {
-            return Math.min(10, Math.max(1, Math.floor(configured)));
+            // 🔧 平衡修复：最大并发限制到3（保证安全性）
+            return Math.min(3, Math.max(1, Math.floor(configured)));
         }
 
         try {
@@ -138,12 +140,14 @@ class AIMicroservice {
             const budget = hasResourceBudget();
             if (budget && budget.loadOk && budget.memOk) {
                 const suggested = Math.max(1, Math.ceil(budget.cpus / 2));
-                return Math.min(4, suggested);
+                // 🔧 平衡修复：根据资源预算动态调整（最多3个）
+                return Math.min(3, suggested);
             }
         } catch (budgetErr) {
             logger.debug('[AI-MICROSERVICE] 读取资源预算失败，使用默认并发:', budgetErr && budgetErr.message);
         }
 
+        // 🔧 平衡修复：默认并发2（平衡性能和安全）
         return 2;
     }
 
@@ -266,23 +270,38 @@ class AIMicroservice {
      */
     async executeTask(task, abortController) {
         const { imagePath, aiConfig } = task;
+        let imageBuffer = null;
 
-        // 图片路径验证和处理
-        const fullImagePath = path.join(PHOTOS_DIR, imagePath);
-        const imageBuffer = await this.processImage(fullImagePath, abortController);
+        try {
+            // 图片路径验证和处理
+            const fullImagePath = path.join(PHOTOS_DIR, imagePath);
+            imageBuffer = await this.processImage(fullImagePath, abortController);
 
-        // 调用AI API
-        const caption = await this.callAIApi(imageBuffer, aiConfig, abortController);
+            // 调用AI API
+            const caption = await this.callAIApi(imageBuffer, aiConfig, abortController);
 
-        return {
-            imagePath,
-            caption,
-            generatedAt: new Date().toISOString(),
-            config: {
-                model: aiConfig.model,
-                promptLength: aiConfig.prompt.length
+            return {
+                imagePath,
+                caption,
+                generatedAt: new Date().toISOString(),
+                config: {
+                    model: aiConfig.model,
+                    promptLength: aiConfig.prompt.length
+                }
+            };
+        } finally {
+            // 🔧 紧急修复：立即释放buffer内存
+            imageBuffer = null;
+            
+            // 🔧 紧急修复：每10个任务触发一次垃圾回收
+            if (global.gc && this.activeTasks.size % 10 === 0) {
+                try {
+                    global.gc();
+                } catch (gcErr) {
+                    // 忽略GC错误
+                }
             }
-        };
+        }
     }
 
     /**
@@ -292,9 +311,10 @@ class AIMicroservice {
      */
     async processImage(imagePath, abortController) {
         try {
+            // 🔧 平衡修复：限制最大像素，防止内存爆炸（可通过SHARP_MAX_PIXELS环境变量调整）
             const transformer = sharp(imagePath, {
-                limitInputPixels: Number(process.env.SHARP_MAX_PIXELS || (24000 * 24000))
-            }).resize({ width: 1024 }).jpeg({ quality: 70 });
+                limitInputPixels: Number(process.env.SHARP_MAX_PIXELS || (6400 * 6400)) // 40M像素（平衡值）
+            }).resize({ width: 1024, withoutEnlargement: true }).jpeg({ quality: 70 });
 
             let abortListener;
             if (abortController) {
@@ -319,8 +339,14 @@ class AIMicroservice {
                 const buffer = await transformer.toBuffer();
                 return buffer;
             } finally {
+                // 🔧 紧急修复：确保 Sharp 资源被释放
                 if (abortController && abortListener) {
                     abortController.signal.removeEventListener('abort', abortListener);
+                }
+                try {
+                    transformer.destroy();
+                } catch (destroyErr) {
+                    // 忽略销毁错误
                 }
             }
         } catch (error) {

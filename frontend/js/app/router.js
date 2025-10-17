@@ -426,9 +426,13 @@ export async function streamPath(path, signal) {
             reinitializeElements();
             const sortContainer = safeGetElementById('sort-container');
             if (sortContainer) {
+                // ✅ 优化：布局切换始终显示，排序按钮仅在相册列表时显示
                 if (hasMediaFiles) {
-                    renderLayoutToggleOnly();
+                    // 图片/视频页（相册页）：使用动画
+                    renderLayoutToggleOnly(true);
                 } else {
+                    // 相册列表页（首页/目录页）：不使用动画
+                    renderLayoutToggleOnly(false);
                     renderSortDropdown();
                 }
             }
@@ -535,7 +539,8 @@ async function executeSearch(query, signal) {
         if (AbortBus.get('page') !== signal) return;
         import('../shared/dom-elements.js').then(({ reinitializeElements }) => {
             reinitializeElements();
-            renderLayoutToggleOnly();
+            // 搜索页是图片列表，使用动画
+            renderLayoutToggleOnly(true);
         });
 
         applyLayoutMode();
@@ -564,11 +569,81 @@ async function executeSearch(query, signal) {
 }
 
 /**
+ * 预计算并设置topbar高度，确保在内容渲染前padding-top已正确
+ * @param {string} targetPath - 目标路径
+ */
+function preCalculateTopbarOffset(targetPath) {
+    const topbar = safeGetElementById('topbar');
+    const topbarContext = safeGetElementById('topbar-context');
+    const appContainer = safeGetElementById('app-container');
+    
+    if (!topbar || !appContainer) return;
+    
+    // 预测topbar-context是否会显示
+    // 规则：所有页面都显示context（包含排序和布局按钮）
+    // 首页显示空白面包屑+按钮，子目录显示完整面包屑+按钮
+    const willShowContext = true;
+    
+    // 立即设置topbar状态为完全展开（移除hidden和condensed）
+    safeClassList(topbar, 'remove', 'topbar--hidden');
+    safeClassList(topbar, 'remove', 'topbar--condensed');
+    
+    // 如果context存在但不应该显示，临时隐藏（避免测量错误）
+    let contextWasHidden = false;
+    if (topbarContext && !willShowContext) {
+        const currentDisplay = window.getComputedStyle(topbarContext).display;
+        if (currentDisplay !== 'none') {
+            contextWasHidden = true;
+            safeSetStyle(topbarContext, 'display', 'none');
+        }
+    }
+    
+    // 强制浏览器同步布局，获取真实高度
+    const topbarInner = topbar.querySelector('.topbar-inner');
+    const persistentHeight = topbarInner?.offsetHeight || 56;
+    
+    // context高度：只有在应该显示时才计算
+    let contextHeight = 0;
+    if (willShowContext && topbarContext) {
+        // 临时显示context以测量高度
+        const originalDisplay = topbarContext.style.display;
+        safeSetStyle(topbarContext, 'display', '');
+        contextHeight = topbarContext.offsetHeight;
+        // 恢复原始状态
+        if (contextWasHidden) {
+            safeSetStyle(topbarContext, 'display', 'none');
+        }
+    }
+    
+    // 计算总高度（+16px为额外间距）
+    const totalOffset = persistentHeight + contextHeight + 16;
+    
+    // 立即设置CSS变量
+    safeSetStyle(appContainer, '--topbar-offset', `${totalOffset}px`);
+    
+    routerLogger.debug('预计算topbar高度', {
+        path: targetPath,
+        willShowContext,
+        persistentHeight,
+        contextHeight,
+        totalOffset
+    });
+}
+
+/**
  * 准备新内容渲染，清理旧页面与状态，并处理loading效果。
  * @returns {Promise<{ cancelSkeleton():void }>} 控制对象
  */
 function prepareForNewContent() {
     return new Promise(resolve => {
+        // 0. 获取目标路径并预计算topbar高度（最优先）
+        const { cleanHashString, newDecodedPath } = sanitizeHash();
+        const navigation = buildNavigationContext(cleanHashString, newDecodedPath);
+        const targetPath = navigation?.pathOnly || '';
+        
+        // 预先计算并设置topbar高度，避免后续跳动
+        preCalculateTopbarOffset(targetPath);
+        
         // 1. 先清空内容，避免滚动时看到旧内容移动
         safeSetInnerHTML(elements.contentGrid, '');
         
@@ -581,8 +656,6 @@ function prepareForNewContent() {
         // 但不清除以下情况：
         // - 当前路径的位置（用于modal返回）
         // - 上级路径的位置（用于返回上级目录）
-        const { cleanHashString, newDecodedPath } = sanitizeHash();
-        const navigation = buildNavigationContext(cleanHashString, newDecodedPath);
         if (navigation && navigation.pathOnly && navigation.pathOnly !== state.currentBrowsePath) {
             // 判断是否是返回上级目录
             const isGoingBack = state.currentBrowsePath && 
@@ -596,12 +669,7 @@ function prepareForNewContent() {
             }
         }
         
-        // 4. 立即显示topbar，避免展出动画
-        const topbar = safeGetElementById('topbar');
-        if (topbar) {
-            safeClassList(topbar, 'remove', 'topbar--hidden');
-            safeClassList(topbar, 'remove', 'topbar--condensed');
-        }
+        // 4. topbar状态已在preCalculateTopbarOffset中处理
         
         const scroller = state.virtualScroller;
         if (scroller) {
@@ -677,20 +745,29 @@ function finalizeNewContent(pathKey) {
             stateRestored = window.restorePageLazyState(pathKey);
         }
         if (!stateRestored && safeClassList(elements.contentGrid, 'contains', 'masonry-mode')) {
-            applyMasonryLayout();
+            // ✅ 延迟执行瀑布流布局，确保图片容器已正确渲染
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    applyMasonryLayout();
+                });
+            });
         }
     }
     sortAlbumsByViewed();
     state.update('currentColumnCount', getMasonryColumns());
     preloadVisibleImages();
-    const scrollPositions = state.scrollPositions;
-    const scrollY = scrollPositions.get(pathKey);
-    if (scrollY && scrollY > 0) {
-        window.scrollTo({ top: scrollY, behavior: 'instant' });
-        const newScrollPositions = new Map(scrollPositions);
-        newScrollPositions.delete(pathKey);
-        state.scrollPositions = newScrollPositions;
-    }
+    
+    // ✅ 修复：不恢复滚动位置，始终从顶部开始
+    // 滚动位置恢复会导致进入新目录时出现在中间位置
+    // const scrollPositions = state.scrollPositions;
+    // const scrollY = scrollPositions.get(pathKey);
+    // if (scrollY && scrollY > 0) {
+    //     window.scrollTo({ top: scrollY, behavior: 'instant' });
+    //     const newScrollPositions = new Map(scrollPositions);
+    //     newScrollPositions.delete(pathKey);
+    //     state.scrollPositions = newScrollPositions;
+    // }
+    
     safeSetStyle(elements.contentGrid, 'minHeight', '');
     state.update('isInitialLoad', false);
 }

@@ -68,7 +68,7 @@ function ensureStyleHelpers() {
       right: 0;
       bottom: 0;
       left: 0;
-      z-index: 80;
+      z-index: 1500; /* ✅ 高于 topbar (1000)，低于 settings (2000) */
       display: flex;
       justify-content: flex-start;
       align-items: stretch;
@@ -445,7 +445,7 @@ function ensureStyleHelpers() {
     .dropdown-toggle:focus-visible { outline: none; border-color: rgba(79, 70, 229, 0.55); box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.18); }
     .dropdown-toggle svg { width: 16px; height: 16px; color: #4f46e5; }
     .dropdown { position: relative; }
-    .dropdown-menu { position: absolute; top: calc(100% + 6px); right: 0; min-width: 160px; border-radius: 10px; border: 1px solid var(--border-color); background: var(--surface-color); box-shadow: var(--shadow-md); padding: 8px; display: flex; flex-direction: column; gap: 4px; opacity: 0; transform: translateY(6px); pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease; z-index: 110; }
+    .dropdown-menu { position: absolute; top: calc(100% + 6px); right: 0; min-width: 160px; border-radius: 10px; border: 1px solid var(--border-color); background: var(--surface-color); box-shadow: var(--shadow-md); padding: 8px; display: flex; flex-direction: column; gap: 4px; opacity: 0; transform: translateY(6px); pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease; z-index: 1700; }
     .dropdown.is-open .dropdown-menu { opacity: 1; transform: translateY(0); pointer-events: auto; }
     .dropdown-item { display: flex; align-items: center; gap: 8px; justify-content: flex-start; padding: 8px 12px; border-radius: 8px; border: none; background: transparent; color: var(--text-color); font-size: 14px; cursor: pointer; }
     .dropdown-item:hover { background: var(--surface-muted); color: var(--primary); }
@@ -676,7 +676,7 @@ function ensureStyleHelpers() {
     .preview-status.is-pending { background: rgba(254, 202, 202, 0.7); color: #b91c1c; }
     .preview-time { font-size: 12px; color: var(--text-secondary); min-width: 110px; text-align: right; }
     .preview-actions-cell { display: flex; justify-content: flex-end; }
-    .download-modal-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.25); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 1100; }
+    .download-modal-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.25); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 1600; }
     .download-modal { width: min(560px, 100%); border-radius: 16px; background: var(--surface-color); border: 1px solid var(--border-color); box-shadow: var(--shadow-lg); padding: 24px; display: flex; flex-direction: column; gap: 18px; max-height: calc(100vh - 64px); overflow: visible; }
     .download-modal.modal-preview { width: min(1040px, 96vw); }
     .download-modal.modal-task { width: min(860px, 96vw); }
@@ -1018,17 +1018,9 @@ const TEMPLATE = `
                 <article class="settings-card">
                   <h3>基础路径</h3>
                   <div class="settings-grid grid-span-2">
-                    <label class="form-group">
+                    <label class="form-group full-span">
                       <span class="form-label">下载根目录</span>
                       <input type="text" class="form-input" data-field="base-folder" placeholder="例如：/data/downloads">
-                    </label>
-                    <label class="form-group">
-                      <span class="form-label">数据库文件</span>
-                      <input type="text" class="form-input" data-field="db-file" placeholder="downloads.db">
-                    </label>
-                    <label class="form-group">
-                      <span class="form-label">错误日志文件</span>
-                      <input type="text" class="form-input" data-field="error-log-file" placeholder="download-service/errors.log">
                     </label>
                   </div>
                   <div class="settings-meta-group">
@@ -1323,10 +1315,26 @@ function setRootVisible(visible) {
   if (visible) {
     document.documentElement.classList.add('download-page-active');
     document.body.classList.add('download-page-active');
+    
+    // 下载页状态栏沉浸（移动端）
+    const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeColorMeta) {
+      themeColorMeta.dataset.originalColor = themeColorMeta.getAttribute('content');
+      themeColorMeta.setAttribute('content', '#f7f8fa'); 
+    }
+    
     applyInteractiveEffects(rootEl);
   } else {
     document.documentElement.classList.remove('download-page-active');
     document.body.classList.remove('download-page-active');
+    
+    // 恢复主应用状态栏颜色
+    const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeColorMeta && themeColorMeta.dataset.originalColor) {
+      themeColorMeta.setAttribute('content', themeColorMeta.dataset.originalColor);
+      delete themeColorMeta.dataset.originalColor;
+    }
+    
     const notifContainer = document.getElementById('download-notification-container');
     if (notifContainer && notifContainer.parentNode) {
       notifContainer.parentNode.removeChild(notifContainer);

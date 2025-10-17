@@ -451,9 +451,6 @@ body { font-family: 'Noto Sans SC', sans-serif; }
     height: auto !important;
     /* ✅ 清除瀑布流可能设置的transform */
     transform: none !important;
-    /* 覆盖瀑布流的虚拟高度，避免高度错乱 */
-    content-visibility: visible !important;
-    contain-intrinsic-size: auto !important;
 }
 /* 统一网格卡片纵横比，消除行高参差导致的大面积空白 */
 #content-grid.grid-mode .grid-item .relative {
@@ -487,7 +484,7 @@ body { font-family: 'Noto Sans SC', sans-serif; }
 }
 .grid-item { break-inside: avoid; margin-bottom: 0.5rem; }
 @media (min-width: 640px) { .grid-item { margin-bottom: 1rem; } }
-#content-grid.grid-mode .grid-item { content-visibility: auto; contain-intrinsic-size: 300px 400px; }
+#content-grid.grid-mode .grid-item { contain-intrinsic-size: 300px 400px; }
 #modal { 
     transition: opacity 0.3s ease;
     background-color: rgba(17, 24, 39, 0.7);
@@ -647,65 +644,126 @@ body { font-family: 'Noto Sans SC', sans-serif; }
     margin-left: 0.5rem;
 }
 
-/* === 新增：密语气泡样式 === */
+/* === AI密语漫画气泡框样式 === */
+
+/* 气泡框弹出动画 */
+@keyframes comic-pop-in {
+    0% { transform: translateX(-50%) scale(0.5); opacity: 0; }
+    100% { transform: translateX(-50%) scale(1); opacity: 1; }
+}
+
+/* 打字机效果 */
+@keyframes typing {
+    from { width: 0; }
+    to { width: 100%; }
+}
+
+/* 光标闪烁 */
+@keyframes blink-caret {
+    from, to { border-color: transparent; }
+    50% { border-color: #000; }
+}
+
 .caption-bubble {
-    position: absolute;
-    bottom: calc(100% + 10px);
-    left: 50%;
-    transform: translateX(-50%);
-    width: 300px;
-    padding: 1rem;
-    background-color: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border-radius: 0.75rem;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #E5E7EB; /* gray-200 */
-    font-size: 0.9rem;
+    font-family: 'ZCOOL KuaiLe', cursive;
+    font-size: 18px;
     line-height: 1.6;
+    color: #000;
+    position: fixed;
+    top: 2%;
+    left: 50%;
+    transform: translateX(-50%) translateY(-10px);
+    padding: 20px 25px;
+    background: hsla(0, 0%, 100%, 0.659);
+    border: 3px solid #000;
+    border-radius: 10px;
+    box-shadow: 6px 6px 0 #000;
+    max-width: 420px;
+    min-width: 300px;
+    text-align: left;
+    z-index: 100;
     opacity: 0;
     visibility: hidden;
-    transition: opacity 0.3s ease, transform 0.3s ease, visibility 0.3s;
-    transform-origin: bottom center;
-    z-index: 100;
+    transition: opacity 0.3s ease, visibility 0.3s, transform 0.3s ease;
 }
 
 .caption-bubble.show {
     opacity: 1;
     visibility: visible;
-    transform: translateX(-50%) translateY(-5px);
+    transform: translateX(-50%) translateY(0);
 }
 
+/* 漫画气泡尾巴（左下角斜向左下指向图片） */
+.caption-bubble::before,
 .caption-bubble::after {
     content: '';
     position: absolute;
-    top: 100%;
-    left: 50%;
-    transform: translateX(-50%);
-    border-width: 8px;
+    width: 0;
+    height: 0;
     border-style: solid;
-    border-color: rgba(0, 0, 0, 0.6) transparent transparent transparent;
+}
+
+.caption-bubble::before {
+    bottom: -20px;
+    left: 30px;
+    border-width: 20px 20px 0 0;
+    border-color: #000 transparent transparent transparent;
+}
+
+.caption-bubble::after {
+    bottom: -17px;
+    left: 33px;
+    border-width: 17px 17px 0 0;
+    border-color: hsla(0, 0%, 100%, 0.659) transparent transparent transparent;
+}
+
+/* 打字机文本容器 */
+.caption-typing-text {
+    display: inline-block;
+    overflow: hidden;
+    white-space: nowrap;
+    border-right: 0.15em solid #000;
+    width: 0;
+}
+
+/* typing 类由 JS 动态控制动画参数 */
+.caption-typing-text.typing {
+    /* animation 由 JavaScript 动态设置 */
+}
+
+.caption-typing-text.typing-done {
+    white-space: normal;
+    border-right: none;
+    width: auto;
+    animation: none !important;
 }
 
 .caption-content .spinner {
     margin: 0 auto;
 }
 
-/* === 新增：移动端密语容器 === */
+.caption-content .loading-state {
+    color: #666;
+    font-size: 16px;
+}
+
+/* === 移动端AI密语容器（简化漫画风格） === */
 .mobile-caption-container {
-    color: white;
-    /* font-size: 0.8rem; */ /* 移除或注释掉这一行，使用默认字号 */
+    font-family: 'ZCOOL KuaiLe', cursive;
+    color: #000;
     text-align: center;
-    padding: 0.5rem 1rem;
+    padding: 12px 18px;
     max-width: calc(100vw - 3rem);
     white-space: pre-wrap;
     line-height: 1.5;
-    background-color: rgba(0, 0, 0, 0.2);
-    backdrop-filter: blur(5px);
-    -webkit-backdrop-filter: blur(5px);
-    border-radius: 0.75rem;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    font-size: 14px;
+}
+
+.mobile-caption-container:not(:empty) {
+    background: hsla(0, 0%, 100%, 0.659);
+    border: 2.5px solid #000;
+    border-radius: 20px;
+    box-shadow: 4px 4px 0 #000;
 }
 
 @media (min-width: 768px) {
@@ -1019,9 +1077,8 @@ body { font-family: 'Noto Sans SC', sans-serif; }
 .image-placeholder {
     position: absolute;
     inset: 0;
-    background: linear-gradient(45deg, #374151, #4B5563);
-    background-size: 200% 100%;
-    animation: loading-shimmer 1.5s infinite;
+    /* ✅ 改为全透明 */
+    background: transparent;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1029,7 +1086,7 @@ body { font-family: 'Noto Sans SC', sans-serif; }
     font-size: 0.875rem;
     z-index: 1;
     opacity: 1;
-    transition: opacity 0.3s ease-out;
+    transition: opacity 0.4s ease-out;
 }
 
 .lazy-image.loaded ~ .image-placeholder,
@@ -1088,7 +1145,7 @@ a.thumbnail-generating .image-placeholder {
   top: 0;
   left: 0;
   right: 0;
-  z-index: 45; /* 低于模态(50)，高于内容 */
+  z-index: 1000; /* ✅ 提高优先级，确保在所有内容之上（但低于模态9999） */
   transform: translateY(0);
   transition: transform 0.3s ease, background-color 0.3s ease;
   background-color: rgba(17,24,39,0.55);
@@ -1105,9 +1162,11 @@ a.thumbnail-generating .image-placeholder {
   transform: translateY(-100%);
 }
 
-/* 打开模态框时始终隐藏顶栏，避免遮挡 */
+/* 打开模态框、设置页或下载页时始终隐藏顶栏，避免遮挡 */
 html.modal-open .topbar,
-body.modal-open .topbar {
+body.modal-open .topbar,
+body.settings-open .topbar,
+body.download-page-active .topbar {
   transform: translateY(-100%) !important;
   opacity: 0;
   pointer-events: none;
@@ -1129,6 +1188,8 @@ body.modal-open .topbar {
 .with-fixed-topbar #page-inner { 
     padding-top: var(--topbar-offset, 96px) !important;
     padding-bottom: 0.5rem;  /* 8px */
+    /* ✅ 平滑过渡padding-top，消除路由切换时的突兀感 */
+    transition: padding-top 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* 响应式底部间距 */
@@ -1385,14 +1446,15 @@ body.modal-open .topbar {
 
 /* 布局切换按钮容器动画 */
 #layout-toggle-wrap {
+    /* 初始状态：隐藏 */
     opacity: 0;
     transform: translateX(-8px);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    /* 确保按钮可见性 */
     visibility: visible !important;
 }
 
 #layout-toggle-wrap.visible {
+    /* 显示状态：可见 */
     opacity: 1;
     transform: translateX(0);
 }
@@ -1421,18 +1483,20 @@ body.modal-open .topbar {
 #search-history .clear-history-btn { border: 1px solid transparent; }
 #search-history .clear-history-btn:hover { border-color: rgba(255,255,255,0.08); background: rgba(75,85,99,0.35); }
 
-/* 顶栏上下文层（面包屑 + 排序），随滚动折叠 */
+/* 顶栏上下文层（面包屑 + 排序），随topbar整体移动 */
 .topbar-context {
   width: 100%;
   margin: 0 auto;
   padding: 0 0.5rem 0.5rem 0.5rem;
-  transition: height 0.25s ease, opacity 0.25s ease, padding 0.25s ease;
+  /* ✅ 移除单独的过渡，让它跟随topbar整体移动 */
+  /* transition: height 0.25s ease, opacity 0.25s ease, padding 0.25s ease; */
 }
 /* 与 Tailwind container 的断点保持一致，确保上下文区域与内容区域左右对齐 */
 @media (min-width: 0px) { .topbar-context { max-width: min(96vw, 1760px); } }
 @media (min-width: 640px) { .topbar-context { padding-left: 1rem; padding-right: 1rem; } }
 @media (min-width: 768px) { .topbar-context { padding-left: 2rem; padding-right: 2rem; } }
-.topbar.topbar--condensed .topbar-context { height: 0; opacity: 0; padding-bottom: 0; overflow: hidden; }
+/* ✅ 移除单独的height/opacity动画，让整个topbar作为整体移动 */
+/* .topbar.topbar--condensed .topbar-context { height: 0; opacity: 0; padding-bottom: 0; overflow: hidden; } */
 
 /* === 覆盖：固定左右边距为 5px，容器不再受 max-width 限制（满足 4K 下不留巨大左右空白） === */
 :root { --page-side-gap: clamp(10px, 2.5vw, 30px); }
@@ -1993,7 +2057,7 @@ body.demo-body { background-color: var(--gray-900); color: white; display: flex;
 #settings-modal { 
     position: fixed; 
     inset: 0; 
-    z-index: 60; 
+    z-index: 2000; /* ✅ 高于 topbar (1000)，确保设置页在最上层 */
     background-color: rgba(0,0,0,0.5); 
     display: flex; 
     align-items: center; 
@@ -2186,7 +2250,61 @@ body.settings-open {
     .settings-tab-content { padding: 2rem; } .footer-btn { flex-grow: 0; }
     .settings-footer { background-color: rgba(17, 24, 39, 0.5); padding: 1rem 1.5rem; }
 }
-.password-prompt-overlay{position:fixed;inset:0;z-index:110;display:flex;align-items:center;justify-content:center;background-color:rgba(17,24,39,.3);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);opacity:0;pointer-events:none;transition:opacity .3s cubic-bezier(.4,0,.2,1)}.password-prompt-overlay.active{opacity:1;pointer-events:auto}.password-prompt-card{background-color:rgba(31,41,55,.8);border:1px solid rgba(255,255,255,.1);border-radius:1.5rem;padding:2rem;width:100%;max-width:380px;box-shadow:0 20px 25px -5px rgba(0,0,0,.1);color:#e5e7eb;text-align:center;transform:scale(.95);transition:transform .3s cubic-bezier(.4,0,.2,1)}.password-prompt-overlay.active .password-prompt-card{transform:scale(1)}.password-prompt-card.shake{animation:shake .5s cubic-bezier(.36,.07,.19,.97) both}.password-prompt-title{font-size:1.5rem;font-weight:700;color:#fff;margin-bottom:.5rem}.password-prompt-description{font-size:.875rem;color:#9ca3af;margin-bottom:1.5rem}.input-group{position:relative}.password-input{width:100%;background-color:rgba(17,24,39,.6);border:1px solid #4b5563;border-radius:.75rem;color:#fff;padding:.875rem 3rem .875rem 1rem;font-size:1rem;transition:border-color .2s,box-shadow .2s}.password-input:focus{outline:0;border-color:#a78bfa;box-shadow:0 0 0 3px rgba(167,139,250,.25)}.input-group.error .password-input{border-color:#f87171!important;box-shadow:0 0 0 3px rgba(248,113,113,.25)!important}.password-toggle-btn{position:absolute;top:50%;right:.75rem;transform:translateY(-50%);color:#9ca3af;cursor:pointer;background:0 0;border:none;padding:.25rem;transition:color .2s}.password-toggle-btn:hover{color:#fff}.success-icon{position:absolute;top:50%;right:.75rem;transform:translateY(-50%);color:#34d399;opacity:0;transition:opacity .2s;pointer-events:none}.input-group.success .success-icon{opacity:1}.input-group.success .password-toggle-btn{display:none}.error-message{color:#f87171;font-size:.875rem;text-align:left;min-height:1.25rem;padding:.25rem .25rem 0;transition:opacity .2s}.button-group{display:flex;gap:.75rem;margin-top:1.5rem}.prompt-btn{position:relative;flex-grow:1;padding:.75rem 1rem;border-radius:.75rem;font-weight:600;border:none;cursor:pointer;transition:all .2s ease-in-out;display:flex;align-items:center;justify-content:center}.cancel-btn{background-color:rgba(75,85,99,.5);color:#d1d5db}.cancel-btn:hover{background-color:rgba(75,85,99,.8);color:#fff}.confirm-btn{background-color:#8b5cf6;color:#fff}.confirm-btn:hover:not(:disabled){background-color:#7c3aed}.confirm-btn:disabled{background-color:#4b5563;cursor:not-allowed;opacity:.7}.confirm-btn .spinner{width:1.25rem;height:1.25rem;border-width:2px;position:absolute;opacity:0;transition:opacity .2s}.confirm-btn .btn-text{transition:opacity .2s}.confirm-btn.loading .spinner{opacity:1}.confirm-btn.loading .btn-text{opacity:0}
+.password-prompt-overlay{position:fixed;inset:0;z-index:2100;display:flex;align-items:center;justify-content:center;background-color:rgba(17,24,39,.3);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);opacity:0;pointer-events:none;transition:opacity .3s cubic-bezier(.4,0,.2,1)}.password-prompt-overlay.active{opacity:1;pointer-events:auto}.password-prompt-card{background-color:rgba(31,41,55,.8);border:1px solid rgba(255,255,255,.1);border-radius:1.5rem;padding:2rem;width:100%;max-width:380px;box-shadow:0 20px 25px -5px rgba(0,0,0,.1);color:#e5e7eb;text-align:center;transform:scale(.95);transition:transform .3s cubic-bezier(.4,0,.2,1)}.password-prompt-overlay.active .password-prompt-card{transform:scale(1)}.password-prompt-card.shake{animation:shake .5s cubic-bezier(.36,.07,.19,.97) both}.password-prompt-title{font-size:1.5rem;font-weight:700;color:#fff;margin-bottom:.5rem}.password-prompt-description{font-size:.875rem;color:#9ca3af;margin-bottom:1.5rem}.input-group{position:relative}.password-input{width:100%;background-color:rgba(17,24,39,.6);border:1px solid #4b5563;border-radius:.75rem;color:#fff;padding:.875rem 3rem .875rem 1rem;font-size:1rem;transition:border-color .2s,box-shadow .2s}.password-input:focus{outline:0;border-color:#a78bfa;box-shadow:0 0 0 3px rgba(167,139,250,.25)}.input-group.error .password-input{border-color:#f87171!important;box-shadow:0 0 0 3px rgba(248,113,113,.25)!important}.password-toggle-btn{position:absolute;top:50%;right:.75rem;transform:translateY(-50%);color:#9ca3af;cursor:pointer;background:0 0;border:none;padding:.25rem;transition:color .2s}.password-toggle-btn:hover{color:#fff}.success-icon{position:absolute;top:50%;right:.75rem;transform:translateY(-50%);color:#34d399;opacity:0;transition:opacity .2s;pointer-events:none}.input-group.success .success-icon{opacity:1}.input-group.success .password-toggle-btn{display:none}.error-message{color:#f87171;font-size:.875rem;text-align:left;min-height:1.25rem;padding:.25rem .25rem 0;transition:opacity .2s}.button-group{display:flex;gap:.75rem;margin-top:1.5rem}.prompt-btn{position:relative;flex-grow:1;padding:.75rem 1rem;border-radius:.75rem;font-weight:600;border:none;cursor:pointer;transition:all .2s ease-in-out;display:flex;align-items:center;justify-content:center}.cancel-btn{background-color:rgba(75,85,99,.5);color:#d1d5db}.cancel-btn:hover{background-color:rgba(75,85,99,.8);color:#fff}.confirm-btn{background-color:#8b5cf6;color:#fff}.confirm-btn:hover:not(:disabled){background-color:#7c3aed}.confirm-btn:disabled{background-color:#4b5563;cursor:not-allowed;opacity:.7}.confirm-btn .spinner{width:1.25rem;height:1.25rem;border-width:2px;position:absolute;opacity:0;transition:opacity .2s}.confirm-btn .btn-text{transition:opacity .2s}.confirm-btn.loading .spinner{opacity:1}.confirm-btn.loading .btn-text{opacity:0}
+/* 🔧 修复问题2：下载页密码框完整适配浅色主题 */
+html.download-page-active .password-prompt-overlay{
+    background-color:rgba(247,248,250,.85);
+}
+html.download-page-active .password-prompt-card{
+    background-color:#ffffff;
+    border:1px solid #e2e8f0;
+    box-shadow:0 20px 45px rgba(15,23,42,.12);
+}
+html.download-page-active .password-prompt-title{
+    color:#1a202c;
+}
+html.download-page-active .password-prompt-description{
+    color:#64748b;
+}
+html.download-page-active .password-input{
+    background-color:#f9fafb;
+    border:1px solid #e2e8f0;
+    color:#1a202c;
+}
+html.download-page-active .password-input::placeholder{
+    color:#94a3b8;
+}
+html.download-page-active .password-input:focus{
+    border-color:#4f46e5;
+    box-shadow:0 0 0 3px rgba(79,70,229,.15);
+}
+html.download-page-active .password-toggle-btn{
+    color:#64748b;
+}
+html.download-page-active .password-toggle-btn:hover{
+    color:#1a202c;
+}
+html.download-page-active .error-message{
+    color:#ef4444;
+}
+html.download-page-active .cancel-btn{
+    background-color:#f1f5f9;
+    color:#64748b;
+}
+html.download-page-active .cancel-btn:hover{
+    background-color:#e2e8f0;
+    color:#1a202c;
+}
+html.download-page-active .confirm-btn{
+    background-color:#4f46e5;
+}
+html.download-page-active .confirm-btn:hover:not(:disabled){
+    background-color:#4338ca;
+}
+html.download-page-active .confirm-btn:disabled{
+    background-color:#cbd5e1;
+    color:#94a3b8;
+}
 #ai-prompt.form-textarea {
     min-height: 160px;
 }
@@ -2247,7 +2365,8 @@ body.settings-open {
 .album-card:hover {
     /* 避免外层元素缩放引发圆角裁剪失效 */
     transform: none;
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+    /* ✅ 移除阴影 */
+    box-shadow: none;
 }
 
 /* 仅缩放内部内容容器，确保外层圆角不受影响 */
@@ -3511,24 +3630,44 @@ body.settings-open {
 }
 
 
-/* 优化后的加载器容器：始终占据空间，避免重排 */
+/* 🔧 修复问题2：加载器始终占据空间，避免布局偏移导致滚动抖动 */
+#infinite-scroll-loader {
+    /* 移除col-span-full，改用width: 100% */
+    width: 100%;
+    /* 始终占据空间，即使hidden */
+    min-height: 80px !important;
+    display: flex !important; /* 覆盖hidden的display:none */
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 2rem 0;
+    /* 默认透明 */
+    opacity: 0;
+    transform: scale(0.95);
+    transition: opacity 0.2s ease-in-out, transform 0.2s ease-in-out;
+    pointer-events: none;
+}
+
+/* visible类控制可见性，不改变布局 */
+#infinite-scroll-loader.visible {
+    opacity: 1 !important;
+    transform: scale(1);
+    pointer-events: auto;
+}
+
+/* 保持旧容器样式的兼容性（如果将来添加） */
 #infinite-scroll-loader-container {
-    /* 让它始终占据空间，即使在隐藏时 */
     min-height: 80px;
     display: flex;
     justify-content: center;
     align-items: center;
     width: 100%;
-    /* 默认状态：不可见但占据空间 */
     opacity: 0;
     transform: scale(0.95);
-    /* 平滑过渡 */
     transition: opacity 0.2s ease-in-out, transform 0.2s ease-in-out;
-    /* 防止用户意外点击到透明的加载器 */
     pointer-events: none;
 }
 
-/* 当加载器需要显示时的状态 */
 #infinite-scroll-loader-container.visible {
     opacity: 1;
     transform: scale(1);

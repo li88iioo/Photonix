@@ -11,6 +11,10 @@
     <link rel="manifest" href="/manifest.json">   
     <link rel="preload" href="/output.css" as="style">
     <link rel="modulepreload" href="/js/dist/main.js">
+    <!-- AI密语漫画字体 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap" rel="stylesheet">
     <style>
         body, html {
             font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif;
@@ -70,7 +74,7 @@
                 <div id="loading" class="hidden">
                 </div>
                 <div id="content-grid"></div>
-                <div id="infinite-scroll-loader" class="hidden text-center py-8 col-span-full">
+                <div id="infinite-scroll-loader">
                     <div class="flex items-center justify-center">
                         <div class="spinner"></div>
                         <p class="ml-4 text-gray-400">正在加载更多...</p>
@@ -110,22 +114,17 @@
                     <p class="hint-text">使用滚轮或键盘左右键翻页</p>
                 </div>
             </div>
+            <!-- AI密语气泡框（PC端：图片右上角） -->
+            <div id="caption-bubble" class="caption-bubble hidden md:block">
+                <div id="caption-container" class="caption-content"></div>
+                <div id="caption-actions-container" class="mt-3 pt-3 border-t border-t-black/10"></div>
+            </div>
+            
             <div id="modal-toolbar"
                 class="absolute bottom-0 left-0 right-0 p-2 sm:p-4 flex justify-center items-center">
                 <div class="toolbar-inner flex items-center space-x-2 sm:space-x-4 p-2 rounded-full">
                     <div id="ai-controls-container" class="hidden">
                         <div id="caption-container-mobile" class="mobile-caption-container md:hidden"></div>
-                        <div id="caption-bubble-wrapper" class="relative hidden md:block"><button
-                                id="toggle-caption-btn" class="modal-action-btn"><svg xmlns="http://www.w3.org/2000/svg"
-                                    width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                                </svg><span>画中密语</span></button>
-                            <div id="caption-bubble" class="caption-bubble">
-                                <div id="caption-container" class="caption-content"></div>
-                                <div id="caption-actions-container" class="mt-3 pt-3 border-t border-t-white/10"></div>
-                            </div>
-                        </div>
                     </div>
                 </div>
             </div>

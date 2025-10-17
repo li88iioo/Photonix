@@ -90,12 +90,8 @@ function handleDocumentClick(e) {
         }
     }
 
-    // 3. 关闭 AI 标题气泡
-    if (elements.captionBubble && safeClassList(elements.captionBubble, 'contains', 'show') &&
-        !elements.captionBubble.contains(e.target) &&
-        (!elements.toggleCaptionBtn || !elements.toggleCaptionBtn.contains(e.target))) {
-        safeClassList(elements.captionBubble, 'remove', 'show');
-    }
+    // 3. PC端密语气泡框现在默认显示，不需要点击外部关闭
+    // (移动端密语在工具栏中)
 
     // 4. 关闭相册删除浮层
     if (activeAlbumDeleteOverlay) {
@@ -452,6 +448,22 @@ async function handleScrollCore(type) {
             
             const { contentElements: firstElements, newMediaUrls: firstUrls, fragment } = renderResult;
             
+            // ✅ 在瀑布流模式下，先隐藏新元素，避免"闪过"
+            const isMasonryMode = safeClassList(elements.contentGrid, 'contains', 'masonry-mode');
+            if (isMasonryMode) {
+                if (fragment && fragment.children.length > 0) {
+                    Array.from(fragment.children).forEach(child => {
+                        child.style.opacity = '0';
+                        child.style.pointerEvents = 'none';
+                    });
+                } else {
+                    firstElements.forEach(el => {
+                        el.style.opacity = '0';
+                        el.style.pointerEvents = 'none';
+                    });
+                }
+            }
+            
             // 批量插入第一批 DOM 元素
             if (fragment && fragment.children.length > 0) {
                 elements.contentGrid.appendChild(fragment);
@@ -468,6 +480,15 @@ async function handleScrollCore(type) {
                         : renderSearchGrid(remainingBatch, state.currentPhotos.length);
                     
                     const { contentElements: remainingElements, newMediaUrls: remainingUrls } = remainingResult;
+                    
+                    // ✅ 同样先隐藏延迟批次的元素
+                    if (isMasonryMode) {
+                        remainingElements.forEach(el => {
+                            el.style.opacity = '0';
+                            el.style.pointerEvents = 'none';
+                        });
+                    }
+                    
                     elements.contentGrid.append(...remainingElements);
                     state.currentPhotos = state.currentPhotos.concat(remainingUrls);
                     
@@ -768,8 +789,6 @@ export function setupEventListeners() {
     // 回到顶部按钮
     const backToTopBtn = safeGetElementById('back-to-top-btn');
     if (backToTopBtn) {
-        // 滚动处理已统一在 handleScroll 监听器中
-
         // 点击回到顶部
         uiGroup.add(backToTopBtn, 'click', () => {
             window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -819,20 +838,34 @@ function setupTopbarInteractions() {
     function onScroll() {
         const currentY = window.scrollY;
         const delta = currentY - lastScrollY;
-        const isScrollingDown = delta > 0;
-
+        
+        // ✅ 增加滚动阈值，避免滚动到底部时的微小波动导致topbar抽搐
+        const SCROLL_DELTA_THRESHOLD = 5; // 忽略小于5px的滚动
+        
+        // 检测是否在页面底部（允许10px误差）
+        const isAtBottom = (window.innerHeight + window.scrollY) >= (document.documentElement.scrollHeight - 10);
+        
         if (currentY < 50) {
+            // 顶部50px内：完全显示
             safeClassList(topbar, 'remove', 'topbar--hidden');
             safeClassList(topbar, 'remove', 'topbar--condensed');
-        } else if (isScrollingDown && currentY > UI.SCROLL_THRESHOLD_DOWN) {
+            lastScrollY = currentY;
+        } else if (isAtBottom) {
+            // ✅ 在底部时：保持当前状态不变，避免抽搐
+            // 不更新lastScrollY，不改变topbar状态
+            return;
+        } else if (delta > SCROLL_DELTA_THRESHOLD && currentY > UI.SCROLL_THRESHOLD_DOWN) {
+            // 明显向下滚动：隐藏topbar
             safeClassList(topbar, 'add', 'topbar--hidden');
             safeClassList(topbar, 'add', 'topbar--condensed');
-        } else if (!isScrollingDown) {
+            lastScrollY = currentY;
+        } else if (delta < -SCROLL_DELTA_THRESHOLD) {
+            // 明显向上滚动：显示topbar
             safeClassList(topbar, 'remove', 'topbar--hidden');
             safeClassList(topbar, 'remove', 'topbar--condensed');
+            lastScrollY = currentY;
         }
-
-        lastScrollY = currentY;
+        // 微小滚动（|delta| <= 5px）不更新状态
     }
 
     let lastTopbarOffset = 0;
@@ -867,11 +900,9 @@ function setupTopbarInteractions() {
     }
 
     const contextEl = safeGetElementById('topbar-context');
+    // ✅ 移除多次延迟重试，改由router.js在路由切换前预计算
+    // 仅保留初始化调用和响应式更新
     updateTopbarOffset();
-    requestAnimationFrame(() => requestAnimationFrame(updateTopbarOffset));
-    setTimeout(updateTopbarOffset, 120);
-    setTimeout(updateTopbarOffset, 360);
-    topbarGroup.add(window, 'load', updateTopbarOffset);
     topbarGroup.add(window, 'resize', () => { updateTopbarOffset(); });
     topbarGroup.add(window, 'scroll', () => {
         if (ticking) return;
@@ -1161,16 +1192,8 @@ function setupModalInteractions() {
         }
     });
 
-    modalGroup.add(elements.toggleCaptionBtn, 'click', (e) => {
-        e.stopPropagation();
-        safeClassList(elements.captionBubble, 'toggle', 'show');
-    });
-
-    modalGroup.add(document, 'click', (e) => {
-        if (safeClassList(elements.captionBubble, 'contains', 'show') && !elements.captionBubble.contains(e.target) && !elements.toggleCaptionBtn.contains(e.target)) {
-            safeClassList(elements.captionBubble, 'remove', 'show');
-        }
-    });
+    // PC端密语气泡框现在默认显示，不需要切换按钮
+    // 移动端密语显示在工具栏中
 
     modalGroup.add(elements.modal, 'wheel', (e) => {
         if (window.innerWidth <= 768) return;

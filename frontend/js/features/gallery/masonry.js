@@ -7,6 +7,7 @@ import { elements } from '../../shared/dom-elements.js';
 import { getMasonryBreakpoints, getMasonryColumnsConfig, getMasonryConfig, VIRTUAL_SCROLL } from '../../core/constants.js';
 import { createModuleLogger } from '../../core/logger.js';
 import { safeSetInnerHTML, safeSetStyle, safeClassList } from '../../shared/dom-utils.js';
+import { displayAlbum } from './ui.js';
 
 const masonryLogger = createModuleLogger('Masonry');
 
@@ -89,7 +90,9 @@ export function applyMasonryLayoutIncremental(newItems) {
         
         // 预读新项目的期望高度
         const itemsData = Array.from(newItems).map(item => {
+            clearGridItemInlineStyles(item);
             const expectedHeight = getExpectedItemHeight(item, itemWidth);
+            item.dataset.expectedHeight = String(expectedHeight);
             return { item, expectedHeight };
         });
         
@@ -110,24 +113,19 @@ export function applyMasonryLayoutIncremental(newItems) {
         requestAnimationFrame(() => {
             Array.from(newItems).forEach((item, index) => {
                 const pos = positions[index];
-                item.style.cssText = `
-                    position: absolute;
-                    width: ${pos.width}px;
-                    height: ${pos.height}px;
-                    transform: translate3d(${pos.left}px, ${pos.top}px, 0);
-                    will-change: transform;
-                `;
+                item.style.position = 'absolute';
+                item.style.width = `${pos.width}px`;
+                item.style.height = `${pos.height}px`;
+                item.style.transform = `translate3d(${pos.left}px, ${pos.top}px, 0)`;
+                item.style.willChange = 'transform';
+                
+                // ✅ 布局完成后恢复可见性
+                item.style.opacity = '';
+                item.style.pointerEvents = '';
             });
             
             // 更新容器高度
             safeSetStyle(contentGrid, 'height', `${Math.max(...masonryColumnHeights)}px`);
-            
-            // 触发懒加载
-            setTimeout(() => {
-                if (!document.querySelector('.lazy-image[style*="opacity"]')) {
-                    triggerVisibleImagesLazyLoad();
-                }
-            }, 50);
         });
         
     } finally {
@@ -159,8 +157,10 @@ export function applyMasonryLayout() {
         const itemWidth = (containerWidth - (numColumns - 1) * columnGap) / numColumns;
         
         // 预读所有元素的期望高度
+        // ✅ 不清除旧样式，避免元素瞬间变为静态定位导致"全屏闪过"
         const itemsData = items.map(item => {
             const expectedHeight = getExpectedItemHeight(item, itemWidth);
+            item.dataset.expectedHeight = String(expectedHeight);
             return { item, expectedHeight };
         });
         
@@ -177,34 +177,46 @@ export function applyMasonryLayout() {
             return position;
         });
         
-        // ✅ 阶段3: 使用requestAnimationFrame批量写入（单次reflow）
-        requestAnimationFrame(() => {
-            // 使用transform代替top/left以利用GPU加速
-            items.forEach((item, index) => {
-                const pos = positions[index];
-                
-                // 使用cssText批量设置样式，减少重排
-                item.style.cssText = `
-                    position: absolute;
-                    width: ${pos.width}px;
-                    height: ${pos.height}px;
-                    transform: translate3d(${pos.left}px, ${pos.top}px, 0);
-                    will-change: transform;
-                `;
-            });
+        // ✅ 阶段3: 批量应用样式（减少闪烁）
+        // 使用transform代替top/left以利用GPU加速
+        items.forEach((item, index) => {
+            const pos = positions[index];
             
-            // 设置容器高度
-            const maxHeight = Math.max(...masonryColumnHeights);
-            safeSetStyle(contentGrid, 'height', `${maxHeight}px`);
+            // ✅ 验证位置数据的有效性
+            if (!pos || isNaN(pos.width) || isNaN(pos.height) || isNaN(pos.left) || isNaN(pos.top)) {
+                masonryLogger.warn('Invalid position data for item', index, pos);
+                return;
+            }
             
-            // 触发懒加载（延迟以优化性能）
-            setTimeout(() => {
-                const hasVirtualScrollMode = safeClassList(contentGrid, 'contains', 'virtual-scroll-mode');
-                const hasUnloadedImages = contentGrid.querySelector('.lazy-image:not(.loaded)');
-                if (hasVirtualScrollMode && hasUnloadedImages) {
-                    triggerVisibleImagesLazyLoad();
-                }
-            }, 50); // 减少延迟到50ms
+            // ✅ 防止异常大的值导致布局错乱
+            if (pos.height > 10000 || pos.top > 100000) {
+                masonryLogger.warn('Abnormally large values detected', { index, height: pos.height, top: pos.top });
+                // 使用合理的默认值
+                pos.height = Math.min(pos.height, 800);
+            }
+            
+            item.style.position = 'absolute';
+            item.style.width = `${pos.width}px`;
+            item.style.height = `${pos.height}px`;
+            item.style.transform = `translate3d(${pos.left}px, ${pos.top}px, 0)`;
+            item.style.willChange = 'transform';
+            
+            // ✅ 布局完成后恢复可见性
+            item.style.opacity = '';
+            item.style.pointerEvents = '';
+        });
+        
+        // 设置容器高度
+        const maxHeight = Math.max(...masonryColumnHeights);
+        safeSetStyle(contentGrid, 'height', `${maxHeight}px`);
+        
+        // ✅ 调试信息
+        masonryLogger.debug('Masonry layout applied', {
+            itemCount: items.length,
+            columns: numColumns,
+            containerHeight: maxHeight,
+            firstItemPos: positions[0],
+            lastItemPos: positions[positions.length - 1]
         });
         
     } finally {
@@ -238,7 +250,23 @@ function getElementHeight(element) {
         const computedStyle = window.getComputedStyle(element);
         height = parseInt(computedStyle.height);
         if (isNaN(height) || height === 0) {
-            height = getMasonryConfig('DEFAULT_ITEM_HEIGHT');
+            // ✅ 尝试从data属性计算高度
+            const dw = parseFloat(element.getAttribute('data-width'));
+            const dh = parseFloat(element.getAttribute('data-height'));
+            if (!isNaN(dw) && !isNaN(dh) && dw > 0 && dh > 0) {
+                // 假设元素宽度为容器宽度/列数
+                const numColumns = getMasonryColumns();
+                const containerWidth = element.parentElement?.offsetWidth || 0;
+                if (containerWidth > 0) {
+                    const columnGap = getMasonryConfig('COLUMN_GAP');
+                    const itemWidth = (containerWidth - (numColumns - 1) * columnGap) / numColumns;
+                    height = itemWidth * (dh / dw);
+                }
+            }
+            // 最后的回退
+            if (!height || height === 0) {
+                height = getMasonryConfig('DEFAULT_ITEM_HEIGHT');
+            }
         }
     }
     return height;
@@ -254,9 +282,36 @@ function getExpectedItemHeight(item, itemWidth) {
     const dw = parseFloat(item.getAttribute('data-width'));
     const dh = parseFloat(item.getAttribute('data-height'));
     if (!Number.isNaN(dw) && !Number.isNaN(dh) && dw > 0 && dh > 0 && itemWidth > 0) {
-        return itemWidth * (dh / dw);
+        // ✅ 计算高度，但添加合理性检查
+        const calculatedHeight = itemWidth * (dh / dw);
+        
+        // ✅ 防止异常大的高度（比如极瘦的图片）
+        // 正常图片的高宽比不应超过 10:1
+        const maxReasonableHeight = itemWidth * 10;
+        if (calculatedHeight > maxReasonableHeight) {
+            masonryLogger.warn('Abnormal aspect ratio detected', { 
+                dataWidth: dw, 
+                dataHeight: dh, 
+                ratio: dh/dw,
+                calculatedHeight,
+                usingMaxHeight: maxReasonableHeight 
+            });
+            return maxReasonableHeight;
+        }
+        
+        return calculatedHeight;
     }
     return getElementHeight(item);
+}
+
+function clearGridItemInlineStyles(item) {
+    if (!item || !(item instanceof HTMLElement)) return;
+    item.style.removeProperty('height');
+    item.style.removeProperty('width');
+    item.style.removeProperty('transform');
+    item.style.removeProperty('position');
+    item.style.removeProperty('will-change');
+    delete item.dataset.expectedHeight;
 }
 
 /**
@@ -568,10 +623,13 @@ export function createVirtualScrollRenderCallback(item, element, index) {
  * @returns {HTMLElement} 渲染后的元素
  */
 function renderAlbumForVirtualScroll(albumData, element, index) {
-    // 实现相册渲染逻辑（此处为占位符）
-    element.className = 'album-card virtual-item';
-    element.textContent = albumData.name || `相册 ${index}`;
-    return element;
+    const albumNode = displayAlbum(albumData);
+    safeClassList(albumNode, 'add', 'virtual-scroll-item');
+    albumNode.dataset.index = index;
+    albumNode.style.position = 'absolute';
+    albumNode.style.top = '0px';
+    albumNode.style.left = '0px';
+    return albumNode;
 }
 
 /**
@@ -637,11 +695,13 @@ function renderMediaForVirtualScroll(type, mediaData, element, index) {
     // 图片事件监听
     img.onload = () => {
         safeClassList(img, 'add', 'loaded');
-        triggerMasonryUpdate();
+        // ✅ 虚拟滚动模式下不触发重排，位置已由虚拟滚动器管理
+        // triggerMasonryUpdate();
     };
     img.onerror = () => {
         safeClassList(img, 'add', 'error');
-        triggerMasonryUpdate();
+        // ✅ 虚拟滚动模式下不触发重排
+        // triggerMasonryUpdate();
     };
     relativeDiv.appendChild(img);
 
@@ -680,7 +740,7 @@ function renderMediaForVirtualScroll(type, mediaData, element, index) {
 
     // 外层容器
     const gridItem = document.createElement('div');
-    gridItem.className = 'grid-item photo-link';
+    gridItem.className = 'grid-item photo-link virtual-scroll-item';
     gridItem.setAttribute('data-url', mediaData.originalUrl);
     gridItem.setAttribute('data-index', index);
     gridItem.setAttribute('data-width', mediaData.width || 0);

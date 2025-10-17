@@ -5,17 +5,12 @@
 
 const Database = require('better-sqlite3');
 const { v4: uuidv4 } = require('uuid');
-const LRUCache = require('./LRUCache');
 
 class HistoryTracker {
   constructor(config, paths) {
     this.config = config;
     this.paths = paths;
     this.db = null;
-    this.historyCache = new LRUCache(200); // 使用LRU缓存管理历史
-    this.historyIndex = []; // 历史ID索引
-    this.MAX_HISTORY_ENTRIES = 200;
-    this.MAX_RECENT_ENTRIES = 25;
   }
 
   /**
@@ -35,7 +30,7 @@ class HistoryTracker {
       this.db = new Database(this.paths.databasePath);
       this.db.pragma('journal_mode = WAL');
       
-      // 创建下载历史表
+      // 创建下载历史表（用于去重查询）
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS download_history (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,12 +42,32 @@ class HistoryTracker {
         );
       `);
       
-      // 创建索引
+      // 创建去重索引
       this.db.exec('CREATE INDEX IF NOT EXISTS idx_history_title ON download_history(post_title);');
       this.db.exec('CREATE INDEX IF NOT EXISTS idx_history_feed_title ON download_history(feed_title, post_title);');
       this.db.exec('CREATE INDEX IF NOT EXISTS idx_history_link ON download_history(entry_link);');
       
-      // P1优化: 创建任务表
+      // 创建完整历史记录表（包含文件信息和大小）
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS download_history_full (
+          id TEXT PRIMARY KEY,
+          task_id TEXT NOT NULL,
+          identifier TEXT,
+          title TEXT NOT NULL,
+          feed TEXT NOT NULL,
+          article_url TEXT,
+          images_json TEXT NOT NULL,
+          completed_at TEXT NOT NULL,
+          total_size INTEGER DEFAULT 0
+        );
+      `);
+      
+      // 创建完整历史表索引
+      this.db.exec('CREATE INDEX IF NOT EXISTS idx_history_full_completed ON download_history_full(completed_at DESC);');
+      this.db.exec('CREATE INDEX IF NOT EXISTS idx_history_full_task ON download_history_full(task_id);');
+      this.db.exec('CREATE INDEX IF NOT EXISTS idx_history_full_size ON download_history_full(total_size);');
+      
+      // 创建任务表
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS tasks (
           id TEXT PRIMARY KEY,
@@ -148,30 +163,57 @@ class HistoryTracker {
   /**
    * 添加历史记录条目
    * @param {object} entry 历史条目
+   * @returns {object} 标准化的历史条目
    */
   addHistoryEntry(entry) {
+    if (!this.db) {
+      console.warn('数据库未初始化，无法添加历史记录');
+      return null;
+    }
+
     const normalizedEntry = {
       id: entry.id || uuidv4(),
       taskId: entry.taskId,
-      identifier: entry.identifier,
-      title: entry.title,
-      feed: entry.feed,
-      articleUrl: entry.articleUrl,
-      images: entry.images || [],
+      identifier: entry.identifier || '',
+      title: entry.title || '(未命名)',
+      feed: entry.feed || '',
+      articleUrl: entry.articleUrl || null,
+      images: Array.isArray(entry.images) ? entry.images : [],
       completedAt: entry.completedAt || new Date().toISOString(),
       size: entry.size || 0
     };
-    
-    // 添加到缓存和索引
-    this.historyCache.set(normalizedEntry.id, normalizedEntry);
-    this.historyIndex.unshift(normalizedEntry.id);
-    
-    if (this.historyIndex.length > this.MAX_HISTORY_ENTRIES) {
-      const removedIds = this.historyIndex.splice(this.MAX_HISTORY_ENTRIES);
-      removedIds.forEach(id => this.historyCache.delete(id));
+
+    try {
+      const stmt = this.db.prepare(`
+        INSERT INTO download_history_full (
+          id, task_id, identifier, title, feed, article_url, 
+          images_json, completed_at, total_size
+        ) VALUES (
+          @id, @taskId, @identifier, @title, @feed, @articleUrl,
+          @imagesJson, @completedAt, @totalSize
+        )
+      `);
+
+      stmt.run({
+        id: normalizedEntry.id,
+        taskId: normalizedEntry.taskId,
+        identifier: normalizedEntry.identifier,
+        title: normalizedEntry.title,
+        feed: normalizedEntry.feed,
+        articleUrl: normalizedEntry.articleUrl,
+        imagesJson: JSON.stringify(normalizedEntry.images),
+        completedAt: normalizedEntry.completedAt,
+        totalSize: normalizedEntry.size
+      });
+
+      return normalizedEntry;
+    } catch (error) {
+      console.error('添加历史记录失败', { 
+        error: error.message,
+        entryId: normalizedEntry.id
+      });
+      return null;
     }
-    
-    return normalizedEntry;
   }
 
   /**
@@ -179,9 +221,56 @@ class HistoryTracker {
    * @param {Array} entries 历史条目数组
    */
   addHistoryBatch(entries) {
-    if (!Array.isArray(entries) || entries.length === 0) return;
-    
-    entries.forEach(entry => this.addHistoryEntry(entry));
+    if (!this.db || !Array.isArray(entries) || entries.length === 0) {
+      return;
+    }
+
+    const insertStmt = this.db.prepare(`
+      INSERT INTO download_history_full (
+        id, task_id, identifier, title, feed, article_url,
+        images_json, completed_at, total_size
+      ) VALUES (
+        @id, @taskId, @identifier, @title, @feed, @articleUrl,
+        @imagesJson, @completedAt, @totalSize
+      )
+    `);
+
+    const transaction = this.db.transaction((items) => {
+      for (const entry of items) {
+        const normalizedEntry = {
+          id: entry.id || uuidv4(),
+          taskId: entry.taskId,
+          identifier: entry.identifier || '',
+          title: entry.title || '(未命名)',
+          feed: entry.feed || '',
+          articleUrl: entry.articleUrl || null,
+          images: Array.isArray(entry.images) ? entry.images : [],
+          completedAt: entry.completedAt || new Date().toISOString(),
+          size: entry.size || 0
+        };
+
+        insertStmt.run({
+          id: normalizedEntry.id,
+          taskId: normalizedEntry.taskId,
+          identifier: normalizedEntry.identifier,
+          title: normalizedEntry.title,
+          feed: normalizedEntry.feed,
+          articleUrl: normalizedEntry.articleUrl,
+          imagesJson: JSON.stringify(normalizedEntry.images),
+          completedAt: normalizedEntry.completedAt,
+          totalSize: normalizedEntry.size
+        });
+      }
+    });
+
+    try {
+      transaction(entries);
+    } catch (error) {
+      console.error('批量添加历史记录失败', { 
+        error: error.message,
+        count: entries.length
+      });
+    }
   }
 
   /**
@@ -189,21 +278,26 @@ class HistoryTracker {
    * @param {number} limit 限制数量
    * @returns {Array} 历史记录
    */
-  getRecentHistory(limit = this.MAX_RECENT_ENTRIES) {
-    return this.historyIndex
-      .slice(0, limit)
-      .map(id => this.historyCache.peek(id))
-      .filter(Boolean);
-  }
+  getRecentHistory(limit = 25) {
+    if (!this.db) {
+      return [];
+    }
 
-  /**
-   * 获取全部历史记录
-   * @returns {Array} 历史记录
-   */
-  getAllHistory() {
-    return this.historyIndex
-      .map(id => this.historyCache.peek(id))
-      .filter(Boolean);
+    const safeLimit = Math.max(1, Math.min(Number(limit) || 25, 1000));
+
+    try {
+      const stmt = this.db.prepare(`
+        SELECT * FROM download_history_full 
+        ORDER BY completed_at DESC 
+        LIMIT ?
+      `);
+      const rows = stmt.all(safeLimit);
+
+      return rows.map(row => this.deserializeHistoryEntry(row)).filter(Boolean);
+    } catch (error) {
+      console.error('获取最近历史记录失败', { error: error.message });
+      return [];
+    }
   }
 
   /**
@@ -211,7 +305,18 @@ class HistoryTracker {
    * @returns {number}
    */
   getHistoryCount() {
-    return this.historyIndex.length;
+    if (!this.db) {
+      return 0;
+    }
+
+    try {
+      const stmt = this.db.prepare('SELECT COUNT(*) as count FROM download_history_full');
+      const result = stmt.get();
+      return result.count || 0;
+    } catch (error) {
+      console.error('获取历史记录数量失败', { error: error.message });
+      return 0;
+    }
   }
 
   /**
@@ -220,26 +325,51 @@ class HistoryTracker {
    * @returns {{entries:Array,pagination:{page:number,pageSize:number,total:number}}}
    */
   getHistoryPage({ page = 1, pageSize = 50 } = {}) {
+    if (!this.db) {
+      return {
+        entries: [],
+        pagination: { page: 1, pageSize: 50, total: 0 }
+      };
+    }
+
     const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
     const safeSize = Number.isFinite(pageSize) && pageSize > 0
-      ? Math.min(Math.floor(pageSize), this.MAX_HISTORY_ENTRIES)
+      ? Math.min(Math.floor(pageSize), 200)
       : 50;
-    const start = (safePage - 1) * safeSize;
-    const slice = this.historyIndex.slice(start, start + safeSize);
-    const entries = slice
-      .map((id) => this.historyCache.peek(id))
-      .filter(Boolean)
-      .map((entry) => this.normalizeEntryShape(entry))
-      .filter(Boolean);
+    const offset = (safePage - 1) * safeSize;
 
-    return {
-      entries,
-      pagination: {
-        page: safePage,
-        pageSize: safeSize,
-        total: this.getHistoryCount()
-      }
-    };
+    try {
+      const countStmt = this.db.prepare('SELECT COUNT(*) as count FROM download_history_full');
+      const total = countStmt.get().count || 0;
+
+      const dataStmt = this.db.prepare(`
+        SELECT * FROM download_history_full 
+        ORDER BY completed_at DESC 
+        LIMIT ? OFFSET ?
+      `);
+      const rows = dataStmt.all(safeSize, offset);
+
+      const entries = rows
+        .map(row => this.deserializeHistoryEntry(row))
+        .filter(Boolean)
+        .map(entry => this.normalizeEntryShape(entry))
+        .filter(Boolean);
+
+      return {
+        entries,
+        pagination: {
+          page: safePage,
+          pageSize: safeSize,
+          total
+        }
+      };
+    } catch (error) {
+      console.error('分页查询历史记录失败', { error: error.message });
+      return {
+        entries: [],
+        pagination: { page: safePage, pageSize: safeSize, total: 0 }
+      };
+    }
   }
 
   /**
@@ -247,26 +377,47 @@ class HistoryTracker {
    * @returns {number}
    */
   getTotalSizeEstimate() {
-    return this.historyCache
-      .values()
-      .reduce((sum, entry) => sum + this.calculateEntrySize(entry), 0);
+    if (!this.db) {
+      return 0;
+    }
+
+    try {
+      const stmt = this.db.prepare('SELECT SUM(total_size) as total FROM download_history_full');
+      const result = stmt.get();
+      return result.total || 0;
+    } catch (error) {
+      console.error('获取存储大小失败', { error: error.message });
+      return 0;
+    }
   }
 
   /**
-   * 设置历史记录（从持久化恢复）
-   * @param {Array} history 历史记录数组
+   * 从数据库行反序列化历史条目
+   * @param {object} row 数据库行
+   * @returns {object|null}
    */
-  setHistory(history) {
-    const items = Array.isArray(history) ? history.slice(0, this.MAX_HISTORY_ENTRIES) : [];
-    this.historyCache.clear();
-    this.historyIndex = [];
-    
-    items.forEach(item => {
-      if (item && item.id) {
-        this.historyCache.set(item.id, item);
-        this.historyIndex.push(item.id);
-      }
-    });
+  deserializeHistoryEntry(row) {
+    if (!row) return null;
+
+    try {
+      return {
+        id: row.id,
+        taskId: row.task_id,
+        identifier: row.identifier || '',
+        title: row.title,
+        feed: row.feed,
+        articleUrl: row.article_url,
+        images: JSON.parse(row.images_json || '[]'),
+        completedAt: row.completed_at,
+        size: row.total_size || 0
+      };
+    } catch (error) {
+      console.warn('反序列化历史记录失败', { 
+        error: error.message,
+        rowId: row.id
+      });
+      return null;
+    }
   }
 
   /**

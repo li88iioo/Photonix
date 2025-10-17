@@ -430,8 +430,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 const message = event.error.message;
                 if (message.includes('Failed to execute \'put\' on \'Cache\'') ||
                     message.includes('net::ERR_ABORTED') ||
-                    message.includes('503')) {
-                    utilsLogger.debug('Suppressed tunnel error', { message });
+                    message.includes('503') ||
+                    // 🔧 修复问题1：过滤浏览器扩展错误
+                    message.includes('chrome-extension://') ||
+                    message.includes('moz-extension://') ||
+                    message.includes('safari-extension://')) {
+                    utilsLogger.debug('Suppressed tunnel/extension error', { message });
                     event.preventDefault();
                 }
             }

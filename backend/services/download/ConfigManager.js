@@ -49,13 +49,12 @@ class ConfigManager {
    * 构建默认配置
    */
   buildDefaultConfig() {
-    const logsDir = path.resolve(this.dataRoot, '../logs');
     return {
       baseFolder: this.autoDetectBaseFolder(),
       dbFile: 'downloads.db',
       opmlFile: 'feeds.opml',
-      activityLogFile: path.join('download-service', 'activity.log'),
-      errorLogFile: path.join('download-service', 'errors.log'),
+      activityLogFile: path.join('logs', 'activity.log'),
+      errorLogFile: path.join('logs', 'errors.log'),
       skipFeeds: [],
       allowFallbackToSourceSite: false,
       imageValidation: {
@@ -219,7 +218,7 @@ class ConfigManager {
    */
   resolvePaths(config) {
     const baseFolder = path.resolve(config.baseFolder);
-    const logsDir = path.resolve(this.dataRoot, '../logs');
+    const logsDir = path.join(this.dataRoot, 'logs');
     
     return {
       baseFolder,
@@ -228,13 +227,13 @@ class ConfigManager {
         : path.join(baseFolder, config.dbFile),
       opmlPath: path.isAbsolute(config.opmlFile)
         ? config.opmlFile
-        : path.join(baseFolder, config.opmlFile),
+        : path.join(this.dataRoot, config.opmlFile),
       activityLogPath: path.isAbsolute(config.activityLogFile)
         ? config.activityLogFile
-        : path.join(logsDir, config.activityLogFile),
+        : path.join(this.dataRoot, config.activityLogFile),
       errorLogPath: path.isAbsolute(config.errorLogFile)
         ? config.errorLogFile
-        : path.join(logsDir, config.errorLogFile),
+        : path.join(this.dataRoot, config.errorLogFile),
       logsDir
     };
   }

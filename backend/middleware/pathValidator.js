@@ -9,9 +9,10 @@ const logger = require('../config/logger');
 
 /**
  * @const {number} MAX_PATH_LENGTH
- * 路径最大允许长度（默认1024，可通过环境变量 MAX_PATH_LENGTH 配置）
+ * 路径最大允许长度（默认2048，可通过环境变量 MAX_PATH_LENGTH 配置）
+ * 注意：URL编码后的中文字符会占用3倍字节，因此需要更大的限制
  */
-const MAX_PATH_LENGTH = Number(process.env.MAX_PATH_LENGTH) || 1024;
+const MAX_PATH_LENGTH = Number(process.env.MAX_PATH_LENGTH) || 2048;
 
 /**
  * @const {number} MAX_PATH_DEPTH

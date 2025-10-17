@@ -8,7 +8,7 @@ import { elements } from '../shared/dom-elements.js';
 import aiCache from '../features/ai/ai-cache.js';
 import { showNotification } from '../shared/utils.js';
 import { getAuthToken } from '../app/auth.js';
-import { safeSetInnerHTML } from '../shared/dom-utils.js';
+import { safeSetInnerHTML, safeClassList } from '../shared/dom-utils.js';
 import { escapeHtml } from '../shared/security.js';
 import { getAuthHeaders, refreshAuthToken, triggerAuthRequired } from './shared.js';
 
@@ -101,14 +101,19 @@ function validateAIConfig() {
 }
 
 /**
- * 设置加载中状态的 UI
+ * 设置加载中状态的 UI（漫画风格）
  * @param {HTMLElement} container 桌面端容器元素
  * @param {HTMLElement} mobileContainer 移动端容器元素
  */
 function setLoadingState(container, mobileContainer) {
-    const loadingHtml = '<div class="flex items-center justify-center h-full"><div class="spinner"></div><p class="ml-2">她正在酝酿情绪，请稍候...</p></div>';
+    const loadingHtml = '<div class="flex items-center justify-center h-full loading-state"><div class="spinner"></div><p class="ml-2">她正在酝酿情绪，请稍候...</p></div>';
     safeSetInnerHTML(container, loadingHtml);
-    safeSetInnerHTML(mobileContainer, '酝酿中...');
+    mobileContainer.textContent = '酝酿中...';
+    
+    // 显示气泡框（PC端）
+    if (elements.captionBubble) {
+        safeClassList(elements.captionBubble, 'add', 'show');
+    }
 }
 
 /**
@@ -131,12 +136,46 @@ async function checkAICache(imagePath, aiConfig) {
 }
 
 /**
- * 渲染生成的描述结果到页面
+ * 渲染生成的描述结果到页面（漫画打字机效果）
  * @param {string} caption 生成的描述文本
  */
 function displayCaptionResult(caption) {
-    const { captionContainer, captionContainerMobile } = elements;
-    captionContainer.textContent = caption;
+    const { captionContainer, captionContainerMobile, captionBubble } = elements;
+    
+    // 桌面端：漫画打字机效果
+    safeSetInnerHTML(captionContainer, '');
+    const typingDiv = document.createElement('div');
+    typingDiv.className = 'caption-typing-text';
+    typingDiv.textContent = caption;
+    captionContainer.appendChild(typingDiv);
+    
+    // 动态计算打字机动画参数
+    const textLength = caption.length;
+    const duration = Math.max(2, Math.min(8, textLength * 0.05)); // 2-8秒，根据长度
+    const steps = Math.min(textLength, 100); // 最多100步
+    
+    // 应用动画样式
+    typingDiv.style.animation = `
+        typing ${duration}s steps(${steps}, end) 0.5s 1 forwards,
+        blink-caret 0.75s step-end infinite
+    `;
+    typingDiv.classList.add('typing');
+    
+    // 监听打字动画结束
+    typingDiv.addEventListener('animationend', (event) => {
+        if (event.animationName === 'typing') {
+            typingDiv.classList.remove('typing');
+            typingDiv.classList.add('typing-done');
+            typingDiv.style.animation = 'none';
+        }
+    });
+    
+    // 显示气泡框（PC端自动显示）
+    if (captionBubble) {
+        safeClassList(captionBubble, 'add', 'show');
+    }
+    
+    // 移动端：简单显示（移动端空间有限）
     captionContainerMobile.textContent = caption;
 }
 
