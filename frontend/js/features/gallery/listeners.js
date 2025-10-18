@@ -77,7 +77,13 @@ function handleDocumentClick(e) {
         return;
     }
     
-    // 1. 关闭移动端搜索层
+    // 1. 收起新顶栏的搜索输入
+    const wrapper = safeGetElementById('search-wrapper');
+    if (wrapper && !(e.target.closest && e.target.closest('#search-wrapper'))) {
+        safeClassList(wrapper, 'remove', 'active');
+    }
+
+    // 2. 关闭旧移动端搜索层（兼容旧结构）
     const topbar = safeGetElementById('topbar');
     if (topbar && safeClassList(topbar, 'contains', 'topbar--search-open')) {
         const isInsideSearch = e.target.closest && e.target.closest('.search-container');
@@ -87,7 +93,7 @@ function handleDocumentClick(e) {
         }
     }
 
-    // 2. 隐藏搜索历史
+    // 3. 隐藏搜索历史
     if (elements.searchInput && elements.searchInput.contains) {
         const searchHistoryContainer = safeGetElementById('search-history');
         if (searchHistoryContainer && !elements.searchInput.contains(e.target) && !searchHistoryContainer.contains(e.target)) {
@@ -841,110 +847,24 @@ function setupTopbarInteractions() {
         return;
     }
 
-    let lastScrollY = window.scrollY;
-    let ticking = false;
-
-    /**
-     * 顶栏滚动处理
-     */
-    function onScroll() {
-        const currentY = window.scrollY;
-        const delta = currentY - lastScrollY;
-        
-        // ✅ 增加滚动阈值，避免滚动到底部时的微小波动导致topbar抽搐
-        const SCROLL_DELTA_THRESHOLD = 5; // 忽略小于5px的滚动
-        
-        // 检测是否在页面底部（允许10px误差）
-        const isAtBottom = (window.innerHeight + window.scrollY) >= (document.documentElement.scrollHeight - 10);
-        
-        if (currentY < 50) {
-            // 顶部50px内：完全显示
-            safeClassList(topbar, 'remove', 'topbar--hidden');
-            safeClassList(topbar, 'remove', 'topbar--condensed');
-            lastScrollY = currentY;
-        } else if (isAtBottom) {
-            // ✅ 在底部时：保持当前状态不变，避免抽搐
-            // 不更新lastScrollY，不改变topbar状态
-            return;
-        } else if (delta > SCROLL_DELTA_THRESHOLD && currentY > UI.SCROLL_THRESHOLD_DOWN) {
-            // 明显向下滚动：隐藏topbar
-            safeClassList(topbar, 'add', 'topbar--hidden');
-            safeClassList(topbar, 'add', 'topbar--condensed');
-            lastScrollY = currentY;
-        } else if (delta < -SCROLL_DELTA_THRESHOLD) {
-            // 明显向上滚动：显示topbar
-            safeClassList(topbar, 'remove', 'topbar--hidden');
-            safeClassList(topbar, 'remove', 'topbar--condensed');
-            lastScrollY = currentY;
-        }
-        // 微小滚动（|delta| <= 5px）不更新状态
-    }
-
-    let lastTopbarOffset = 0;
-    /**
-     * 更新回到顶部按钮可见性
-     */
-    function updateBackToTopButton() {
-        const backToTopBtn = safeGetElementById('back-to-top-btn');
-        if (!backToTopBtn) return;
-        if (window.scrollY > 400) {
-            safeClassList(backToTopBtn, 'add', 'visible');
-        } else {
-            safeClassList(backToTopBtn, 'remove', 'visible');
-        }
-    }
-
-    /**
-     * 更新顶栏 offset 变量
-     */
-    function updateTopbarOffset() {
+    // 固定顶栏方案：移除滚动隐藏逻辑，仅根据 is-extended 控制偏移
+    const searchWrapper = safeGetElementById('search-wrapper');
+    function setHeaderOffsetByClass() {
         const appContainer = safeGetElementById('app-container');
         if (!appContainer) return;
-        const persistentHeight = topbar.querySelector('.topbar-inner')?.offsetHeight || 56;
-        const contextEl = safeGetElementById('topbar-context');
-        const contextHeight = (contextEl && !safeClassList(topbar, 'contains', 'topbar--condensed')) ? contextEl.offsetHeight : 0;
-        const total = persistentHeight + contextHeight + 16;
-
-        if (Math.abs(total - lastTopbarOffset) >= 1) {
-            lastTopbarOffset = total;
-            safeSetStyle(appContainer, '--topbar-offset', `${total}px`);
-        }
+        const isExtended = safeClassList(topbar, 'contains', 'is-extended');
+        safeSetStyle(appContainer, '--header-offset', isExtended ? '160px' : '110px');
     }
-
-    const contextEl = safeGetElementById('topbar-context');
-    // ✅ 移除多次延迟重试，改由router.js在路由切换前预计算
-    // 仅保留初始化调用和响应式更新
-    updateTopbarOffset();
-    topbarGroup.add(window, 'resize', () => { updateTopbarOffset(); });
-    topbarGroup.add(window, 'scroll', () => {
-        if (ticking) return;
-        requestAnimationFrame(() => {
-            onScroll();
-            updateTopbarOffset();
-            updateBackToTopButton();
-            ticking = false;
-        });
-        ticking = true;
-    }, { passive: true });
-
-    if (window.ResizeObserver) {
-        let topbarResizeTimeout;
-        const ro = new ResizeObserver(() => {
-            clearTimeout(topbarResizeTimeout);
-            topbarResizeTimeout = setTimeout(() => {
-                updateTopbarOffset();
-            }, 16);
-        });
-        ro.observe(topbar);
-        if (contextEl) ro.observe(contextEl);
-    }
+    setHeaderOffsetByClass();
 
     if (searchToggleBtn) {
         topbarGroup.add(searchToggleBtn, 'click', (e) => {
             e.stopPropagation();
-            safeClassList(topbar, 'toggle', 'topbar--search-open');
-            if (safeClassList(topbar, 'contains', 'topbar--search-open') && searchInput) {
-                setTimeout(() => { searchInput.focus(); }, 0);
+            if (searchWrapper) {
+                safeClassList(searchWrapper, 'toggle', 'active');
+                if (safeClassList(searchWrapper, 'contains', 'active') && searchInput) {
+                    setTimeout(() => { searchInput.focus(); }, 0);
+                }
             }
         });
     }

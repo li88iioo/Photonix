@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Photonix</title>
-    <meta name="theme-color" content="#111827">
+    <meta name="theme-color" content="#F7F8FC">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -13,63 +13,127 @@
     <link rel="modulepreload" href="/js/dist/main.js">
     <!-- AI密语字体文件 -->
     <style>
-        body, html {
-            font-family: 'ZCOOL KuaiLe', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif;
+        :root {
+            --bg-airy-white: #F7F8FC;
+            --bg-pure-white: #FFFFFF;
+            --text-primary: #2c3e50;
+            --text-secondary: #8492a6;
+            --morning-mist-gradient: linear-gradient(90deg, #64FFDA, #448AFF);
+            --border-radius-lg: 16px;
+            --border-radius-md: 12px;
+            --font-main: 'Inter', 'ZCOOL KuaiLe', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif;
+            --header-offset: 110px;
         }
+        * { box-sizing: border-box; }
+        body, html { font-family: var(--font-main); }
+        body { background-color: var(--bg-airy-white); color: var(--text-primary); }
+        /* Top bar */
+        .top-bar-container {
+            position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+            width: calc(100% - 32px); max-width: 1600px; z-index: 1000; display: flex; flex-direction: column; gap: 0;
+        }
+        .floating-header {
+            position: relative; width: 100%; padding: 12px 24px; background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(0, 0, 0, 0.05);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            display: flex; justify-content: space-between; align-items: center;
+            border-radius: var(--border-radius-lg);
+            transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 2;
+        }
+        .top-bar-container.is-extended .floating-header { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: none; }
+        .logo-container { display: flex; align-items: center; gap: 12px; color: var(--text-primary); }
+        .logo-container svg { width: 32px; height: 32px; }
+        .logo-container h1 { font-size: 1.25rem; }
+        .actions-container { display: flex; align-items: center; gap: 8px; }
+        .action-button { background: transparent; border: none; color: var(--text-secondary); cursor: pointer; width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; transition: background-color 0.2s, color 0.2s; }
+        .action-button:hover { background-color: rgba(0, 0, 0, 0.05); color: var(--text-primary); }
+        .action-button svg { width: 22px; height: 22px; }
+        /* Search */
+        .search-wrapper { position: relative; display: flex; align-items: center; }
+        .search-wrapper .action-button { z-index: 2; }
+        .search-wrapper input {
+            position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+            width: 0; padding: 9px 40px 9px 15px; border-radius: 99px; border: 1px solid rgba(0,0,0,0.1);
+            background: var(--bg-pure-white); color: var(--text-primary); outline: none; transition: all 0.3s ease-in-out; opacity: 0; font-size: 0.9rem;
+        }
+        .search-wrapper.active input { width: 220px; opacity: 1; }
+        .search-wrapper input:focus { border-color: #448AFF; box-shadow: 0 0 0 3px rgba(68, 138, 255, 0.2); }
+        /* Breadcrumb */
+        .breadcrumb-bar { width: 100%; background: rgba(255,255,255,0.7); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(0,0,0,0.05); border-top: none; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border-bottom-left-radius: var(--border-radius-lg); border-bottom-right-radius: var(--border-radius-lg); padding: 10px 24px; max-height: 0; opacity: 0; overflow: hidden; transform: translateY(0); transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1); z-index: 1; }
+        .top-bar-container.is-extended .breadcrumb-bar { max-height: 50px; opacity: 1; }
+        .breadcrumb-nav { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; font-weight: 500; }
+        .breadcrumb-nav a { color: var(--text-secondary); text-decoration: none; transition: color 0.2s; }
+        .breadcrumb-nav a:hover { color: var(--text-primary); }
+        .breadcrumb-nav span { color: var(--text-secondary); }
+        .breadcrumb-nav .current { color: var(--text-primary); }
+        /* Content offset */
+        #page-inner { padding-top: var(--header-offset); transition: padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+        /* Light cards */
+        .album-card, .photo-item { background: var(--bg-pure-white); color: var(--text-primary); }
+        /* Sort dropdown light theme */
+        #sort-container #sort-button {
+            background: var(--bg-pure-white);
+            border: 1px solid rgba(0,0,0,0.08);
+            color: var(--text-primary);
+            border-radius: 12px;
+            padding: 6px 10px;
+            min-width: 86px;
+            box-shadow: 0 8px 16px rgba(100,115,128,0.08);
+        }
+        #sort-container #sort-button:hover { border-color: rgba(68,138,255,0.45); }
+        #sort-container #sort-dropdown {
+            background: var(--bg-pure-white);
+            border: 1px solid rgba(0,0,0,0.08);
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(100,115,128,0.2);
+        }
+        #sort-container .sort-option { color: var(--text-primary); border-radius: 8px; }
+        #sort-container .sort-option:hover { background: rgba(0,0,0,0.05); color: var(--text-primary); }
+        #sort-container .sort-option.bg-purple-600 { background: var(--morning-mist-gradient) !important; color: #ffffff !important; }
+        /* Layout toggle light theme */
+        #sort-container #layout-toggle-btn {
+            background: var(--bg-pure-white);
+            border: 1px solid rgba(0,0,0,0.08);
+            color: var(--text-primary);
+            border-radius: 12px;
+            padding: 6px 10px;
+            box-shadow: 0 8px 16px rgba(100,115,128,0.08);
+        }
+        #sort-container #layout-toggle-btn:hover { border-color: rgba(68,138,255,0.45); }
     </style>
     <link rel="stylesheet" href="/assets/css/output.css">
 </head>
-<body class="bg-gray-900 text-white selection:bg-purple-500 selection:text-white">
-    <div id="app-container" class="transition-opacity duration-500 opacity-0 with-fixed-topbar" style="--topbar-offset: 112px;">
+<body>
+    <div id="app-container" class="transition-opacity duration-500 opacity-0" style="--header-offset: 110px;">
         <div id="page-inner" class="mx-auto max-w-[min(96vw,1760px)] px-2 sm:px-4 md:px-8">
-            <header id="topbar" class="topbar">
-                <div class="topbar-inner">
-                    <div class="topbar-left">
-                        <h1 id="main-title"
-                            class="text-2xl sm:text-4xl md:text-5xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-purple-400 via-pink-500 to-red-500 transition-all duration-300">
-                            Photonix
-                        </h1>
-                        <p id="main-subtitle" class="text-gray-400 text-sm sm:text-base">一个属于你的私人写真集</p>
+            <div id="topbar" class="top-bar-container">
+                <header class="floating-header">
+                    <div class="logo-container">
+                        <a href="#/" id="logo-link" style="display: contents; color: inherit; text-decoration: none;">
+                            <svg viewBox="0 0 100 100" aria-hidden="true"><defs><linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#64FFDA" /><stop offset="100%" style="stop-color:#448AFF" /></linearGradient></defs><path fill="url(#logoGradient)" d="M50,0 C77.61,0 100,22.39 100,50 C100,77.61 77.61,100 50,100 C22.39,100 0,77.61 0,50 C0,22.39 22.39,0 50,0 Z M50,15 C30.67,15 15,30.67 15,50 C15,69.33 30.67,85 50,85 C69.33,85 85,69.33 85,50 C85,30.67 69.33,15 50,15 Z M62.5,25 L37.5,25 L37.5,50 L62.5,50 C69.4,50 75,44.4 75,37.5 C75,30.6 69.4,25 62.5,25 Z"/></svg>
+                            <h1>Photonix</h1>
+                        </a>
                     </div>
-                    <div class="topbar-right">
-                        <div class="search-container relative">
-                            <button id="mobile-search-back-btn" class="search-back-btn sm:hidden" aria-label="返回" title="返回" style="display:none">←</button>
-                            <div class="search-field">
-                                <input type="text" id="search-input" class="search-input" placeholder="搜索相册或图片..." inputmode="search" enterkeyhint="search" autocomplete="off" autocapitalize="none" autocorrect="off">
-                                <button id="search-submit-btn" class="search-submit-btn" aria-label="执行搜索" type="button">
-                                    <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                        <circle cx="11" cy="11" r="7"/>
-                                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                                    </svg>
-                                </button>
-                            </div>
+                    <div class="actions-container">
+                        <div class="search-wrapper" id="search-wrapper">
+                            <button class="action-button" aria-label="搜索" id="search-toggle-btn"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg></button>
+                            <input type="text" id="search-input" placeholder="搜索写真集..." />
                             <div id="search-history" class="absolute top-full left-0 right-0 mt-1 z-50 hidden max-h-60 overflow-y-auto"></div>
                         </div>
-                        <button id="mobile-search-btn" class="sg-icon-btn--light sm:hidden" aria-label="搜索">
-                            <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-                            </svg>
-                        </button>
-                        <button id="settings-btn" class="sg-icon-btn--light" title="设置" aria-label="设置">
-                            <svg xmlns="http://www.w3.org/2000/svg" 
-                                 width="24" height="24" 
-                                 viewBox="0 0 24 24" 
-                                 fill="currentColor" 
-                                 aria-hidden="true">
-                              <title>设置</title>
-                              <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.44,0.17-0.48,0.41L9.22,5.25C8.63,5.49,8.1,5.81,7.6,6.19L5.21,5.23C4.99,5.16,4.74,5.22,4.62,5.44L2.7,8.76 C2.59,8.96,2.64,9.23,2.82,9.37l2.03,1.58C4.82,11.36,4.8,11.68,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94 l0.38,2.44c0.04,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.48-0.41l0.38-2.44c0.59-0.24,1.12-0.56,1.62-0.94 l2.39,0.96c0.22,0.08,0.47,0.02,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
-                            </svg>
+                        <div id="sort-container" class="flex-shrink-0 ml-2"></div>
+                        <button class="action-button" aria-label="打开设置" id="settings-btn" title="设置">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 0 2l-.15.08a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l-.22-.38a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1 0-2l.15-.08a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
                         </button>
                     </div>
-                </div>
-                <div class="topbar-context" id="topbar-context">
-                    <nav id="breadcrumb-nav"
-                        class="mb-0 text-base sm:text-xl text-gray-400 flex items-center justify-between">
+                </header>
+                <div class="breadcrumb-bar" id="breadcrumb-bar">
+                    <nav id="breadcrumb-nav" class="breadcrumb-nav">
                         <div id="breadcrumb-links" class="flex-1 min-w-0"></div>
-                        <div id="sort-container" class="flex-shrink-0 ml-4"></div>
                     </nav>
                 </div>
-            </header>
+            </div>
             <div id="gallery-view">
                 <div id="loading" class="hidden">
                 </div>
