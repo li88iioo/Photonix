@@ -11,107 +11,17 @@
     <link rel="manifest" href="/manifest.json">   
     <link rel="preload" href="/assets/css/output.css" as="style">
     <link rel="modulepreload" href="/js/dist/main.js">
-    <!-- AI密语字体文件 -->
-    <style>
-        :root {
-            --bg-airy-white: #F7F8FC;
-            --bg-pure-white: #FFFFFF;
-            --text-primary: #2c3e50;
-            --text-secondary: #8492a6;
-            --morning-mist-gradient: linear-gradient(90deg, #64FFDA, #448AFF);
-            --border-radius-lg: 16px;
-            --border-radius-md: 12px;
-            --font-main: 'Inter', 'ZCOOL KuaiLe', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif;
-            --header-offset: 110px;
-        }
-        * { box-sizing: border-box; }
-        body, html { font-family: var(--font-main); }
-        body { background-color: var(--bg-airy-white); color: var(--text-primary); }
-        /* Top bar */
-        .top-bar-container {
-            position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
-            width: calc(100% - 32px); max-width: 1600px; z-index: 1000; display: flex; flex-direction: column; gap: 0;
-        }
-        .floating-header {
-            position: relative; width: 100%; padding: 12px 24px; background: rgba(255, 255, 255, 0.7);
-            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(0, 0, 0, 0.05);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-            display: flex; justify-content: space-between; align-items: center;
-            border-radius: var(--border-radius-lg);
-            transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-            z-index: 2;
-        }
-        .top-bar-container.is-extended .floating-header { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: none; }
-        .logo-container { display: flex; align-items: center; gap: 12px; color: var(--text-primary); }
-        .logo-container svg { width: 32px; height: 32px; }
-        .logo-container h1 { font-size: 1.25rem; }
-        .actions-container { display: flex; align-items: center; gap: 8px; }
-        .action-button { background: transparent; border: none; color: var(--text-secondary); cursor: pointer; width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; transition: background-color 0.2s, color 0.2s; }
-        .action-button:hover { background-color: rgba(0, 0, 0, 0.05); color: var(--text-primary); }
-        .action-button svg { width: 22px; height: 22px; }
-        /* Search */
-        .search-wrapper { position: relative; display: flex; align-items: center; }
-        .search-wrapper .action-button { z-index: 2; }
-        .search-wrapper input {
-            position: absolute; right: 0; top: 50%; transform: translateY(-50%);
-            width: 0; padding: 9px 40px 9px 15px; border-radius: 99px; border: 1px solid rgba(0,0,0,0.1);
-            background: var(--bg-pure-white); color: var(--text-primary); outline: none; transition: all 0.3s ease-in-out; opacity: 0; font-size: 0.9rem;
-        }
-        .search-wrapper.active input { width: 220px; opacity: 1; }
-        .search-wrapper input:focus { border-color: #448AFF; box-shadow: 0 0 0 3px rgba(68, 138, 255, 0.2); }
-        /* Breadcrumb */
-        .breadcrumb-bar { width: 100%; background: rgba(255,255,255,0.7); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(0,0,0,0.05); border-top: none; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border-bottom-left-radius: var(--border-radius-lg); border-bottom-right-radius: var(--border-radius-lg); padding: 10px 24px; max-height: 0; opacity: 0; overflow: hidden; transform: translateY(0); transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1); z-index: 1; }
-        .top-bar-container.is-extended .breadcrumb-bar { max-height: 50px; opacity: 1; }
-        .breadcrumb-nav { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; font-weight: 500; }
-        .breadcrumb-nav a { color: var(--text-secondary); text-decoration: none; transition: color 0.2s; }
-        .breadcrumb-nav a:hover { color: var(--text-primary); }
-        .breadcrumb-nav span { color: var(--text-secondary); }
-        .breadcrumb-nav .current { color: var(--text-primary); }
-        /* Content offset */
-        #page-inner { padding-top: var(--header-offset); transition: padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
-        /* Light cards */
-        .album-card, .photo-item { background: var(--bg-pure-white); color: var(--text-primary); }
-        /* Sort dropdown light theme */
-        #sort-container #sort-button {
-            background: var(--bg-pure-white);
-            border: 1px solid rgba(0,0,0,0.08);
-            color: var(--text-primary);
-            border-radius: 12px;
-            padding: 6px 10px;
-            min-width: 86px;
-            box-shadow: 0 8px 16px rgba(100,115,128,0.08);
-        }
-        #sort-container #sort-button:hover { border-color: rgba(68,138,255,0.45); }
-        #sort-container #sort-dropdown {
-            background: var(--bg-pure-white);
-            border: 1px solid rgba(0,0,0,0.08);
-            border-radius: 12px;
-            box-shadow: 0 8px 24px rgba(100,115,128,0.2);
-        }
-        #sort-container .sort-option { color: var(--text-primary); border-radius: 8px; }
-        #sort-container .sort-option:hover { background: rgba(0,0,0,0.05); color: var(--text-primary); }
-        #sort-container .sort-option.bg-purple-600 { background: var(--morning-mist-gradient) !important; color: #ffffff !important; }
-        /* Layout toggle light theme */
-        #sort-container #layout-toggle-btn {
-            background: var(--bg-pure-white);
-            border: 1px solid rgba(0,0,0,0.08);
-            color: var(--text-primary);
-            border-radius: 12px;
-            padding: 6px 10px;
-            box-shadow: 0 8px 16px rgba(100,115,128,0.08);
-        }
-        #sort-container #layout-toggle-btn:hover { border-color: rgba(68,138,255,0.45); }
-    </style>
+    <!-- 样式请统一维护在 /assets/css/style.css 中 -->
     <link rel="stylesheet" href="/assets/css/output.css">
+    <link rel="stylesheet" href="/assets/css/style.css">
 </head>
 <body>
-    <div id="app-container" class="transition-opacity duration-500 opacity-0" style="--header-offset: 110px;">
+    <div id="app-container" class="transition-opacity duration-500 opacity-0">
         <div id="page-inner" class="mx-auto max-w-[min(96vw,1760px)] px-2 sm:px-4 md:px-8">
             <div id="topbar" class="top-bar-container">
                 <header class="floating-header">
                     <div class="logo-container">
-                        <a href="#/" id="logo-link" style="display: contents; color: inherit; text-decoration: none;">
+                        <a href="#/" id="logo-link">
                             <svg viewBox="0 0 100 100" aria-hidden="true"><defs><linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#64FFDA" /><stop offset="100%" style="stop-color:#448AFF" /></linearGradient></defs><path fill="url(#logoGradient)" d="M50,0 C77.61,0 100,22.39 100,50 C100,77.61 77.61,100 50,100 C22.39,100 0,77.61 0,50 C0,22.39 22.39,0 50,0 Z M50,15 C30.67,15 15,30.67 15,50 C15,69.33 30.67,85 50,85 C69.33,85 85,69.33 85,50 C85,30.67 69.33,15 50,15 Z M62.5,25 L37.5,25 L37.5,50 L62.5,50 C69.4,50 75,44.4 75,37.5 C75,30.6 69.4,25 62.5,25 Z"/></svg>
                             <h1>Photonix</h1>
                         </a>
