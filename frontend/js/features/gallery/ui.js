@@ -503,34 +503,64 @@ export function renderSortDropdown() {
 
     const currentOption = getCurrentOption(currentSort);
 
-    const sortDisplay = createElement('span', { attributes: { id: 'sort-display' }, textContent: getSortDisplayText(currentSort) });
-    const iconContainer = createElement('div', { classes: ['w-3','h-3','sm:w-4','sm:h-4','text-gray-400', 'transition-transform', 'duration-200'] });
-    const isAscending = currentSort.endsWith('_asc');
-    const svg = createSortArrow(isAscending);
-    iconContainer.appendChild(svg);
+    // 创建排序触发按钮（使用提供的SVG图标，采用 action-button 风格）
+    const sortIcon = (() => {
+        const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        s.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        s.setAttribute('viewBox', '0 0 24 24');
+        s.setAttribute('fill', 'none');
+        s.setAttribute('stroke', 'currentColor');
+        s.setAttribute('stroke-width', '2');
+        s.setAttribute('stroke-linecap', 'round');
+        s.setAttribute('stroke-linejoin', 'round');
+        const lines = [
+            [4,21,4,14],[4,10,4,3],[12,21,12,12],[12,8,12,3],[20,21,20,16],[20,12,20,3]
+        ];
+        lines.forEach(([x1,y1,x2,y2]) => {
+            const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            l.setAttribute('x1', String(x1));
+            l.setAttribute('y1', String(y1));
+            l.setAttribute('x2', String(x2));
+            l.setAttribute('y2', String(y2));
+            s.appendChild(l);
+        });
+        const extra = [[1,14,7,14],[9,8,15,8],[17,16,23,16]];
+        extra.forEach(([x1,y1,x2,y2]) => {
+            const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            l.setAttribute('x1', String(x1));
+            l.setAttribute('y1', String(y1));
+            l.setAttribute('x2', String(x2));
+            l.setAttribute('y2', String(y2));
+            s.appendChild(l);
+        });
+        s.style.width = '22px';
+        s.style.height = '22px';
+        return s;
+    })();
 
-    const sortButton = createElement('button', { 
-        classes: ['bg-gray-800','border','border-gray-700','text-white','text-sm','rounded-lg','focus:ring-purple-500','focus:border-purple-500','block','w-20','p-1.5','sm:p-2.5','transition-colors','hover:border-purple-500','cursor-pointer','flex','items-center','justify-between'], 
-        attributes: { id: 'sort-button', 'aria-expanded': 'false' }, 
-        children: [sortDisplay, iconContainer] 
+    const sortButton = createElement('button', {
+        classes: ['action-button','dropdown-toggle'],
+        attributes: { id: 'sort-button', 'aria-expanded': 'false', type: 'button' },
+        children: [sortIcon]
     });
 
-    const dropdownOptions = Object.entries(sortOptions).map(([value, label]) => createElement('button', { classes: ['sort-option','w-full','text-left','px-3','py-2','text-sm','text-white','hover:bg-gray-700','transition-colors',...(currentOption === value ? ['bg-purple-600'] : [])], attributes: { 'data-value': value }, textContent: label }));
-    const sortDropdown = createElement('div', { classes: ['absolute','top-full','right-0','mt-1','bg-gray-800','border','border-gray-700','rounded-lg','shadow-lg','z-50','w-full'], attributes: { id: 'sort-dropdown' }, children: dropdownOptions });
-    const container = createElement('div', { classes: ['relative','inline-flex','items-center'], children: [sortButton, sortDropdown] });
+    const dropdownOptions = Object.entries(sortOptions).map(([value, label]) => createElement('button', { classes: ['dropdown-item', ...(currentOption === value ? ['active'] : [])], attributes: { 'data-value': value, type: 'button' }, textContent: label }));
+
+    const sortDropdown = createElement('div', { classes: ['dropdown-menu'], attributes: { id: 'sort-dropdown' }, children: dropdownOptions });
+    const container = createElement('div', { classes: ['dropdown-wrapper','relative','inline-flex','items-center'], children: [sortButton, sortDropdown] });
     sortWrapper.appendChild(container);
 
-    sortButton.addEventListener('click', (e) => { 
-        e.stopPropagation(); 
-        const isOpen = safeClassList(sortDropdown, 'contains', 'is-open');
+    sortButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = container.classList.contains('is-open');
         if (isOpen) {
-            safeClassList(sortDropdown, 'remove', 'is-open');
+            container.classList.remove('is-open');
             sortButton.setAttribute('aria-expanded', 'false');
-            safeClassList(iconContainer, 'remove', 'rotate-180');
         } else {
-            safeClassList(sortDropdown, 'add', 'is-open');
+            // 先关闭其他下拉
+            document.querySelectorAll('#sort-wrapper .dropdown-wrapper.is-open').forEach(el => el.classList.remove('is-open'));
+            container.classList.add('is-open');
             sortButton.setAttribute('aria-expanded', 'true');
-            safeClassList(iconContainer, 'add', 'rotate-180');
         }
     });
 
@@ -543,23 +573,20 @@ export function renderSortDropdown() {
             
             const newHash = `${window.location.hash.split('?')[0]}?sort=${newSort}`;
             
-            sortDisplay.textContent = getSortDisplayText(newSort);
-
-                dropdownOptions.forEach(opt => safeClassList(opt, 'remove', 'bg-purple-600'));
-            safeClassList(option, 'add', 'bg-purple-600');
-            safeClassList(sortDropdown, 'remove', 'is-open');
+            // 更新活动态
+            dropdownOptions.forEach(opt => safeClassList(opt, 'remove', 'active'));
+            safeClassList(option, 'add', 'active');
+            container.classList.remove('is-open');
             sortButton.setAttribute('aria-expanded', 'false');
-            safeClassList(iconContainer, 'remove', 'rotate-180');
 
             if (window.location.hash !== newHash) window.location.hash = newHash;
         });
     });
 
     document.addEventListener('click', (e) => {
-        if (!sortButton.contains(e.target) && !sortDropdown.contains(e.target)) {
-            safeClassList(sortDropdown, 'remove', 'is-open');
+        if (!container.contains(e.target)) {
+            container.classList.remove('is-open');
             sortButton.setAttribute('aria-expanded', 'false');
-            safeClassList(iconContainer, 'remove', 'rotate-180');
         }
     });
 }
@@ -739,22 +766,14 @@ export function updateLayoutToggleButton(btn) {
     try {
         const isGrid = state.layoutMode === 'grid';
 
-        // XSS 安全：安全 DOM 操作替代 innerHTML
         while (btn.firstChild) {
             btn.removeChild(btn.firstChild);
         }
-
-        // 添加图标
         const icon = createLayoutIcon(isGrid ? 'grid' : 'masonry');
+        // 统一为行动图标按钮风格
+        icon.style.width = '22px';
+        icon.style.height = '22px';
         btn.appendChild(icon);
-
-        // 添加工具提示文本
-        const tooltipSpan = document.createElement('span');
-        tooltipSpan.className = 'layout-tooltip';
-        tooltipSpan.style.marginLeft = '4px';
-        tooltipSpan.textContent = isGrid ? '瀑布流布局' : '网格布局';
-        btn.appendChild(tooltipSpan);
-
         btn.setAttribute('aria-pressed', isGrid ? 'true' : 'false');
     } catch (error) {
         uiLogger.error('更新布局切换按钮出错', error);
@@ -768,19 +787,16 @@ export function updateLayoutToggleButton(btn) {
 function createLayoutToggle() {
     const wrap = createElement('div', { attributes: { id: 'layout-toggle-wrap' }, classes: ['relative','inline-flex','items-center','mr-2'] });
     const btn = createElement('button', {
-        classes: ['bg-gray-800','border','border-gray-700','text-white','text-sm','rounded-lg','focus:ring-purple-500','focus:border-purple-500','px-2.5','py-1.5','transition-colors','hover:border-purple-500','cursor-pointer','flex','items-center','gap-1'],
+        classes: ['action-button'],
         attributes: { id: 'layout-toggle-btn', type: 'button', 'aria-pressed': state.layoutMode === 'grid' ? 'true' : 'false' }
     });
     function updateLabel() {
         const isGrid = state.layoutMode === 'grid';
         safeSetInnerHTML(btn, '');
         const icon = createLayoutIcon(isGrid ? 'grid' : 'masonry');
+        icon.style.width = '22px';
+        icon.style.height = '22px';
         btn.appendChild(icon);
-        const tooltipSpan = document.createElement('span');
-        tooltipSpan.className = 'layout-tooltip';
-        tooltipSpan.style.marginLeft = '4px';
-        tooltipSpan.textContent = isGrid ? '瀑布流布局' : '网格布局';
-        btn.appendChild(tooltipSpan);
         btn.setAttribute('aria-pressed', isGrid ? 'true' : 'false');
     }
     // 不再直接绑定事件，改用事件委托（在 listeners.js 中处理）

@@ -869,54 +869,14 @@ function setupTopbarInteractions() {
         });
     }
 
-    /**
-     * 打开命令式搜索
-     */
-    function openCommandSearch() {
-        if (!searchInput) return;
-        if (!safeClassList(topbar, 'contains', 'topbar--inline-search')) {
-            safeClassList(topbar, 'add', 'topbar--search-open');
-        }
-        const isMobile = window.matchMedia && window.matchMedia('(max-width: 640px)').matches;
-        if (!isMobile) {
-            setTimeout(() => {
-                searchInput.focus();
-                searchInput.select?.();
-            }, 0);
-        }
-    }
-
-    if (commandSearchBtn) {
-        topbarGroup.add(commandSearchBtn, 'click', (e) => {
-            e.stopPropagation();
-            openCommandSearch();
-        });
-    }
-
-    if (mobileSearchBtn) {
-        topbarGroup.add(mobileSearchBtn, 'click', (e) => {
-            e.stopPropagation();
-            safeClassList(topbar, 'add', 'topbar--inline-search');
-            openCommandSearch();
-        });
-    }
-
-    if (mobileSearchBackBtn) {
-        topbarGroup.add(mobileSearchBackBtn, 'click', () => {
-            safeClassList(topbar, 'remove', 'topbar--search-open');
-            safeClassList(topbar, 'remove', 'topbar--inline-search');
-            if (searchContainer) searchContainer.removeAttribute('style');
-            if (searchInput) searchInput.blur();
-        });
-    }
-
-    if (searchSubmitBtn) {
-        topbarGroup.add(searchSubmitBtn, 'click', (e) => {
-            e.preventDefault();
-            if (!searchInput) return;
-            const q = (searchInput.value || '').trim();
-            if (q) {
-                window.location.hash = `/search?q=${encodeURIComponent(q)}`;
+    // 简化搜索触发：与新顶栏一致，仅使用图标展开的输入框
+    if (searchInput) {
+        topbarGroup.add(searchInput, 'keydown', (e) => {
+            if (e.key === 'Enter') {
+                const q = (searchInput.value || '').trim();
+                if (q) {
+                    window.location.hash = `/search?q=${encodeURIComponent(q)}`;
+                }
             }
         });
     }

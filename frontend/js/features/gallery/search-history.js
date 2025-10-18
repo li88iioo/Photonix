@@ -96,14 +96,14 @@ export function renderSearchHistory(searchInput, historyContainer) {
     }
 
     const historyHtml = history.map(query => `
-        <div class="search-history-item flex items-center justify-between px-3 py-2 hover:bg-gray-700 cursor-pointer group">
+        <div class="search-history-item px-3 py-2 cursor-pointer">
             <div class="flex items-center flex-1">
-                <svg class="w-4 h-4 text-gray-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
                 </svg>
-                <span class="text-white text-sm">${escapeHtml(query)}</span>
+                <span class="text-sm">${escapeHtml(query)}</span>
             </div>
-            <button class="remove-history-btn opacity-30 hover:opacity-100 text-gray-400 hover:text-red-400 transition-all duration-200 p-1 rounded" data-query="${escapeHtml(query)}" title="删除">
+            <button class="remove-history-btn transition-all duration-200 p-1 rounded" data-query="${escapeHtml(query)}" title="删除">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                 </svg>
@@ -112,11 +112,9 @@ export function renderSearchHistory(searchInput, historyContainer) {
     `).join('');
 
     safeSetInnerHTML(historyContainer, `
-        <div class="search-history-header flex items-center justify-between px-3 py-2 border-b border-gray-600">
-            <span class="text-gray-400 text-xs">搜索历史</span>
-            <button class="clear-history-btn text-gray-400 hover:text-red-400 text-xs px-2 py-1 rounded hover:bg-gray-700 transition-colors" title="清空所有历史">
-                清空
-            </button>
+        <div class="search-history-header px-3 py-2">
+            <span class="text-xs">搜索历史</span>
+            <button class="clear-history-btn text-xs px-2 py-1 rounded" title="清空所有历史">清空</button>
         </div>
         ${historyHtml}
     `);

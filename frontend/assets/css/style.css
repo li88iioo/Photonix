@@ -3852,45 +3852,59 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
 .album-card, .photo-item { background: var(--bg-pure-white); color: var(--text-primary); }
 
 /* Sort dropdown light theme overrides */
-#sort-container #sort-button {
-    background: var(--bg-pure-white);
-    border: 1px solid rgba(0,0,0,0.08);
-    color: var(--text-primary);
-    border-radius: 12px;
-    padding: 6px 10px;
-    min-width: 86px;
-    box-shadow: 0 8px 16px rgba(100,115,128,0.08);
+/* 按钮采用 action-button 风格 */
+#sort-container #sort-button.action-button,
+#sort-container #layout-toggle-btn.action-button {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    width: 40px; height: 40px; border-radius: 50%;
+    color: var(--text-secondary);
 }
-#sort-container #sort-button:hover { border-color: rgba(68,138,255,0.45); }
-#sort-container #sort-dropdown {
-    background: var(--bg-pure-white);
-    border: 1px solid rgba(0,0,0,0.08);
-    border-radius: 12px;
-    box-shadow: 0 8px 24px rgba(100,115,128,0.2);
-    opacity: 0;
+#sort-container #sort-button.action-button:hover,
+#sort-container #layout-toggle-btn.action-button:hover {
+    background-color: rgba(0,0,0,0.05);
+    color: var(--text-primary);
+}
+/* 通用下拉菜单样式（与Demo一致） */
+.dropdown-wrapper { position: relative; }
+.dropdown-menu {
+    position: absolute; right: 0; top: calc(100% + 8px);
+    width: 220px; background: var(--bg-pure-white);
+    border-radius: var(--border-radius-md);
+    box-shadow: 0 8px 24px rgba(100, 115, 128, 0.2);
+    padding: 8px; z-index: 1001;
+    opacity: 0; visibility: hidden;
     transform: translateY(10px);
-    pointer-events: none;
-    visibility: hidden;
     transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
-}
-#sort-container #sort-dropdown.is-open { opacity: 1; transform: translateY(0); pointer-events: auto; visibility: visible; }
-#sort-container .sort-option { color: var(--text-primary); border-radius: 8px; }
-#sort-container .sort-option:hover { background: rgba(0,0,0,0.05); color: var(--text-primary); }
-#sort-container .sort-option.bg-purple-600 { background: var(--morning-mist-gradient) !important; color: #ffffff !important; }
-#sort-container #layout-toggle-btn {
-    background: var(--bg-pure-white);
     border: 1px solid rgba(0,0,0,0.08);
-    color: var(--text-primary);
-    border-radius: 12px;
-    padding: 6px 10px;
-    box-shadow: 0 8px 16px rgba(100,115,128,0.08);
 }
-#sort-container #layout-toggle-btn:hover { border-color: rgba(68,138,255,0.45); }
+.dropdown-wrapper.is-open .dropdown-menu { opacity: 1; visibility: visible; transform: translateY(0); }
+.dropdown-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px; border-radius: 8px;
+    cursor: pointer; font-weight: 500;
+    color: var(--text-primary);
+    transition: background 0.2s, color 0.2s;
+}
+.dropdown-item:hover { background-color: rgba(0, 0, 0, 0.05); }
+.dropdown-item.active { background: var(--morning-mist-gradient); color: #fff; font-weight: 600; }
+.dropdown-item.active svg { color: #fff; }
+
+/* 兼容旧容器（保留但不再使用） */
+#sort-container #sort-dropdown { display: none; }
 
 /* Logo link reset */
 .logo-container a { display: contents; color: inherit; text-decoration: none; }
 
 /* Search history light theme */
+#search-wrapper #search-history {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0 !important;
+    left: auto !important;
+    width: max(260px, 100%);
+}
 #search-history {
     background: var(--bg-pure-white);
     border: 1px solid rgba(0,0,0,0.08);
@@ -3903,8 +3917,8 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
     background: transparent !important;
 }
 #search-history .search-history-header span { color: var(--text-secondary) !important; }
-#search-history .search-history-item { background: transparent !important; }
-#search-history .search-history-item span { color: var(--text-primary) !important; }
+#search-history .search-history-item { background: transparent !important; display: flex; align-items: center; justify-content: space-between; }
+#search-history .search-history-item span { color: var(--text-primary) !important; font-size: 14px; }
 #search-history .search-history-item:hover { background: rgba(0,0,0,0.05) !important; }
 #search-history .remove-history-btn { color: var(--text-secondary) !important; }
 #search-history .remove-history-btn:hover { color: #EF4444 !important; }
