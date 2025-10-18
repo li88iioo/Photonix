@@ -539,7 +539,45 @@ export function renderSortDropdown() {
         children: [sortIcon]
     });
 
-    const dropdownOptions = Object.entries(sortOptions).map(([value, label]) => createElement('button', { classes: ['dropdown-item', ...(currentOption === value ? ['active'] : [])], attributes: { 'data-value': value, type: 'button' }, textContent: label }));
+    // 方向图标
+    function createDirIcon(dir, isActive) {
+        const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        s.setAttribute('viewBox', '0 0 24 24');
+        s.setAttribute('fill', 'none');
+        s.setAttribute('stroke', 'currentColor');
+        s.setAttribute('stroke-width', '2');
+        s.setAttribute('stroke-linecap', 'round');
+        s.setAttribute('stroke-linejoin', 'round');
+        s.classList.add('dir-icon');
+        s.style.width = '14px';
+        s.style.height = '14px';
+        const p = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+        if (dir === 'up') p.setAttribute('points', '18 15 12 9 6 15'); else p.setAttribute('points', '6 9 12 15 18 9');
+        s.appendChild(p);
+        if (isActive) s.style.color = 'currentColor';
+        return s;
+    }
+    // 当前方向
+    function getCurrentDirFor(value) {
+        const cs = (currentSort || '').toLowerCase();
+        if (value === 'name') return cs.includes('name_asc') ? 'up' : 'down';
+        if (value === 'mtime') return cs.includes('mtime_asc') ? 'up' : 'down';
+        if (value === 'smart') {
+            try { return (localStorage.getItem('sg_sort_dir_smart') || 'up') === 'down' ? 'down' : 'up'; } catch { return 'up'; }
+        }
+        if (value === 'viewed_desc') return 'down';
+        return 'up';
+    }
+    const dropdownOptions = Object.entries(sortOptions).map(([value, label]) => {
+        const btn = createElement('button', { classes: ['dropdown-item', ...(currentOption === value ? ['active'] : [])], attributes: { 'data-value': value, type: 'button' } });
+        const textSpan = document.createElement('span');
+        textSpan.textContent = label;
+        const dir = getCurrentDirFor(value);
+        const icon = createDirIcon(dir, currentOption === value);
+        btn.appendChild(textSpan);
+        btn.appendChild(icon);
+        return btn;
+    });
 
     const sortDropdown = createElement('div', { classes: ['dropdown-menu'], attributes: { id: 'sort-dropdown' }, children: dropdownOptions });
     const container = createElement('div', { classes: ['dropdown-wrapper','relative','inline-flex','items-center'], children: [sortButton, sortDropdown] });
@@ -562,19 +600,35 @@ export function renderSortDropdown() {
     dropdownOptions.forEach(option => {
         option.addEventListener('click', (e) => {
             e.stopPropagation();
-            let newSort = option.dataset.value;
-            if (newSort === 'name') newSort = currentSort === 'name_asc' ? 'name_desc' : 'name_asc';
-            else if (newSort === 'mtime') newSort = currentSort === 'mtime_desc' ? 'mtime_asc' : 'mtime_desc';
-            
-            const newHash = `${window.location.hash.split('?')[0]}?sort=${newSort}`;
-            
+            const value = option.dataset.value;
+            let newSort = value;
+            // 计算新方向
+            const currentDir = getCurrentDirFor(value);
+            const nextDir = currentDir === 'up' ? 'down' : 'up';
+            // name/mtime 按后端支持切换 asc/desc
+            if (value === 'name') newSort = currentSort === 'name_asc' ? 'name_desc' : 'name_asc';
+            else if (value === 'mtime') newSort = currentSort === 'mtime_desc' ? 'mtime_asc' : 'mtime_desc';
+            else if (value === 'smart') {
+                // 仅切换前端图标方向，不改变后端 sort 参数，避免兼容性问题
+                try { localStorage.setItem('sg_sort_dir_smart', nextDir); } catch {}
+                // 更新当前项的箭头方向
+                const icon = option.querySelector('.dir-icon');
+                if (icon) {
+                    const p = icon.querySelector('polyline');
+                    if (p) p.setAttribute('points', nextDir === 'up' ? '18 15 12 9 6 15' : '6 9 12 15 18 9');
+                }
+            }
             // 更新活动态
             dropdownOptions.forEach(opt => safeClassList(opt, 'remove', 'active'));
             safeClassList(option, 'add', 'active');
             container.classList.remove('is-open');
             sortButton.setAttribute('aria-expanded', 'false');
 
-            if (window.location.hash !== newHash) window.location.hash = newHash;
+            // 更新 hash（smart 保持原值）
+            if (value === 'name' || value === 'mtime') {
+                const newHash = `${window.location.hash.split('?')[0]}?sort=${newSort}`;
+                if (window.location.hash !== newHash) window.location.hash = newHash;
+            }
         });
     });
 

@@ -3803,7 +3803,7 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
 
 /* Fixed top bar container */
 .top-bar-container {
-    position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+    position: fixed; top: calc(16px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%);
     width: calc(100% - 32px); max-width: 1600px; z-index: 1000; display: flex; flex-direction: column; gap: 0;
 }
 .floating-header {
@@ -3841,14 +3841,20 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
 .top-bar-container.is-extended .breadcrumb-bar { max-height: 50px; opacity: 1; }
 /* 隐藏时移除分割线和阴影，更加干净 */
 .top-bar-container:not(.is-extended) .breadcrumb-bar { border: none; box-shadow: none; }
-.breadcrumb-nav { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; font-weight: 500; }
+.breadcrumb-nav { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; font-weight: 500; flex-wrap: wrap; }
 .breadcrumb-nav a { color: var(--text-secondary); text-decoration: none; transition: color 0.2s; }
 .breadcrumb-nav a:hover { color: var(--text-primary); }
 .breadcrumb-nav span { color: var(--text-secondary); }
 .breadcrumb-nav .current { color: var(--text-primary); }
+@media (max-width: 640px) {
+  .breadcrumb-bar { padding: 12px 16px; }
+}
 
 /* Content offset for fixed topbar */
 #page-inner { padding-top: var(--header-offset); transition: padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+@media (max-width: 640px) {
+  #page-inner { padding-top: 200px; }
+}
 
 /* Light cards */
 .album-card, .photo-item { background: var(--bg-pure-white); color: var(--text-primary); }
@@ -3890,9 +3896,10 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
     color: var(--text-primary);
     transition: background 0.2s, color 0.2s;
 }
+.dropdown-item .dir-icon { margin-left: auto; color: var(--text-secondary); }
 .dropdown-item:hover { background-color: rgba(0, 0, 0, 0.05); }
 .dropdown-item.active { background: var(--morning-mist-gradient); color: #fff; font-weight: 600; }
-.dropdown-item.active svg { color: #fff; }
+.dropdown-item.active .dir-icon { color: #fff; }
 
 /* legacy sort-dropdown rule removed to enable new dropdown-menu */
 
@@ -3946,6 +3953,26 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
 #caption-bubble, #caption-container, #caption-container-mobile {
     font-family: 'ZCOOL KuaiLe', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif;
 }
+
+/* Password prompt (管理员密钥验证) light theme aligned to download page visuals */
+.password-prompt-overlay { backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; }
+.password-prompt-card { background: var(--bg-pure-white); border: 1px solid rgba(0,0,0,0.08); border-radius: 12px; box-shadow: 0 12px 32px rgba(100,115,128,0.2); color: var(--text-primary); padding: 1rem; width: min(92vw, 420px); }
+.password-prompt-title { color: var(--text-primary); }
+.password-prompt-description { color: var(--text-secondary); }
+.password-input { background: var(--bg-pure-white); color: var(--text-primary); border: 1px solid rgba(0,0,0,0.12); border-radius: 8px; }
+.password-toggle-btn { color: var(--text-secondary); }
+.password-toggle-btn:hover { color: var(--text-primary); }
+.password-prompt-card .button-group { display: flex; gap: 8px; justify-content: flex-end; }
+.password-prompt-card .prompt-btn { border-radius: 10px; box-shadow: 0 10px 20px rgba(15,23,42,0.08); border: 1px solid rgba(0,0,0,0.08); padding: 10px 16px; font-weight: 600; color: var(--text-primary); background: var(--bg-pure-white); }
+.password-prompt-card .prompt-btn.confirm-btn { background: #448AFF; color: #fff; border-color: #448AFF; }
+.password-prompt-card .prompt-btn.confirm-btn:hover { background: #3575e0; border-color: #3575e0; }
+
+/* Homepage shortcuts hint light theme */
+#gallery-shortcuts-hint, .gallery-shortcuts-hint { color: var(--text-primary); }
+.gallery-shortcuts-hint .shortcuts-hint-content { background: var(--bg-pure-white); border: 1px solid rgba(0,0,0,0.08); border-radius: 12px; box-shadow: 0 12px 32px rgba(100,115,128,0.15); }
+.gallery-shortcuts-hint .shortcuts-hint-title { color: var(--text-primary); }
+.gallery-shortcuts-hint .shortcut-item { color: var(--text-secondary); }
+.gallery-shortcuts-hint .shortcut-item kbd { background: rgba(0,0,0,0.06); color: var(--text-primary); border-radius: 6px; padding: 2px 6px; }
 
 /* Settings modal light theme overrides */
 #settings-card {
