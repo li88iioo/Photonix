@@ -3811,7 +3811,7 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
     backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
     border: 1px solid rgba(0, 0, 0, 0.05);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-    display: flex; justify-content: space-between; align-items: center;
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;
     border-radius: var(--border-radius-lg);
     transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
     z-index: 2;
@@ -3891,8 +3891,7 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
 .dropdown-item.active { background: var(--morning-mist-gradient); color: #fff; font-weight: 600; }
 .dropdown-item.active svg { color: #fff; }
 
-/* 兼容旧容器（保留但不再使用） */
-#sort-container #sort-dropdown { display: none; }
+/* legacy sort-dropdown rule removed to enable new dropdown-menu */
 
 /* Logo link reset */
 .logo-container a { display: contents; color: inherit; text-decoration: none; }
@@ -3927,7 +3926,17 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
 @media (max-width: 640px) {
     .top-bar-container { width: calc(100% - 16px); }
     .actions-container { gap: 6px; }
-    .search-wrapper.active input { width: min(70vw, 220px); }
+    .search-wrapper.active input { width: min(calc(100vw - 128px), 220px); }
+}
+
+/* Center search history on mobile */
+@media (max-width: 640px) {
+    #search-wrapper #search-history {
+        left: 50% !important;
+        right: auto !important;
+        transform: translateX(-50%);
+        width: min(90vw, 320px);
+    }
 }
 
 /* AI caption font only within caption bubbles */
@@ -3937,7 +3946,7 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
 
 /* Settings modal light theme overrides */
 #settings-card {
-    background: var(--bg-pure-white) !important;
+    background: var(--bg-airy-white) !important;
     color: var(--text-primary) !important;
     border: 1px solid rgba(0,0,0,0.08);
 }
@@ -3945,3 +3954,28 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
 .setting-group-title { color: var(--text-primary) !important; }
 .setting-group-description { color: var(--text-secondary) !important; }
 .form-input, .form-select, .form-textarea { background: var(--bg-pure-white); color: var(--text-primary); border-color: rgba(0,0,0,0.12); }
+
+/* Settings nav and footer */
+.settings-nav { background: transparent !important; border-bottom: 1px solid rgba(0,0,0,0.08) !important; }
+.settings-nav button { color: var(--text-secondary) !important; }
+.settings-nav button:hover { background: rgba(0,0,0,0.05) !important; color: var(--text-primary) !important; }
+.settings-nav button.active { background: rgba(0,0,0,0.08) !important; color: var(--text-primary) !important; }
+.settings-footer { background: var(--bg-airy-white) !important; border-top: 1px solid rgba(0,0,0,0.08) !important; }
+.settings-footer .footer-btn { color: var(--text-primary); }
+.settings-footer .btn-primary { background: #448AFF; border-color: #448AFF; color: #fff; }
+.settings-footer .btn-primary:hover { background: #3575e0; border-color: #3575e0; }
+
+/* Status cards (light theme) */
+.status-card-new { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.08) !important; box-shadow: 0 8px 24px rgba(100,115,128,0.12) !important; }
+.metric-card { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.08) !important; }
+.panel { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.08) !important; }
+.metric-label, .metric-desc, .trend-meta, .trend-diff { color: var(--text-secondary) !important; }
+.metric-value, .trend-value { color: var(--text-primary) !important; }
+
+/* Manage (运维管理) light theme */
+.manage-card { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.08) !important; color: var(--text-primary) !important; }
+.manage-card-description, .manage-helper-text { color: var(--text-secondary) !important; }
+.manage-input-group { background: var(--bg-pure-white) !important; border-color: rgba(0,0,0,0.12) !important; }
+.manage-input-group .form-input { color: var(--text-primary) !important; }
+.manage-input-btn { background: rgba(0,0,0,0.05) !important; color: var(--text-primary) !important; }
+.manage-input-btn:hover { background: rgba(0,0,0,0.08) !important; }
