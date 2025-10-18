@@ -3783,3 +3783,202 @@ html.download-page-active .confirm-btn:disabled{
     transform: scale(1);
     pointer-events: auto;
 }
+
+/* ===== Photonix Topbar Redesign & Light Theme ===== */
+:root {
+    --bg-airy-white: #F7F8FC;
+    --bg-pure-white: #FFFFFF;
+    --text-primary: #2c3e50;
+    --text-secondary: #8492a6;
+    --morning-mist-gradient: linear-gradient(90deg, #64FFDA, #448AFF);
+    --border-radius-lg: 16px;
+    --border-radius-md: 12px;
+    --font-main: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif;
+    --header-offset: 160px;
+}
+
+/* Global light theme */
+html, body { font-family: var(--font-main); }
+body { background-color: var(--bg-airy-white); color: var(--text-primary); }
+
+/* Fixed top bar container */
+.top-bar-container {
+    position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+    width: calc(100% - 32px); max-width: 1600px; z-index: 1000; display: flex; flex-direction: column; gap: 0;
+}
+.floating-header {
+    position: relative; width: 100%; padding: 12px 24px; background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;
+    border-radius: var(--border-radius-lg);
+    transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 2;
+}
+.top-bar-container.is-extended .floating-header { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: none; }
+.logo-container { display: flex; align-items: center; gap: 12px; color: var(--text-primary); }
+.logo-container svg { width: 32px; height: 32px; }
+.logo-container h1 { font-size: 1.25rem; }
+.actions-container { display: flex; align-items: center; gap: 8px; }
+.action-button { background: transparent; border: none; color: var(--text-secondary); cursor: pointer; width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; transition: background-color 0.2s, color 0.2s; }
+.action-button:hover { background-color: rgba(0, 0, 0, 0.05); color: var(--text-primary); }
+.action-button svg { width: 22px; height: 22px; }
+
+/* Search */
+.search-wrapper { position: relative; display: flex; align-items: center; }
+.search-wrapper .action-button { z-index: 2; }
+.search-wrapper input {
+    position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+    width: 0; padding: 9px 40px 9px 15px; border-radius: 99px; border: 1px solid rgba(0,0,0,0.1);
+    background: var(--bg-pure-white); color: var(--text-primary); outline: none; transition: all 0.3s ease-in-out; opacity: 0; font-size: 0.9rem;
+}
+.search-wrapper.active input { width: 220px; opacity: 1; }
+.search-wrapper input:focus { border-color: #448AFF; box-shadow: 0 0 0 3px rgba(68, 138, 255, 0.2); }
+
+/* Breadcrumb */
+.breadcrumb-bar { width: 100%; background: rgba(255,255,255,0.7); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(0,0,0,0.05); border-top: none; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border-bottom-left-radius: var(--border-radius-lg); border-bottom-right-radius: var(--border-radius-lg); padding: 10px 24px; max-height: 0; opacity: 0; overflow: hidden; transform: translateY(0); transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1); z-index: 1; }
+.top-bar-container.is-extended .breadcrumb-bar { max-height: 50px; opacity: 1; }
+/* 隐藏时移除分割线和阴影，更加干净 */
+.top-bar-container:not(.is-extended) .breadcrumb-bar { border: none; box-shadow: none; }
+.breadcrumb-nav { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; font-weight: 500; }
+.breadcrumb-nav a { color: var(--text-secondary); text-decoration: none; transition: color 0.2s; }
+.breadcrumb-nav a:hover { color: var(--text-primary); }
+.breadcrumb-nav span { color: var(--text-secondary); }
+.breadcrumb-nav .current { color: var(--text-primary); }
+
+/* Content offset for fixed topbar */
+#page-inner { padding-top: var(--header-offset); transition: padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+
+/* Light cards */
+.album-card, .photo-item { background: var(--bg-pure-white); color: var(--text-primary); }
+
+/* Sort dropdown light theme overrides */
+/* 按钮采用 action-button 风格 */
+#sort-container #sort-button.action-button,
+#sort-container #layout-toggle-btn.action-button {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    width: 40px; height: 40px; border-radius: 50%;
+    color: var(--text-secondary);
+}
+#sort-container #sort-button.action-button:hover,
+#sort-container #layout-toggle-btn.action-button:hover {
+    background-color: rgba(0,0,0,0.05);
+    color: var(--text-primary);
+}
+/* 通用下拉菜单样式（与Demo一致） */
+.dropdown-wrapper { position: relative; }
+.dropdown-menu {
+    position: absolute; right: 0; top: calc(100% + 8px);
+    width: auto; min-width: 160px; background: var(--bg-pure-white);
+    border-radius: var(--border-radius-md);
+    box-shadow: 0 8px 24px rgba(100, 115, 128, 0.2);
+    padding: 8px; z-index: 1001;
+    opacity: 0; visibility: hidden;
+    transform: translateY(10px);
+    transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+    border: 1px solid rgba(0,0,0,0.08);
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+.dropdown-wrapper.is-open .dropdown-menu { opacity: 1; visibility: visible; transform: translateY(0); }
+.dropdown-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px; border-radius: 8px;
+    cursor: pointer; font-weight: 500;
+    color: var(--text-primary);
+    transition: background 0.2s, color 0.2s;
+}
+.dropdown-item:hover { background-color: rgba(0, 0, 0, 0.05); }
+.dropdown-item.active { background: var(--morning-mist-gradient); color: #fff; font-weight: 600; }
+.dropdown-item.active svg { color: #fff; }
+
+/* legacy sort-dropdown rule removed to enable new dropdown-menu */
+
+/* Logo link reset */
+.logo-container a { display: contents; color: inherit; text-decoration: none; }
+
+/* Search history light theme */
+#search-wrapper #search-history {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0 !important;
+    left: auto !important;
+    width: max(260px, 100%);
+}
+#search-history {
+    background: var(--bg-pure-white);
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(100,115,128,0.2);
+    overflow: hidden;
+}
+#search-history .search-history-header {
+    border-bottom: 1px solid rgba(0,0,0,0.06) !important;
+    background: transparent !important;
+}
+#search-history .search-history-header span { color: var(--text-secondary) !important; }
+#search-history .search-history-item { background: transparent !important; display: flex; align-items: center; justify-content: space-between; }
+#search-history .search-history-item span { color: var(--text-primary) !important; font-size: 14px; }
+#search-history .search-history-item:hover { background: rgba(0,0,0,0.05) !important; }
+#search-history .remove-history-btn { color: var(--text-secondary) !important; }
+#search-history .remove-history-btn:hover { color: #EF4444 !important; }
+
+/* Responsive tweaks */
+@media (max-width: 640px) {
+    .top-bar-container { width: calc(100% - 16px); }
+    .actions-container { gap: 6px; }
+    .search-wrapper.active input { width: min(calc(100vw - 128px), 220px); }
+}
+
+/* Center search history on mobile */
+@media (max-width: 640px) {
+    #search-wrapper #search-history {
+        left: 50% !important;
+        right: auto !important;
+        transform: translateX(-50%);
+        width: min(90vw, 320px);
+    }
+}
+
+/* AI caption font only within caption bubbles */
+#caption-bubble, #caption-container, #caption-container-mobile {
+    font-family: 'ZCOOL KuaiLe', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif;
+}
+
+/* Settings modal light theme overrides */
+#settings-card {
+    background: var(--bg-airy-white) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid rgba(0,0,0,0.08);
+}
+.settings-header, .settings-nav { border-color: rgba(0,0,0,0.08) !important; }
+.setting-group-title { color: var(--text-primary) !important; }
+.setting-group-description { color: var(--text-secondary) !important; }
+.form-input, .form-select, .form-textarea { background: var(--bg-pure-white); color: var(--text-primary); border-color: rgba(0,0,0,0.12); }
+
+/* Settings nav and footer */
+.settings-nav { background: transparent !important; border-bottom: 1px solid rgba(0,0,0,0.08) !important; }
+.settings-nav button { color: var(--text-secondary) !important; }
+.settings-nav button:hover { background: rgba(0,0,0,0.05) !important; color: var(--text-primary) !important; }
+.settings-nav button.active { background: rgba(0,0,0,0.08) !important; color: var(--text-primary) !important; }
+.settings-footer { background: var(--bg-airy-white) !important; border-top: 1px solid rgba(0,0,0,0.08) !important; }
+.settings-footer .footer-btn { color: var(--text-primary); }
+.settings-footer .btn-primary { background: #448AFF; border-color: #448AFF; color: #fff; }
+.settings-footer .btn-primary:hover { background: #3575e0; border-color: #3575e0; }
+
+/* Status cards (light theme) */
+.status-card-new { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.08) !important; box-shadow: 0 8px 24px rgba(100,115,128,0.12) !important; }
+.metric-card { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.08) !important; }
+.panel { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.08) !important; }
+.metric-label, .metric-desc, .trend-meta, .trend-diff { color: var(--text-secondary) !important; }
+.metric-value, .trend-value { color: var(--text-primary) !important; }
+
+/* Manage (运维管理) light theme */
+.manage-card { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.08) !important; color: var(--text-primary) !important; }
+.manage-card-description, .manage-helper-text { color: var(--text-secondary) !important; }
+.manage-input-group { background: var(--bg-pure-white) !important; border-color: rgba(0,0,0,0.12) !important; }
+.manage-input-group .form-input { color: var(--text-primary) !important; }
+.manage-input-btn { background: rgba(0,0,0,0.05) !important; color: var(--text-primary) !important; }
+.manage-input-btn:hover { background: rgba(0,0,0,0.08) !important; }
