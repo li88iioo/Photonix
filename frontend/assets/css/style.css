@@ -3793,7 +3793,7 @@ html.download-page-active .confirm-btn:disabled{
     --morning-mist-gradient: linear-gradient(90deg, #64FFDA, #448AFF);
     --border-radius-lg: 16px;
     --border-radius-md: 12px;
-    --font-main: 'Inter', 'ZCOOL KuaiLe', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif;
+    --font-main: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif;
     --header-offset: 110px;
 }
 
@@ -3867,7 +3867,13 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
     border: 1px solid rgba(0,0,0,0.08);
     border-radius: 12px;
     box-shadow: 0 8px 24px rgba(100,115,128,0.2);
+    opacity: 0;
+    transform: translateY(10px);
+    pointer-events: none;
+    visibility: hidden;
+    transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
 }
+#sort-container #sort-dropdown.is-open { opacity: 1; transform: translateY(0); pointer-events: auto; visibility: visible; }
 #sort-container .sort-option { color: var(--text-primary); border-radius: 8px; }
 #sort-container .sort-option:hover { background: rgba(0,0,0,0.05); color: var(--text-primary); }
 #sort-container .sort-option.bg-purple-600 { background: var(--morning-mist-gradient) !important; color: #ffffff !important; }
@@ -3883,3 +3889,45 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
 
 /* Logo link reset */
 .logo-container a { display: contents; color: inherit; text-decoration: none; }
+
+/* Search history light theme */
+#search-history {
+    background: var(--bg-pure-white);
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(100,115,128,0.2);
+    overflow: hidden;
+}
+#search-history .search-history-header {
+    border-bottom: 1px solid rgba(0,0,0,0.06) !important;
+    background: transparent !important;
+}
+#search-history .search-history-header span { color: var(--text-secondary) !important; }
+#search-history .search-history-item { background: transparent !important; }
+#search-history .search-history-item span { color: var(--text-primary) !important; }
+#search-history .search-history-item:hover { background: rgba(0,0,0,0.05) !important; }
+#search-history .remove-history-btn { color: var(--text-secondary) !important; }
+#search-history .remove-history-btn:hover { color: #EF4444 !important; }
+
+/* Responsive tweaks */
+@media (max-width: 640px) {
+    .top-bar-container { width: calc(100% - 16px); }
+    .actions-container { gap: 6px; }
+    .search-wrapper.active input { width: min(70vw, 220px); }
+}
+
+/* AI caption font only within caption bubbles */
+#caption-bubble, #caption-container, #caption-container-mobile {
+    font-family: 'ZCOOL KuaiLe', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif;
+}
+
+/* Settings modal light theme overrides */
+#settings-card {
+    background: var(--bg-pure-white) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid rgba(0,0,0,0.08);
+}
+.settings-header, .settings-nav { border-color: rgba(0,0,0,0.08) !important; }
+.setting-group-title { color: var(--text-primary) !important; }
+.setting-group-description { color: var(--text-secondary) !important; }
+.form-input, .form-select, .form-textarea { background: var(--bg-pure-white); color: var(--text-primary); border-color: rgba(0,0,0,0.12); }

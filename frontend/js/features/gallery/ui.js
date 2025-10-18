@@ -516,15 +516,22 @@ export function renderSortDropdown() {
     });
 
     const dropdownOptions = Object.entries(sortOptions).map(([value, label]) => createElement('button', { classes: ['sort-option','w-full','text-left','px-3','py-2','text-sm','text-white','hover:bg-gray-700','transition-colors',...(currentOption === value ? ['bg-purple-600'] : [])], attributes: { 'data-value': value }, textContent: label }));
-    const sortDropdown = createElement('div', { classes: ['absolute','top-full','right-0','mt-1','bg-gray-800','border','border-gray-700','rounded-lg','shadow-lg','z-50','hidden','w-full'], attributes: { id: 'sort-dropdown' }, children: dropdownOptions });
+    const sortDropdown = createElement('div', { classes: ['absolute','top-full','right-0','mt-1','bg-gray-800','border','border-gray-700','rounded-lg','shadow-lg','z-50','w-full'], attributes: { id: 'sort-dropdown' }, children: dropdownOptions });
     const container = createElement('div', { classes: ['relative','inline-flex','items-center'], children: [sortButton, sortDropdown] });
     sortWrapper.appendChild(container);
 
     sortButton.addEventListener('click', (e) => { 
         e.stopPropagation(); 
-        const isHidden = safeClassList(sortDropdown, 'toggle', 'hidden');
-        sortButton.setAttribute('aria-expanded', !isHidden);
-        safeClassList(iconContainer, 'toggle', 'rotate-180', !isHidden);
+        const isOpen = safeClassList(sortDropdown, 'contains', 'is-open');
+        if (isOpen) {
+            safeClassList(sortDropdown, 'remove', 'is-open');
+            sortButton.setAttribute('aria-expanded', 'false');
+            safeClassList(iconContainer, 'remove', 'rotate-180');
+        } else {
+            safeClassList(sortDropdown, 'add', 'is-open');
+            sortButton.setAttribute('aria-expanded', 'true');
+            safeClassList(iconContainer, 'add', 'rotate-180');
+        }
     });
 
     dropdownOptions.forEach(option => {
@@ -538,9 +545,9 @@ export function renderSortDropdown() {
             
             sortDisplay.textContent = getSortDisplayText(newSort);
 
-            dropdownOptions.forEach(opt => safeClassList(opt, 'remove', 'bg-purple-600'));
+                dropdownOptions.forEach(opt => safeClassList(opt, 'remove', 'bg-purple-600'));
             safeClassList(option, 'add', 'bg-purple-600');
-            safeClassList(sortDropdown, 'add', 'hidden');
+            safeClassList(sortDropdown, 'remove', 'is-open');
             sortButton.setAttribute('aria-expanded', 'false');
             safeClassList(iconContainer, 'remove', 'rotate-180');
 
@@ -550,7 +557,7 @@ export function renderSortDropdown() {
 
     document.addEventListener('click', (e) => {
         if (!sortButton.contains(e.target) && !sortDropdown.contains(e.target)) {
-            safeClassList(sortDropdown, 'add', 'hidden');
+            safeClassList(sortDropdown, 'remove', 'is-open');
             sortButton.setAttribute('aria-expanded', 'false');
             safeClassList(iconContainer, 'remove', 'rotate-180');
         }
