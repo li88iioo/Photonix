@@ -154,17 +154,12 @@ export function renderBreadcrumb(path) {
         breadcrumbNav.append(breadcrumbLinks);
     }
     
-    // 顶栏展开/收起：根据是否有路径切换 is-extended 类，并同步 header 偏移变量
+    // 顶栏展开/收起：根据是否有路径切换 is-extended 类（不再调整页面偏移，避免页面上下跳动）
     const topbarContainer = document.getElementById('topbar');
-    const appContainer = document.getElementById('app-container');
-    const rootOffsetExpanded = '160px';
-    const rootOffsetCollapsed = '110px';
     if (!path || path === '') {
         if (topbarContainer) topbarContainer.classList.remove('is-extended');
-        if (appContainer) appContainer.style.setProperty('--header-offset', rootOffsetCollapsed);
     } else {
         if (topbarContainer) topbarContainer.classList.add('is-extended');
-        if (appContainer) appContainer.style.setProperty('--header-offset', rootOffsetExpanded);
     }
     
     // ✅ 首页不显示面包屑导航，只清空 breadcrumbLinks

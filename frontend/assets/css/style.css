@@ -3794,7 +3794,7 @@ html.download-page-active .confirm-btn:disabled{
     --border-radius-lg: 16px;
     --border-radius-md: 12px;
     --font-main: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif;
-    --header-offset: 110px;
+    --header-offset: 160px;
 }
 
 /* Global light theme */
@@ -3839,6 +3839,8 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
 /* Breadcrumb */
 .breadcrumb-bar { width: 100%; background: rgba(255,255,255,0.7); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(0,0,0,0.05); border-top: none; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border-bottom-left-radius: var(--border-radius-lg); border-bottom-right-radius: var(--border-radius-lg); padding: 10px 24px; max-height: 0; opacity: 0; overflow: hidden; transform: translateY(0); transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1); z-index: 1; }
 .top-bar-container.is-extended .breadcrumb-bar { max-height: 50px; opacity: 1; }
+/* 隐藏时移除分割线和阴影，更加干净 */
+.top-bar-container:not(.is-extended) .breadcrumb-bar { border: none; box-shadow: none; }
 .breadcrumb-nav { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; font-weight: 500; }
 .breadcrumb-nav a { color: var(--text-secondary); text-decoration: none; transition: color 0.2s; }
 .breadcrumb-nav a:hover { color: var(--text-primary); }
@@ -3870,7 +3872,7 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
 .dropdown-wrapper { position: relative; }
 .dropdown-menu {
     position: absolute; right: 0; top: calc(100% + 8px);
-    width: 220px; background: var(--bg-pure-white);
+    width: auto; min-width: 160px; background: var(--bg-pure-white);
     border-radius: var(--border-radius-md);
     box-shadow: 0 8px 24px rgba(100, 115, 128, 0.2);
     padding: 8px; z-index: 1001;
@@ -3878,6 +3880,7 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
     transform: translateY(10px);
     transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
     border: 1px solid rgba(0,0,0,0.08);
+    backdrop-filter: none; -webkit-backdrop-filter: none;
 }
 .dropdown-wrapper.is-open .dropdown-menu { opacity: 1; visibility: visible; transform: translateY(0); }
 .dropdown-item {
