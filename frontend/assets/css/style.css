@@ -3794,7 +3794,7 @@ html.download-page-active .confirm-btn:disabled{
     --border-radius-lg: 16px;
     --border-radius-md: 12px;
     --font-main: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif;
-    --header-offset: 160px;
+    --header-offset: 110px;
 }
 
 /* Global light theme */
@@ -3853,8 +3853,11 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
 /* Content offset for fixed topbar */
 #page-inner { padding-top: var(--header-offset); transition: padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
 @media (max-width: 640px) {
-  #page-inner { padding-top: 200px; }
+  #page-inner { padding-top: 150px; }
 }
+
+/* When breadcrumb is expanded, gently separate content to avoid overlap without big jump */
+#topbar.is-extended ~ #gallery-view { margin-top: 14px; }
 
 /* Light cards */
 .album-card, .photo-item { background: var(--bg-pure-white); color: var(--text-primary); }
@@ -3878,7 +3881,7 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
 .dropdown-wrapper { position: relative; }
 .dropdown-menu {
     position: absolute; right: 0; top: calc(100% + 8px);
-    width: auto; min-width: 160px; background: var(--bg-pure-white);
+    width: max-content; min-width: 0; background: var(--bg-pure-white);
     border-radius: var(--border-radius-md);
     box-shadow: 0 8px 24px rgba(100, 115, 128, 0.2);
     padding: 8px; z-index: 1001;
@@ -3983,7 +3986,9 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
 .settings-header, .settings-nav { border-color: rgba(0,0,0,0.08) !important; }
 .setting-group-title { color: var(--text-primary) !important; }
 .setting-group-description { color: var(--text-secondary) !important; }
-.form-input, .form-select, .form-textarea { background: var(--bg-pure-white); color: var(--text-primary); border-color: rgba(0,0,0,0.12); }
+#settings-card .form-input, #settings-card .form-select, #settings-card .form-textarea { background: var(--bg-pure-white); color: var(--text-primary); border-color: rgba(0,0,0,0.12); }
+#settings-card .form-input:focus, #settings-card .form-select:focus, #settings-card .form-textarea:focus { outline: none; border-color: #448AFF; box-shadow: 0 0 0 3px rgba(68,138,255,0.18); }
+#settings-card .toggle-switch:checked { background-color: #448AFF; }
 
 /* Settings nav and footer */
 .settings-nav { background: transparent !important; border-bottom: 1px solid rgba(0,0,0,0.08) !important; }
@@ -3992,20 +3997,26 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
 .settings-nav button.active { background: rgba(0,0,0,0.08) !important; color: var(--text-primary) !important; }
 .settings-footer { background: var(--bg-airy-white) !important; border-top: 1px solid rgba(0,0,0,0.08) !important; }
 .settings-footer .footer-btn { color: var(--text-primary); }
-.settings-footer .btn-primary { background: #448AFF; border-color: #448AFF; color: #fff; }
-.settings-footer .btn-primary:hover { background: #3575e0; border-color: #3575e0; }
+#settings-card .btn-primary { background: #448AFF !important; border-color: #448AFF !important; color: #fff !important; }
+#settings-card .btn-primary:hover { background: #3575e0 !important; border-color: #3575e0 !important; }
+#settings-card .btn-secondary { background: rgba(0,0,0,0.05) !important; color: var(--text-primary) !important; border-color: rgba(0,0,0,0.08) !important; }
+#settings-card .btn-secondary:hover { background: rgba(0,0,0,0.08) !important; }
 
 /* Status cards (light theme) */
-.status-card-new { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.08) !important; box-shadow: 0 8px 24px rgba(100,115,128,0.12) !important; }
-.metric-card { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.08) !important; }
-.panel { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.08) !important; }
-.metric-label, .metric-desc, .trend-meta, .trend-diff { color: var(--text-secondary) !important; }
-.metric-value, .trend-value { color: var(--text-primary) !important; }
+#settings-card .status-card-new { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.08) !important; box-shadow: 0 8px 24px rgba(100,115,128,0.12) !important; }
+#settings-card .metric-card { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.08) !important; }
+#settings-card .panel { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.08) !important; }
+#settings-card .metric-label, #settings-card .metric-desc, #settings-card .trend-meta, #settings-card .trend-diff { color: var(--text-secondary) !important; }
+#settings-card .metric-value, #settings-card .trend-value { color: var(--text-primary) !important; }
 
 /* Manage (运维管理) light theme */
-.manage-card { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.08) !important; color: var(--text-primary) !important; }
-.manage-card-description, .manage-helper-text { color: var(--text-secondary) !important; }
-.manage-input-group { background: var(--bg-pure-white) !important; border-color: rgba(0,0,0,0.12) !important; }
-.manage-input-group .form-input { color: var(--text-primary) !important; }
-.manage-input-btn { background: rgba(0,0,0,0.05) !important; color: var(--text-primary) !important; }
-.manage-input-btn:hover { background: rgba(0,0,0,0.08) !important; }
+#settings-card .manage-card { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.08) !important; color: var(--text-primary) !important; }
+#settings-card .manage-card-body { background: transparent !important; }
+#settings-card .manage-card-description, #settings-card .manage-helper-text { color: var(--text-secondary) !important; }
+#settings-card .manage-input-group { background: var(--bg-pure-white) !important; border-color: rgba(0,0,0,0.12) !important; }
+#settings-card .manage-input-group .form-input { color: var(--text-primary) !important; }
+#settings-card .manage-input-btn { background: rgba(0,0,0,0.05) !important; color: var(--text-primary) !important; border-color: rgba(0,0,0,0.08) !important; }
+#settings-card .manage-input-btn:hover { background: rgba(0,0,0,0.08) !important; }
+#settings-card .manage-primary-btn, #settings-card #manual-sync-btn { background: #448AFF !important; color: #fff !important; border: 1px solid #448AFF !important; box-shadow: 0 12px 28px rgba(68,138,255,0.25) !important; }
+#settings-card .manage-primary-btn:hover, #settings-card #manual-sync-btn:hover { background: #3575e0 !important; border-color: #3575e0 !important; }
+#settings-card #manual-sync-schedule-status, #settings-card .manage-report { background: transparent !important; border-left: none !important; color: var(--text-secondary) !important; }
