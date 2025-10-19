@@ -3892,6 +3892,8 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
     backdrop-filter: none; -webkit-backdrop-filter: none;
 }
 .dropdown-wrapper.is-open .dropdown-menu { opacity: 1; visibility: visible; transform: translateY(0); }
+/* 强化排序下拉背景，避免任何透明继承 */
+#sort-container .dropdown-menu { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.08); box-shadow: 0 8px 24px rgba(100,115,128,0.2); }
 .dropdown-item {
     display: flex; align-items: center; gap: 12px;
     padding: 10px 12px; border-radius: 8px;
@@ -4020,3 +4022,10 @@ body { background-color: var(--bg-airy-white); color: var(--text-primary); }
 #settings-card .manage-primary-btn, #settings-card #manual-sync-btn { background: #448AFF !important; color: #fff !important; border: 1px solid #448AFF !important; box-shadow: 0 12px 28px rgba(68,138,255,0.25) !important; }
 #settings-card .manage-primary-btn:hover, #settings-card #manual-sync-btn:hover { background: #3575e0 !important; border-color: #3575e0 !important; }
 #settings-card #manual-sync-schedule-status, #settings-card .manage-report { background: transparent !important; border-left: none !important; color: var(--text-secondary) !important; }
+#settings-card .manage-toggle-row { background: var(--bg-pure-white) !important; border: 1px solid rgba(0,0,0,0.12) !important; box-shadow: none !important; }
+#settings-card .manage-toggle-row:hover { background: rgba(0,0,0,0.05) !important; border-color: rgba(0,0,0,0.18) !important; }
+#settings-card .manage-toggle-title { color: var(--text-primary) !important; }
+#settings-card .manage-toggle-description { color: var(--text-secondary) !important; }
+#settings-card .settings-tab-content::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #64FFDA, #448AFF) !important; }
+#settings-card .settings-tab-content::-webkit-scrollbar-track { background: rgba(0,0,0,0.06) !important; }
+#settings-card .settings-tab-content { scrollbar-color: #448AFF rgba(0,0,0,0.06) !important; }
