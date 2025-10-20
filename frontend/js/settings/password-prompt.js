@@ -5,6 +5,7 @@
 
 import { resolveMessage } from '../shared/utils.js';
 import { safeGetElementById, safeClassList, safeSetStyle, safeGetStyle } from '../shared/dom-utils.js';
+import { createModalShell } from '../app/modal.js';
 
 /**
  * 显示密码或管理员密钥确认弹窗并处理用户响应。
@@ -18,12 +19,18 @@ export function showPasswordPrompt({ onConfirm, onCancel, useAdminSecret = false
   const template = safeGetElementById('password-prompt-template');
   if (!template) return;
 
-  const promptElement = template.content.cloneNode(true).firstElementChild;
-  document.body.appendChild(promptElement);
+  const fragment = template.content.cloneNode(true);
+  const cardEl = fragment.querySelector('.password-prompt-card');
+  if (!cardEl) return;
 
-  const title = promptElement.querySelector('h3');
-  const description = promptElement.querySelector('.password-prompt-description');
-  const input = promptElement.querySelector('#prompt-password-input');
+  // 使用共享模态外壳
+  const { body, close } = createModalShell({ useHeader: false });
+
+  body.appendChild(cardEl);
+
+  const title = cardEl.querySelector('h3');
+  const description = cardEl.querySelector('.password-prompt-description');
+  const input = cardEl.querySelector('#prompt-password-input');
 
   if (useAdminSecret) {
     title.textContent = '需要管理员权限';
@@ -35,26 +42,14 @@ export function showPasswordPrompt({ onConfirm, onCancel, useAdminSecret = false
     input.placeholder = '密码';
   }
 
-  const cardEl = promptElement.querySelector('.password-prompt-card');
-  const inputGroup = promptElement.querySelector('.input-group');
-  const errorMsg = promptElement.querySelector('#prompt-error-message');
-  const confirmBtn = promptElement.querySelector('.confirm-btn');
-  const cancelBtn = promptElement.querySelector('.cancel-btn');
-  const toggleBtn = promptElement.querySelector('.password-toggle-btn');
-
-  let closeReason = 'cancel';
-
-  const closePrompt = () => {
-    safeClassList(promptElement, 'remove', 'active');
-    promptElement.addEventListener('transitionend', () => promptElement.remove(), { once: true });
-    if (closeReason === 'cancel' && onCancel) {
-      onCancel();
-    }
-  };
+  const inputGroup = cardEl.querySelector('.input-group');
+  const errorMsg = cardEl.querySelector('#prompt-error-message');
+  const confirmBtn = cardEl.querySelector('.confirm-btn');
+  const cancelBtn = cardEl.querySelector('.cancel-btn');
+  const toggleBtn = cardEl.querySelector('.password-toggle-btn');
 
   requestAnimationFrame(() => {
-    safeClassList(promptElement, 'add', 'active');
-    input.focus();
+    input && input.focus();
   });
 
   toggleBtn.addEventListener('click', () => {
@@ -89,8 +84,7 @@ export function showPasswordPrompt({ onConfirm, onCancel, useAdminSecret = false
         safeClassList(confirmBtn, 'remove', 'loading');
         confirmBtn.disabled = false;
         cancelBtn.disabled = false;
-        closeReason = 'success';
-        setTimeout(closePrompt, 250);
+        setTimeout(() => close('success'), 250);
       } else {
         const manualMessage = useAdminSecret ? '管理员密钥错误，请重新输入' : '密码错误或验证失败';
         throw new Error(manualMessage);
@@ -105,7 +99,6 @@ export function showPasswordPrompt({ onConfirm, onCancel, useAdminSecret = false
       errorMsg.textContent = resolveMessage(err, fallbackMessage);
       input.focus();
       input.select();
-      closeReason = 'cancel';
       return;
     }
   });
@@ -119,17 +112,8 @@ export function showPasswordPrompt({ onConfirm, onCancel, useAdminSecret = false
     if (e.key === 'Enter') confirmBtn.click();
   });
 
-  cancelBtn.addEventListener('click', closePrompt);
-  promptElement.addEventListener('click', (e) => {
-    if (e.target === promptElement) closePrompt();
+  cancelBtn.addEventListener('click', () => {
+    try { close('cancel'); } catch {}
+    if (typeof onCancel === 'function') onCancel();
   });
-
-  const escapeHandler = (e) => {
-    if (e.key === 'Escape') {
-      closePrompt();
-      document.removeEventListener('keydown', escapeHandler);
-    }
-  };
-
-  document.addEventListener('keydown', escapeHandler);
 }

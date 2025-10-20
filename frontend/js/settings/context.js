@@ -9,6 +9,7 @@ const settingsContext = {
   modal: null,
   card: null,
   template: null,
+  close: null,
   initialSettings: {},
   modelFetchTimer: null,
   modelFetchAbortController: null,

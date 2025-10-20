@@ -14,6 +14,7 @@ import {
 import { iconDownload, iconCircleCheck, iconCircleX } from '../../shared/svg-utils.js';
 import { IncrementalList } from '../../shared/incremental-update.js';
 import { setSafeInnerHTML, SecurityLevel } from '../../shared/security.js';
+import { createModalShell as createSharedModalShell, cleanupAllModals as cleanupAllSharedModals } from '../../app/modal.js';
 
 const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -21,12 +22,11 @@ const modalStack = [];
 
 // 清理所有模态框（用于页面隐藏时）
 export function cleanupAllModals() {
-  while (modalStack.length > 0) {
-    const modal = modalStack[modalStack.length - 1];
-    if (modal && modal.onClose) {
-      modal.onClose('cleanup');
-    }
-  }
+  try {
+    cleanupAllSharedModals();
+  } catch {}
+  // 清空本地栈（兼容旧实现）
+  if (modalStack.length > 0) modalStack.length = 0;
   console.log('[Modals] 清理了所有模态框');
 }
 
@@ -218,7 +218,7 @@ export function showConfirmDialog({
   tone = 'danger'
 } = {}) {
   return new Promise((resolve) => {
-    const { body, footer, close } = createModalShell({
+    const { body, footer, close } = createSharedModalShell({
       title,
       description: '',
       asForm: false,
@@ -266,7 +266,7 @@ export function openTaskFormModal({ mode = 'create', initial = {}, includeEnable
         }
       }
     };
-    const { container: form, body, footer, close } = createModalShell({
+    const { container: form, body, footer, close } = createSharedModalShell({
       title,
       description: '填写订阅源地址、抓取周期等信息',
       asForm: true,

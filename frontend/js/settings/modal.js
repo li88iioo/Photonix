@@ -11,9 +11,13 @@ import { safeClassList, safeSetInnerHTML } from '../shared/dom-utils.js';
  * @returns {void}
  */
 export function closeSettingsModal() {
-  const { modal, card } = settingsContext;
+  const { close, modal, card } = settingsContext;
+  if (typeof close === 'function') {
+    try { close('cancel'); } catch {}
+    return;
+  }
   if (!modal || !card) return;
-
+  // 兼容旧结构
   safeClassList(modal, 'remove', 'visible');
   safeClassList(document.body, 'remove', 'settings-open');
   modal.addEventListener('transitionend', () => {

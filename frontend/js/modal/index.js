@@ -71,6 +71,100 @@ function triggerPixelatedReveal() {
 let activeLoader = null;  // 当前活跃的加载器
 let activeVideoToken = 0; // 当前视频加载令牌，避免并发事件冲突
 
+// 可访问性与通用对话框管理（焦点陷阱、滚动锁定、恢复焦点）
+let modalPrevFocused = null;
+let modalKeydownHandler = null;
+let modalClickHandler = null;
+let focusTrapActive = false;
+let pendingReveal = false; // 首次打开时等待媒体准备就绪后再显示，减少CLS
+let scrollLockData = null;
+
+const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function lockScroll() {
+    if (scrollLockData && scrollLockData.applied) return;
+    const scrollY = window.scrollY || window.pageYOffset || 0;
+    scrollLockData = { scrollY, applied: true };
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.left = '0';
+    document.body.style.right = '0';
+    document.body.style.width = '100%';
+    document.body.style.overflow = 'hidden';
+}
+
+function unlockScroll() {
+    if (!scrollLockData || !scrollLockData.applied) return;
+    document.body.style.position = '';
+    document.body.style.top = '';
+    document.body.style.left = '';
+    document.body.style.right = '';
+    document.body.style.width = '';
+    document.body.style.overflow = '';
+    // 滚动位置恢复在 closeModal 内部完成
+    scrollLockData = null;
+}
+
+function getFocusableElements(container) {
+    if (!container) return [];
+    return Array.from(container.querySelectorAll(FOCUSABLE_SELECTOR)).filter(el => !el.hasAttribute('disabled'));
+}
+
+function onFocusTrapKeydown(e) {
+    if (!focusTrapActive || !elements || !elements.modal) return;
+    if (e.key !== 'Tab') return;
+    const scope = elements.modal;
+    const nodes = getFocusableElements(scope);
+    if (nodes.length === 0) {
+        e.preventDefault();
+        try { elements.modalContent?.focus({ preventScroll: true }); } catch {}
+        return;
+    }
+    const currentIndex = nodes.indexOf(document.activeElement);
+    let nextIndex = currentIndex;
+    if (e.shiftKey) {
+        nextIndex = currentIndex <= 0 ? nodes.length - 1 : currentIndex - 1;
+    } else {
+        nextIndex = currentIndex === nodes.length - 1 ? 0 : currentIndex + 1;
+    }
+    e.preventDefault();
+    try { nodes[nextIndex].focus({ preventScroll: true }); } catch { nodes[nextIndex].focus(); }
+}
+
+function activateFocusTrap() {
+    if (focusTrapActive) return;
+    focusTrapActive = true;
+    elements.modal.addEventListener('keydown', onFocusTrapKeydown);
+}
+
+function deactivateFocusTrap() {
+    if (!focusTrapActive) return;
+    focusTrapActive = false;
+    try { elements.modal.removeEventListener('keydown', onFocusTrapKeydown); } catch {}
+}
+
+function prefersReducedMotion() {
+    try {
+        return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch { return false; }
+}
+
+function revealModalIfPending() {
+    if (!pendingReveal) return;
+    pendingReveal = false;
+    safeClassList(elements.modal, 'remove', 'opacity-0');
+    safeClassList(elements.modal, 'remove', 'pointer-events-none');
+    // 初始聚焦：优先可聚焦元素，否则聚焦容器
+    requestAnimationFrame(() => {
+        const nodes = getFocusableElements(elements.modalContent || elements.modal);
+        if (nodes.length) {
+            try { nodes[0].focus({ preventScroll: true }); } catch { nodes[0].focus(); }
+        } else if (elements.modalContent) {
+            try { elements.modalContent.focus({ preventScroll: true }); } catch { elements.modalContent.focus(); }
+        }
+    });
+}
+
 /**
  * 隐藏模态框控制元素，包括关闭按钮和 AI 控制容器
  * @returns {void}
@@ -212,6 +306,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
         const onPlaying = () => {
             if (myToken !== activeVideoToken) return cleanup();
             removeSpinnerAndUnbind();
+            revealModalIfPending();
         };
 
         /**
@@ -229,6 +324,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
         const onCanPlay = () => {
             if (myToken !== activeVideoToken) return cleanup();
             removeSpinnerAndUnbind();
+            revealModalIfPending();
         };
 
         /**
@@ -237,6 +333,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
         const onLoadedData = () => {
             if (myToken !== activeVideoToken) return cleanup();
             removeSpinnerAndUnbind();
+            revealModalIfPending();
         };
 
         /**
@@ -245,6 +342,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
         const onTimeUpdate = () => {
             if (myToken !== activeVideoToken) return cleanup();
             removeSpinnerAndUnbind();
+            revealModalIfPending();
         };
 
         /**
@@ -270,6 +368,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
          */
         const onLoadedMetadata = () => {
             applyStableSize();
+            revealModalIfPending();
         };
 
         cleanup(); // 清理前一个实例
@@ -366,11 +465,12 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
          */
         const onModalImageLoad = () => {
             modalImg._pendingPixelationHandler = null;
-            if (shouldPixelate) {
+            if (shouldPixelate && !prefersReducedMotion()) {
                 triggerPixelatedReveal();
             } else {
                 resetModalImageTransition();
             }
+            revealModalIfPending();
         };
         modalImg._pendingPixelationHandler = onModalImageLoad;
         modalImg.addEventListener('load', onModalImageLoad, { once: true });
@@ -466,6 +566,116 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
 }
 
 /**
+ * 关闭模态框，清理所有状态与 DOM 元素，并恢复焦点与滚动
+ * @returns {void}
+ */
+export function closeModal() {
+    if (!elements?.modal || safeClassList(elements.modal, 'contains', 'opacity-0')) return;
+
+    pendingReveal = false;
+    document.documentElement.classList.remove('modal-open');
+    document.body.classList.remove('modal-open');
+
+    safeClassList(elements.modal, 'add', 'opacity-0');
+    safeClassList(elements.modal, 'add', 'pointer-events-none');
+
+    if (modalKeydownHandler) {
+        try { document.removeEventListener('keydown', modalKeydownHandler); } catch {}
+        modalKeydownHandler = null;
+    }
+    if (modalClickHandler) {
+        try { elements.modal.removeEventListener('click', modalClickHandler); } catch {}
+        modalClickHandler = null;
+    }
+    deactivateFocusTrap();
+
+    if (typeof stopFastNavigate === 'function') {
+        try { stopFastNavigate(); } catch {}
+    }
+
+    cleanupModal();
+
+    // 清理媒体内容
+    try { elements.modalVideo.pause(); } catch {}
+    elements.modalImg.src = '';
+    elements.modalVideo.src = '';
+
+    // 清理背景
+    safeSetStyle(backdrops.one, 'backgroundImage', 'none');
+    safeSetStyle(backdrops.two, 'backgroundImage', 'none');
+
+    // 清理对象 URL
+    if (state.currentObjectURL) {
+        try { URL.revokeObjectURL(state.currentObjectURL); } catch {}
+        state.currentObjectURL = null;
+    }
+
+    if (elements.captionBubble) safeClassList(elements.captionBubble, 'remove', 'show');
+    if (document.activeElement) document.activeElement.blur();
+
+    // 解除滚动锁定
+    unlockScroll();
+
+    // 恢复滚动位置
+    if (state.scrollPositionBeforeModal !== null) {
+        window.scrollTo({ top: state.scrollPositionBeforeModal, behavior: 'instant' });
+        state.scrollPositionBeforeModal = null;
+    }
+
+    // 恢复焦点
+    if (state.activeThumbnail) {
+        try { state.activeThumbnail.focus({ preventScroll: true }); } catch { state.activeThumbnail.focus(); }
+        state.activeThumbnail = null;
+    } else if (modalPrevFocused && modalPrevFocused.isConnected) {
+        try { modalPrevFocused.focus({ preventScroll: true }); } catch { try { modalPrevFocused.focus(); } catch {} }
+    }
+    modalPrevFocused = null;
+}
+
+/**
+ * 模态框导航至上一项或下一项
+ * @param {'prev'|'next'} direction - 导航方向
+ * @returns {void}
+ */
+export function navigateModal(direction) {
+    if (document.activeElement) document.activeElement.blur();
+    if (state.isModalNavigating) return;
+
+    hideModalControls();
+    clearTimeout(state.uiVisibilityTimer);
+    state.uiVisibilityTimer = setTimeout(showModalControls, 500);
+
+    const newIndex = direction === 'prev' ? state.currentPhotoIndex - 1 : state.currentPhotoIndex + 1;
+    if (newIndex >= 0 && newIndex < state.currentPhotos.length) {
+        const nextMediaSrc = state.currentPhotos[newIndex];
+        const navDirection = direction === 'prev' ? 'backward' : 'forward';
+        handleModalNavigationLoad(nextMediaSrc, newIndex, navDirection);
+    }
+}
+
+/**
+ * 处理缩略图点击事件（简化版）
+ * @param {HTMLElement} element - 被点击的缩略图元素
+ * @param {string} mediaSrc - 媒体源 URL
+ * @param {number} index - 媒体索引
+ * @returns {void}
+ */
+export function _handleThumbnailClick(element, mediaSrc, index) {
+    state.scrollPositionBeforeModal = window.scrollY;
+    state.activeThumbnail = element;
+
+    const photoItem = element && element.querySelector ? (element.querySelector('.photo-item') || element) : element;
+    const isVideo = /\.(mp4|webm|mov)$/i.test(mediaSrc);
+    if (isVideo) {
+        const thumbEl = photoItem && photoItem.querySelector ? photoItem.querySelector('img[data-src]') : null;
+        const thumbUrl = thumbEl ? thumbEl.dataset.src : null;
+        _openModal(mediaSrc, index, false, mediaSrc, thumbUrl, { pixelate: false });
+        return;
+    }
+    _openModal(mediaSrc, index, false, mediaSrc, undefined, { pixelate: false });
+}
+
+/**
  * 处理模态框导航时的媒体加载
  * @param {string} mediaSrc - 媒体源 URL
  * @param {number} index - 媒体索引
@@ -496,248 +706,6 @@ async function handleModalNavigationLoad(mediaSrc, index, navDirection = null) {
         try { activeLoader.abort(); } catch {}
     }
 
-    const controller = new AbortController();
-    const { signal } = controller;
-    activeLoader = controller;
-
-    scheduleNavigationProgressBar(navDirection);
-
-    try {
-        const response = await fetch(mediaSrc, { signal });
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        let blob;
-
-        if (!response.body || !response.body.getReader) {
-            blob = await response.blob();
-            setNavigationProgress(1);
-            setNavigationBlurProgress(1);
-        } else {
-            const reader = response.body.getReader();
-            streamContentLength = Number(response.headers.get('Content-Length')) || 0;
-            let receivedLength = 0;
-            streamFallbackChunks = 0;
-
-            const stream = new ReadableStream({
-                start(streamController) {
-                    const onAbort = () => {
-                        try { reader.cancel(); } catch {}
-                        try { streamController.close(); } catch {}
-                    };
-                    if (signal && typeof signal.addEventListener === 'function') {
-                        if (signal.aborted) return onAbort();
-                        signal.addEventListener('abort', onAbort, { once: true });
-                    }
-                    const pump = () => {
-                        reader.read().then(({ done, value }) => {
-                            if (done) {
-                                try { streamController.close(); } catch {}
-                                return;
-                            }
-                            if (value) {
-                                receivedLength += value.length;
-                                if (streamContentLength) {
-                                    const ratio = Math.min(0.99, receivedLength / streamContentLength);
-                                    setNavigationProgress(ratio);
-                                    setNavigationBlurProgress(ratio);
-                                } else {
-                                    streamFallbackChunks = Math.min(9, streamFallbackChunks + 1);
-                                    const estimated = Math.min(0.9, streamFallbackChunks / 9);
-                                    setNavigationProgress(estimated);
-                                    setNavigationBlurProgress(estimated);
-                                }
-                                try { streamController.enqueue(value); } catch {}
-                            }
-                            pump();
-                        }).catch(err => {
-                            if (err && err.name === 'AbortError') {
-                                try { streamController.close(); } catch {}
-                                return;
-                            }
-                            modalLogger.error('流读取错误', err);
-                            try { streamController.error(err); } catch {}
-                        });
-                    };
-                    pump();
-                }
-            });
-
-            blob = await new Response(stream).blob();
-            if (!signal.aborted) {
-                setNavigationProgress(1);
-                setNavigationBlurProgress(1);
-            }
-        }
-
-        const finishedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
-        const elapsed = finishedAt - startedAt;
-        if (!shouldPixelateReveal) {
-            const durationSlow = elapsed > 420;
-            const chunkSlow = streamFallbackChunks >= 4;
-            const noLengthSlow = !streamContentLength && elapsed > 320;
-            shouldPixelateReveal = durationSlow || chunkSlow || noLengthSlow;
-        }
-
-        if (signal.aborted) {
-            throw new DOMException('Aborted', 'AbortError');
-        }
-
-        const objectURL = URL.createObjectURL(blob);
-        updateModalContent(objectURL, index, originalPath, undefined, { pixelate: shouldPixelateReveal });
-        state.currentObjectURL = objectURL;
-    } catch (error) {
-        if (error.name !== 'AbortError') {
-            setNavigationProgress(1);
-            setNavigationBlurProgress(1);
-            try {
-                updateModalContent(mediaSrc, index, originalPath, undefined, { pixelate: shouldPixelateReveal });
-            } catch {}
-            showNotification('图片加载或解码失败', 'error');
-        }
-    } finally {
-        if (activeLoader === controller) {
-            activeLoader = null;
-        }
-        state.isModalNavigating = false;
-        hideNavigationProgressBar();
-    }
-}
-
-/**
- * 关闭模态框，清理所有状态与 DOM 元素
- * @returns {void}
- */
-export function closeModal() {
-    if (safeClassList(elements.modal, 'contains', 'opacity-0')) return;
-
-    // 移除模态框相关类
-    // 注意：document.documentElement 和 document.body 的 classList 操作保持原样
-    // 因为这些是特殊 DOM 元素，不在我们的封装范围内
-    document.documentElement.classList.remove('modal-open');
-    document.body.classList.remove('modal-open');
-    safeClassList(elements.modal, 'add', 'opacity-0');
-    safeClassList(elements.modal, 'add', 'pointer-events-none');
-    
-    // 确保停止快速导航，避免定时器泄漏
-    if (typeof stopFastNavigate === 'function') {
-        stopFastNavigate();
-    }
-    
-    // 清理模态框资源
-    cleanupModal();
-    
-    // 清理媒体内容
-    elements.modalImg.src = '';
-    elements.modalVideo.pause();
-    elements.modalVideo.src = '';
-    
-    // 清理背景
-    safeSetStyle(backdrops.one, 'backgroundImage', 'none');
-    safeSetStyle(backdrops.two, 'backgroundImage', 'none');
-    
-    // 清理对象 URL
-    if (state.currentObjectURL) {
-        URL.revokeObjectURL(state.currentObjectURL);
-        state.currentObjectURL = null;
-    }
-    
-    // 隐藏 AI 气泡
-    if (elements.captionBubble) safeClassList(elements.captionBubble, 'remove', 'show');
-    if (document.activeElement) document.activeElement.blur();
-
-    // 恢复滚动位置
-    if (state.scrollPositionBeforeModal !== null) {
-        window.scrollTo({ top: state.scrollPositionBeforeModal, behavior: 'instant' });
-        state.scrollPositionBeforeModal = null;
-    }
-    
-    // 恢复焦点到缩略图
-    if (state.activeThumbnail) {
-        state.activeThumbnail.focus({ preventScroll: true });
-        state.activeThumbnail = null;
-    }
-}
-
-/**
- * 模态框导航至上一项或下一项
- * @param {'prev'|'next'} direction - 导航方向
- * @returns {void}
- */
-export function navigateModal(direction) {
-    if (document.activeElement) document.activeElement.blur();
-    if (state.isModalNavigating) return;
-    
-    // 隐藏控制元素并设置定时器重新显示
-    hideModalControls(); 
-    clearTimeout(state.uiVisibilityTimer);
-    state.uiVisibilityTimer = setTimeout(showModalControls, 500);
-    
-    // 计算新的索引
-    const newIndex = direction === 'prev' ? state.currentPhotoIndex - 1 : state.currentPhotoIndex + 1;
-    if (newIndex >= 0 && newIndex < state.currentPhotos.length) {
-        const nextMediaSrc = state.currentPhotos[newIndex];
-        const navDirection = direction === 'prev' ? 'backward' : 'forward';
-        handleModalNavigationLoad(nextMediaSrc, newIndex, navDirection);
-    }
-}
-
-/**
- * 处理缩略图点击事件
- * @param {HTMLElement} element - 被点击的缩略图元素
- * @param {string} mediaSrc - 媒体源 URL
- * @param {number} index - 媒体索引
- * @returns {void}
- */
-export function _handleThumbnailClick(element, mediaSrc, index) {
-    // 保存当前状态
-    state.scrollPositionBeforeModal = window.scrollY;
-    state.activeThumbnail = element;
-    
-    const photoItem = element.querySelector('.photo-item');
-    if (!photoItem || safeClassList(photoItem, 'contains', 'is-loading')) return;
-
-    const isVideo = /\.(mp4|webm|mov)$/i.test(mediaSrc);
-
-    if (isVideo) {
-        // 视频直接打开模态框
-        const thumbEl = photoItem.querySelector('img[data-src]');
-        const thumbUrl = thumbEl ? thumbEl.dataset.src : null;
-        _openModal(mediaSrc, index, false, mediaSrc, thumbUrl, { pixelate: false });
-        return;
-    }
-    
-    // 中止之前的加载器
-    if (activeLoader) activeLoader.abort();
-    
-    // 初始化进度圆环
-    const progressCircle = photoItem.querySelector('.progress-circle-bar');
-    const loadingOverlay = photoItem.querySelector('.loading-overlay');
-    let overlayShowTimer = null;
-    if (progressCircle) {
-        const radius = progressCircle.r.baseVal.value;
-        const circumference = 2 * Math.PI * radius;
-        safeSetStyle(progressCircle, 'strokeDasharray', `${circumference} ${circumference}`);
-        safeSetStyle(progressCircle, 'strokeDashoffset', circumference);
-    }
-    if (loadingOverlay) {
-        safeSetStyle(loadingOverlay, {
-            display: 'none',
-            opacity: '0'
-        });
-        overlayShowTimer = setTimeout(() => {
-            safeSetStyle(loadingOverlay, {
-                display: 'flex',
-                opacity: '1'
-            });
-            overlayShowTimer = null;
-        }, 180);
-    }
-    
-    safeClassList(photoItem, 'add', 'is-loading');
-    
-    // 创建新的加载控制器
     const controller = new AbortController();
     const { signal } = controller;
     activeLoader = controller;
@@ -866,8 +834,37 @@ export function _openModal(mediaSrc, index = 0, isObjectURL = false, originalPat
         return;
     }
 
-    safeClassList(elements.modal, 'remove', 'opacity-0');
-    safeClassList(elements.modal, 'remove', 'pointer-events-none');
+    // 延迟显示：等待媒体解码/可播放，减少CLS
+    pendingReveal = true;
+    modalPrevFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    // 键盘与点击外部关闭
+    modalKeydownHandler = (e) => {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            if (window.location.hash.endsWith('#modal')) {
+                window.history.back();
+            } else {
+                closeModal();
+            }
+        }
+    };
+    document.addEventListener('keydown', modalKeydownHandler);
+
+    modalClickHandler = (e) => {
+        const target = e.target;
+        if (target === elements.modal || (target && target.classList && target.classList.contains('modal-backdrop'))) {
+            if (window.location.hash.endsWith('#modal')) {
+                window.history.back();
+            } else {
+                closeModal();
+            }
+        }
+    };
+    elements.modal.addEventListener('click', modalClickHandler);
+
+    activateFocusTrap();
+    lockScroll();
     
     // 更新模态框内容
     const aiPath = originalPathForAI || mediaSrc;
@@ -1013,3 +1010,174 @@ export function cleanupModal() {
 
 // 页面卸载时清理资源
 window.addEventListener('beforeunload', cleanupModal);
+
+// =============================================
+// 通用可复用对话框（设置/确认/密码等）
+// =============================================
+const __sharedModalStack = [];
+
+/**
+ * 创建一个通用对话框外壳，带有可访问性、焦点陷阱与滚动锁定
+ * @param {Object} options
+ * @param {string} [options.title]
+ * @param {string} [options.description]
+ * @param {boolean} [options.asForm=false]
+ * @param {Function} [options.onClose]
+ * @param {string} [options.variant]
+ * @param {boolean} [options.mobileFullscreen=false]
+ * @param {boolean} [options.useHeader=true]
+ * @returns {{overlay: HTMLElement, container: HTMLElement, body: HTMLElement, footer: HTMLElement, close: (reason?: string)=>void}}
+ */
+export function createModalShell(options = {}) {
+    const {
+        title = '',
+        description = '',
+        asForm = false,
+        onClose = () => {},
+        variant = '',
+        mobileFullscreen = false,
+        useHeader = true
+    } = options;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'download-modal-backdrop';
+    overlay.setAttribute('data-modal-backdrop', 'true');
+
+    const container = document.createElement(asForm ? 'form' : 'div');
+    container.className = 'download-modal';
+    if (variant) container.classList.add(variant);
+    if (mobileFullscreen) container.classList.add('modal-fullscreen-mobile');
+    if (asForm) container.setAttribute('novalidate', 'novalidate');
+    container.setAttribute('role', 'dialog');
+    container.setAttribute('aria-modal', 'true');
+    container.tabIndex = -1;
+
+    if (useHeader) {
+        const header = document.createElement('header');
+        const heading = document.createElement('h3');
+        heading.textContent = String(title || '');
+        const headingId = `app-modal-title-${Date.now().toString(16)}-${Math.random().toString(16).slice(2,8)}`;
+        heading.id = headingId;
+        container.setAttribute('aria-labelledby', headingId);
+
+        const closeButton = document.createElement('button');
+        closeButton.type = 'button';
+        closeButton.className = 'modal-close';
+        closeButton.setAttribute('aria-label', '关闭');
+        closeButton.innerHTML = '&times;';
+
+        header.appendChild(heading);
+        header.appendChild(closeButton);
+        container.appendChild(header);
+
+        closeButton.addEventListener('click', () => cleanup('cancel'));
+    } else if (title) {
+        // 无头部时仍提供无障碍名称
+        container.setAttribute('aria-label', String(title));
+    }
+
+    if (description) {
+        const desc = document.createElement('p');
+        desc.className = 'modal-description';
+        desc.textContent = description;
+        container.appendChild(desc);
+    }
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
+    container.appendChild(body);
+
+    const footer = document.createElement('footer');
+    container.appendChild(footer);
+
+    overlay.appendChild(container);
+    document.body.appendChild(overlay);
+
+    // 锁定滚动
+    lockScroll();
+
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    function handleBackdrop(e) {
+        if (e.target === overlay) {
+            cleanup('cancel');
+        }
+    }
+
+    function handleKeydown(e) {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            cleanup('cancel');
+            return;
+        }
+        if (e.key === 'Tab') {
+            const focusables = getFocusableElements(container);
+            if (!focusables.length) {
+                e.preventDefault();
+                try { container.focus({ preventScroll: true }); } catch { container.focus(); }
+                return;
+            }
+            const current = focusables.indexOf(document.activeElement);
+            let next = current;
+            if (e.shiftKey) next = current <= 0 ? focusables.length - 1 : current - 1;
+            else next = current === focusables.length - 1 ? 0 : current + 1;
+            e.preventDefault();
+            try { focusables[next].focus({ preventScroll: true }); } catch { focusables[next].focus(); }
+        }
+    }
+
+    let closed = false;
+    function cleanup(reason) {
+        if (closed) return;
+        closed = true;
+        overlay.removeEventListener('pointerdown', handleBackdrop);
+        container.removeEventListener('keydown', handleKeydown);
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        // 出栈
+        const idx = __sharedModalStack.indexOf(close);
+        if (idx !== -1) __sharedModalStack.splice(idx, 1);
+        // 解锁滚动
+        unlockScroll();
+        // 焦点返回
+        setTimeout(() => {
+            const top = __sharedModalStack[__sharedModalStack.length - 1];
+            if (top && top.__container && top.__container.isConnected) {
+                try { top.__container.focus({ preventScroll: true }); } catch { top.__container.focus(); }
+            } else if (previouslyFocused && previouslyFocused.isConnected) {
+                try { previouslyFocused.focus({ preventScroll: true }); } catch { previouslyFocused.focus(); }
+            }
+        }, 0);
+        // 回调
+        if (typeof onClose === 'function') onClose(reason);
+    }
+
+    overlay.addEventListener('pointerdown', handleBackdrop, { passive: true });
+    container.addEventListener('keydown', handleKeydown);
+
+    // 初始聚焦
+    setTimeout(() => {
+        const focusables = getFocusableElements(container);
+        if (focusables.length) {
+            try { focusables[0].focus({ preventScroll: true }); } catch { focusables[0].focus(); }
+        } else {
+            try { container.focus({ preventScroll: true }); } catch { container.focus(); }
+        }
+    }, 0);
+
+    function close(reason) { cleanup(reason); }
+    close.__container = container;
+    __sharedModalStack.push(close);
+
+    return { overlay, container, body, footer, close };
+}
+
+export function cleanupAllModals() {
+    while (__sharedModalStack.length > 0) {
+        const top = __sharedModalStack[__sharedModalStack.length - 1];
+        if (typeof top === 'function') {
+            try { top('cleanup'); } catch {}
+        } else {
+            __sharedModalStack.pop();
+        }
+    }
+}

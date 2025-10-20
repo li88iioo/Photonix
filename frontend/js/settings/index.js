@@ -23,15 +23,27 @@ initializeContext();
  */
 export async function showSettingsModal() {
   const context = initializeContext();
-  const { modal, card, template } = context;
+  const { template } = context;
+
+  // 使用共享对话框外壳
+  const shell = (await import('../app/modal.js')).createModalShell({
+    title: '设置',
+    asForm: false,
+    mobileFullscreen: true,
+    useHeader: false,
+    onClose: () => {
+      try { safeSetInnerHTML(shell.body, ''); } catch {}
+    }
+  });
+  context.modal = shell.container;
+  context.card = shell.body;
+  context.close = shell.close;
 
   // 展示 loading 状态
-  safeClassList(document.body, 'add', 'settings-open');
   safeSetInnerHTML(
-    card,
+    shell.body,
     '<div style="display:flex;justify-content:center;align-items:center;height:100%;"><div class="spinner" style="width:3rem;height:3rem;"></div></div>'
   );
-  safeClassList(modal, 'add', 'visible');
 
   try {
     // 获取服务端设置和本地 AI 配置
