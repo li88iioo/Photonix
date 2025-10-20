@@ -122,6 +122,10 @@ const appStateStore = map({
     currentLayoutWidth: 0,
     pageCache: new Map(),
 
+    // 路由返回恢复意图
+    restoreTargetRouteKey: null,
+    isBackNavigation: false,
+
     // 预览布局模式
     layoutMode: (typeof localStorage !== 'undefined' && localStorage.getItem('sg_layout_mode')) || 'grid',
 
@@ -333,6 +337,9 @@ const ALLOWED_STATE_KEYS = new Set([
     'isBrowseLoading', 'currentBrowsePage', 'totalBrowsePages', 'currentBrowsePath',
     'currentSort', 'entrySort', 'currentColumnCount', 'currentLayoutWidth', 'pageCache',
     'albumTombstones',
+
+    // 路由返回恢复意图
+    'restoreTargetRouteKey', 'isBackNavigation',
 
     // 预览布局模式
     'layoutMode',

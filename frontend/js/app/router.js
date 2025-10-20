@@ -40,6 +40,137 @@ import { isDownloadRoute, showDownloadPage, hideDownloadPage } from '../features
 let currentRequestController = null;
 
 /**
+ * 构建用于区分不同上下文（路径+排序/搜索）的路由键
+ * @param {string} pathOnly 纯路径（不含?参数）
+ * @param {string} sortValue 当前排序值（如 smart/name_asc 等），可为空
+ * @returns {string}
+ */
+function buildRouteKey(pathOnly, sortValue) {
+    const sort = (sortValue && typeof sortValue === 'string') ? sortValue : 'smart';
+    return `${pathOnly || ''}::sort=${sort}`;
+}
+
+/**
+ * 从hash中解析排序参数
+ * @param {string} hash
+ * @returns {string}
+ */
+function getSortFromHash(hash) {
+    try {
+        const questionMarkIndex = hash.indexOf('?');
+        const params = new URLSearchParams(questionMarkIndex !== -1 ? hash.substring(questionMarkIndex) : '');
+        return params.get('sort') || 'smart';
+    } catch {
+        return 'smart';
+    }
+}
+
+/**
+ * 获取当前Topbar占位高度（与 --topbar-offset 保持一致），用于避免CLS
+ * @returns {number}
+ */
+function getTopbarOffsetHeight() {
+    const app = safeGetElementById('app-container');
+    if (!app) return 112;
+    try {
+        const v = getComputedStyle(app).getPropertyValue('--topbar-offset');
+        const n = parseInt(String(v).trim().replace('px', ''), 10);
+        return Number.isFinite(n) ? n : 112;
+    } catch {
+        return 112;
+    }
+}
+
+/**
+ * 读取父层列表的可见锚点信息
+ * @returns {{ id: string, type: 'album'|'photo'|null, relativeOffset: number, headerHeight: number, scrollY: number }|null}
+ */
+function getFirstVisibleAnchor() {
+    const grid = elements?.contentGrid;
+    if (!grid) return null;
+    const headerHeight = getTopbarOffsetHeight();
+    const items = Array.from(grid.querySelectorAll('.grid-item'));
+    if (items.length === 0) return {
+        id: '', type: null, relativeOffset: 0, headerHeight, scrollY: window.scrollY
+    };
+    // 找到第一个与视口相交的项目（下边缘超过顶部偏移即视为可见）
+    const first = items.find(el => {
+        const rect = el.getBoundingClientRect();
+        return rect.bottom > headerHeight; // 与可视区域产生交集
+    }) || items[0];
+    const rect = first.getBoundingClientRect();
+    const relativeOffset = Math.round(rect.top - headerHeight);
+    let id = '';
+    let type = null;
+    if (first.classList.contains('album-link')) {
+        id = first.getAttribute('data-path') || '';
+        type = 'album';
+    } else if (first.classList.contains('photo-link')) {
+        id = first.getAttribute('data-url') || '';
+        type = 'photo';
+    }
+    return { id, type, relativeOffset, headerHeight, scrollY: window.scrollY };
+}
+
+/**
+ * 读取/写入会话内的锚点集合
+ */
+function loadNavAnchors() {
+    try {
+        const raw = sessionStorage.getItem('sg_nav_anchors');
+        return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+}
+function saveNavAnchors(obj) {
+    try { sessionStorage.setItem('sg_nav_anchors', JSON.stringify(obj)); } catch {}
+}
+function saveAnchorForRouteKey(routeKey, anchor) {
+    if (!routeKey || !anchor) return;
+    const data = loadNavAnchors();
+    data[routeKey] = anchor;
+    saveNavAnchors(data);
+    try {
+        // 同步到 history.state，便于 bfcache 恢复
+        const prev = history.state && typeof history.state === 'object' ? history.state : {};
+        history.replaceState({ ...prev, sg_nav_anchors: data }, '');
+    } catch {}
+}
+
+/**
+ * 根据已保存的锚点恢复滚动位置
+ * @param {string} routeKey
+ * @returns {boolean} 是否恢复成功
+ */
+function tryRestoreFromAnchor(routeKey) {
+    if (!routeKey) return false;
+    const data = (history.state && history.state.sg_nav_anchors) || loadNavAnchors();
+    const anchor = data?.[routeKey];
+    if (!anchor) return false;
+    const grid = elements?.contentGrid;
+    if (!grid) return false;
+    const headerNow = getTopbarOffsetHeight();
+    // 优先通过共享元素精确定位
+    let selector = '';
+    if (anchor.type === 'album' && anchor.id) selector = `.grid-item.album-link[data-path="${anchor.id}"]`;
+    else if (anchor.type === 'photo' && anchor.id) selector = `.grid-item.photo-link[data-url="${anchor.id}"]`;
+    let targetEl = null;
+    try { targetEl = selector ? grid.querySelector(selector) : null; } catch { targetEl = null; }
+    if (targetEl) {
+        const rect = targetEl.getBoundingClientRect();
+        const absoluteTop = window.scrollY + rect.top;
+        const desired = Math.max(0, Math.round(absoluteTop - headerNow - (anchor.relativeOffset || 0)));
+        window.scrollTo({ top: desired, behavior: 'auto' });
+        return true;
+    }
+    // 回退：使用粗略 scrollY
+    if (typeof anchor.scrollY === 'number') {
+        window.scrollTo({ top: Math.max(0, anchor.scrollY | 0), behavior: 'auto' });
+        return true;
+    }
+    return false;
+}
+
+/**
  * 过滤集合，剔除被“墓碑”标记的相册项。
  * @param {Array} collection - 原始项目集合（相册和照片）
  * @returns {Object} { items: 过滤后的集合, removed: 被移除数量 }
@@ -104,6 +235,7 @@ function getPathOnlyFromHash() {
  * 路由初始化。恢复session状态并监听hash变化。
  */
 export function initializeRouter() {
+    try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch {}
     try {
         const raw = sessionStorage.getItem('sg_scroll_positions');
         if (raw) {
@@ -117,6 +249,12 @@ export function initializeRouter() {
         const fromSearch = sessionStorage.getItem('sg_from_search_hash');
         if (fromSearch) state.update('fromSearchHash', fromSearch);
     } catch {}
+    // bfcache 恢复时避免重复滚动恢复
+    window.addEventListener('pageshow', (e) => {
+        if (e.persisted) {
+            // 在bfcache恢复场景下，保持现有滚动，不触发额外恢复
+        }
+    });
     handleHashChange();
     window.addEventListener('hashchange', handleHashChange);
 }
@@ -126,26 +264,50 @@ export function initializeRouter() {
  */
 export async function handleHashChange() {
     persistRouteState();
-    AbortBus.abortMany(['page', 'scroll']);
-    const pageSignal = AbortBus.next('page');
+
+    // 计算是否为返回到父层级（目录/首页）
+    const previousPath = typeof state.currentBrowsePath === 'string' ? state.currentBrowsePath : '';
     const { cleanHashString, newDecodedPath } = sanitizeHash();
-    refreshRouteEventListenersSafely();
-    if (isDownloadRoute(cleanHashString)) {
-        await showDownloadPage();
-        return;
+    const questionMarkIndex = newDecodedPath.indexOf('?');
+    const targetPathOnly = questionMarkIndex !== -1 ? newDecodedPath.substring(0, questionMarkIndex) : newDecodedPath;
+    const isBackToParent = !!previousPath && !!targetPathOnly && previousPath.startsWith(targetPathOnly + '/') && !cleanHashString.endsWith('#modal');
+    const targetRouteKey = buildRouteKey(targetPathOnly, getSortFromHash(window.location.hash));
+    state.update('isBackNavigation', isBackToParent);
+    state.update('restoreTargetRouteKey', isBackToParent ? targetRouteKey : null);
+
+    const doRoute = async () => {
+        AbortBus.abortMany(['page', 'scroll']);
+        const pageSignal = AbortBus.next('page');
+        refreshRouteEventListenersSafely();
+        if (isDownloadRoute(cleanHashString)) {
+            await showDownloadPage();
+            return;
+        }
+        hideDownloadPage();
+        const navigation = buildNavigationContext(cleanHashString, newDecodedPath);
+        if (shouldReuseExistingContent(navigation)) {
+            return;
+        }
+        updatePreSearchHash(cleanHashString);
+        manageFromSearchHash(newDecodedPath);
+        if (navigation.isSearchRoute) {
+            await handleSearchRoute(navigation, pageSignal);
+        } else {
+            await handleBrowseRoute(navigation, pageSignal);
+        }
+    };
+
+    // 支持的浏览器使用 View Transitions API 实现优雅过渡
+    try {
+        if (isBackToParent && typeof document !== 'undefined' && typeof document.startViewTransition === 'function') {
+            await document.startViewTransition(() => doRoute());
+            return;
+        }
+    } catch (e) {
+        // 忽略视图转场错误，使用降级方案
     }
-    hideDownloadPage();
-    const navigation = buildNavigationContext(cleanHashString, newDecodedPath);
-    if (shouldReuseExistingContent(navigation)) {
-        return;
-    }
-    updatePreSearchHash(cleanHashString);
-    manageFromSearchHash(newDecodedPath);
-    if (navigation.isSearchRoute) {
-        await handleSearchRoute(navigation, pageSignal);
-    } else {
-        await handleBrowseRoute(navigation, pageSignal);
-    }
+
+    await doRoute();
 }
 
 /**
@@ -165,6 +327,7 @@ function persistRouteState() {
         const oldHash = sessionStorage.getItem('sg_last_hash') || '';
         const newHash = location.hash;
         const isClosingModal = oldHash.includes('#modal') && !newHash.includes('#modal');
+        const isOpeningModal = !oldHash.includes('#modal') && newHash.includes('#modal');
         
         // 如果是关闭modal，不覆盖之前保存的滚动位置
         if (!isClosingModal) {
@@ -172,6 +335,18 @@ function persistRouteState() {
             newScrollPositions.set(key, window.scrollY);
             state.scrollPositions = newScrollPositions;
         }
+
+        // 进入子层级时，记录父层列表锚点（首页->目录、目录->相册）
+        try {
+            const newPathOnly = getPathOnlyFromHash();
+            const goingDeeper = !!key && !!newPathOnly && newPathOnly.startsWith(key + '/') && !isOpeningModal;
+            if (goingDeeper) {
+                const anchor = getFirstVisibleAnchor();
+                const sortValue = state.currentSort || getSortFromHash(oldHash);
+                const routeKey = buildRouteKey(key, sortValue);
+                saveAnchorForRouteKey(routeKey, anchor);
+            }
+        } catch {}
         
         // 如果当前在搜索页，保存搜索hash（在离开前保存）
         if (key.startsWith('search?q=')) {
@@ -756,17 +931,41 @@ function finalizeNewContent(pathKey) {
     sortAlbumsByViewed();
     state.update('currentColumnCount', getMasonryColumns());
     preloadVisibleImages();
-    
-    // ✅ 修复：不恢复滚动位置，始终从顶部开始
-    // 滚动位置恢复会导致进入新目录时出现在中间位置
-    // const scrollPositions = state.scrollPositions;
-    // const scrollY = scrollPositions.get(pathKey);
-    // if (scrollY && scrollY > 0) {
-    //     window.scrollTo({ top: scrollY, behavior: 'instant' });
-    //     const newScrollPositions = new Map(scrollPositions);
-    //     newScrollPositions.delete(pathKey);
-    //     state.scrollPositions = newScrollPositions;
-    // }
+
+    // 层级返回：精确恢复父层位置（优先使用锚点）
+    const currentSort = getSortFromHash(window.location.hash);
+    const routeKey = buildRouteKey(pathKey, currentSort);
+    const shouldRestore = !!state.isBackNavigation && state.restoreTargetRouteKey === routeKey;
+
+    if (shouldRestore) {
+        // 降级动画：不支持 View Transitions 时，使用轻微淡入
+        const useFade = !(typeof document !== 'undefined' && typeof document.startViewTransition === 'function');
+        if (useFade && elements?.contentGrid) {
+            safeSetStyle(elements.contentGrid, 'opacity', '0.001');
+            safeSetStyle(elements.contentGrid, 'transform', 'translateZ(0)');
+            safeSetStyle(elements.contentGrid, 'transition', 'opacity 180ms ease');
+        }
+        // 等待布局稳定后再恢复精确位置
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                const ok = tryRestoreFromAnchor(routeKey);
+                if (useFade && elements?.contentGrid) {
+                    // 同帧更新，避免CLS
+                    requestAnimationFrame(() => {
+                        safeSetStyle(elements.contentGrid, 'opacity', '1');
+                    });
+                }
+                if (!ok) {
+                    // 兜底：使用旧的粗略 scrollY
+                    const scrollPositions = state.scrollPositions;
+                    const roughY = scrollPositions.get(pathKey);
+                    if (roughY && roughY > 0) {
+                        window.scrollTo({ top: roughY, behavior: 'auto' });
+                    }
+                }
+            });
+        });
+    }
     
     safeSetStyle(elements.contentGrid, 'minHeight', '');
     state.update('isInitialLoad', false);
