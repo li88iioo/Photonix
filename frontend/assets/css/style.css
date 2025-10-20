@@ -1,6 +1,20 @@
+@import "./tokens.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Base theme defaults powered by design tokens */
+@layer base {
+  body:not([data-page="download"]) {
+    background-color: var(--color-bg);
+    color: var(--color-text);
+  }
+  body:not([data-page="download"])::selection {
+    background: var(--color-selection-bg);
+    color: var(--color-selection-text);
+  }
+}
 
 /* 定义本地 ZCOOL KuaiLe 字体 (TTF格式) */
 @font-face {
@@ -80,9 +94,9 @@ html, body {
 
 .smart-loading-bar {
     height: 100%;
-    background: linear-gradient(90deg, #8B5CF6, #EC4899, #F59E0B);
+    background: var(--gradient-accent);
     width: 0%;
-    transition: width 0.3s ease;
+    transition: width var(--duration-fast, 0.3s) ease;
     position: relative;
     overflow: hidden;
 }
@@ -153,7 +167,7 @@ html, body {
 .spinner-enhanced {
     border: 3px solid rgba(255, 255, 255, 0.1);
     border-radius: 50%;
-    border-top-color: #8B5CF6;
+    border-top-color: var(--color-accent-1);
     width: 2rem;
     height: 2rem;
     animation: spin-enhanced 1s linear infinite;
@@ -169,7 +183,7 @@ html, body {
     bottom: -2px;
     border: 2px solid transparent;
     border-radius: 50%;
-    border-top-color: #EC4899;
+    border-top-color: var(--color-accent-2);
     animation: spin-enhanced 0.8s linear infinite reverse;
 }
 
@@ -183,7 +197,7 @@ html, body {
     width: 1rem;
     height: 1rem;
     border-radius: 50%;
-    background-color: #8B5CF6;
+    background-color: var(--color-accent-1);
     animation: pulse-loading 1.2s ease-in-out infinite;
 }
 
@@ -208,7 +222,7 @@ html, body {
 .wave-loading span {
     width: 0.25rem;
     height: 1rem;
-    background-color: #8B5CF6;
+    background-color: var(--color-accent-1);
     border-radius: 0.125rem;
     animation: wave-loading 1.2s ease-in-out infinite;
 }
@@ -240,13 +254,13 @@ html, body {
 }
 
 .smooth-scroll-container::-webkit-scrollbar-thumb {
-    background: linear-gradient(180deg, #8B5CF6, #EC4899);
+    background: var(--gradient-accent-vertical);
     border-radius: 4px;
-    transition: background 0.3s ease;
+    transition: background var(--duration-fast, 0.3s) ease;
 }
 
 .smooth-scroll-container::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(180deg, #7C3AED, #DB2777);
+    background: var(--gradient-accent-vertical);
 }
 
 /* 滚动指示器 */
@@ -262,7 +276,7 @@ html, body {
 
 .scroll-indicator-bar {
     height: 100%;
-    background: linear-gradient(90deg, #8B5CF6, #EC4899);
+    background: var(--gradient-accent);
     width: 0%;
     transition: width 0.1s ease;
 }
@@ -436,7 +450,7 @@ html, body {
 
 /* 渐变背景动画 */
 .gradient-bg {
-    background: linear-gradient(-45deg, #8B5CF6, #EC4899, #F59E0B, #10B981);
+    background: var(--gradient-ambient);
     background-size: 400% 400%;
     animation: gradient-shift 3s ease infinite;
 }
@@ -447,7 +461,7 @@ html, body {
     100% { background-position: 0% 50%; }
 }
 
-body { font-family: 'Noto Sans SC', sans-serif; }
+body { font-family: var(--font-sans, 'Noto Sans SC', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif); }
 
 #content-grid.masonry-mode {
     position: relative;

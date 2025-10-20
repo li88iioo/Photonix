@@ -1,0 +1,117 @@
+/* Design tokens: color palette, semantic roles, typography, radii, spacing, shadows, z-index, transitions */
+
+:root {
+  /* Typography */
+  --font-sans: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+  /* Color scheme exposure so UA picks correct form controls, etc. */
+  color-scheme: light dark;
+
+  /* Brand palette (base) */
+  --color-accent-1: #8B5CF6; /* violet-500 */
+  --color-accent-2: #EC4899; /* pink-500 */
+  --color-accent-3: #F59E0B; /* amber-500 */
+  --color-accent-4: #10B981; /* emerald-500 */
+
+  /* Semantic colors (defaults target dark since the app ships dark-first) */
+  --color-bg: #111827;           /* gray-900 */
+  --color-surface-1: #111827;
+  --color-surface-2: #0f172a;    /* slate-900 */
+  --color-surface-3: #0b1220;    /* custom deeper */
+  --color-overlay: rgba(0,0,0,0.5);
+  --color-border: rgba(255,255,255,0.08);
+  --color-text: #e5e7eb;         /* gray-200 */
+  --color-text-muted: #9CA3AF;   /* gray-400 */
+  --color-text-inverted: #0f172a;
+  --color-focus-ring: #22d3ee;   /* cyan-400 */
+
+  /* Selections */
+  --color-selection-bg: var(--color-accent-1);
+  --color-selection-text: #ffffff;
+
+  /* Gradients */
+  /* Morning Mist gradient accent */
+  --gradient-morning-mist: linear-gradient(135deg, #a5b4fc 0%, #fbcfe8 50%, #fde68a 100%);
+  --gradient-accent: linear-gradient(90deg, var(--color-accent-1), var(--color-accent-2), var(--color-accent-3));
+  --gradient-ambient: linear-gradient(-45deg, var(--color-accent-1), var(--color-accent-2), var(--color-accent-3), var(--color-accent-4));
+  --gradient-accent-vertical: linear-gradient(180deg, var(--color-accent-1), var(--color-accent-2));
+
+  /* Radii */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+  --radius-full: 9999px;
+
+  /* Spacing scale */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* Shadows (dark) */
+  --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.25);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.35);
+  --shadow-lg: 0 10px 24px rgba(0,0,0,0.4);
+  --shadow-xl: 0 20px 48px rgba(0,0,0,0.45);
+  --shadow-2xl: 0 32px 64px rgba(0,0,0,0.5);
+
+  /* Ring */
+  --ring-width: 3px;
+
+  /* Z-index */
+  --z-base: 1;
+  --z-overlay: 50;
+  --z-modal: 100;
+  --z-toast: 1000;
+  --z-max: 2147483647;
+
+  /* Transition durations */
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 500ms;
+}
+
+/* Light theme overrides */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #f8fafc;            /* slate-50 */
+  --color-surface-1: #ffffff;
+  --color-surface-2: #f1f5f9;     /* slate-100 */
+  --color-surface-3: #e2e8f0;     /* slate-200 */
+  --color-overlay: rgba(0,0,0,0.35);
+  --color-border: rgba(0,0,0,0.06);
+  --color-text: #0f172a;          /* slate-900 */
+  --color-text-muted: #475569;    /* slate-600 */
+  --color-text-inverted: #ffffff;
+
+  /* Shadows (light) */
+  --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.06);
+  --shadow-md: 0 4px 10px rgba(0,0,0,0.08);
+  --shadow-lg: 0 12px 24px rgba(0,0,0,0.12);
+  --shadow-xl: 0 24px 48px rgba(0,0,0,0.16);
+  --shadow-2xl: 0 32px 64px rgba(0,0,0,0.18);
+}
+
+/* Dark theme overrides */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  /* semantic colors already targeted for dark by default */
+}
+
+/* Base helpers leveraging tokens */
+:root, html, body {
+  font-family: var(--font-sans);
+}
+
+/* Selection */
+::selection {
+  background: var(--color-selection-bg);
+  color: var(--color-selection-text);
+}
