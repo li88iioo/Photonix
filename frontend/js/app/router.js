@@ -122,6 +122,206 @@ export function initializeRouter() {
 }
 
 /**
+ * 路由返回记忆与过渡：辅助函数与状态
+ */
+let __pendingRestoreRouteKey = null;
+
+function getRouteKey(pathOnly, sortValue) {
+    const keyPath = typeof pathOnly === 'string' ? pathOnly : '';
+    const sort = typeof sortValue === 'string' && sortValue ? sortValue : (state.currentSort || 'smart');
+    return `${keyPath}||sort=${sort}`;
+}
+
+function getTopbarOffset() {
+    const appContainer = document.getElementById('app-container');
+    if (!appContainer) return 0;
+    const val = getComputedStyle(appContainer).getPropertyValue('--topbar-offset');
+    const n = parseFloat(val);
+    return Number.isFinite(n) ? n : 0;
+}
+
+function getFirstVisibleItemInfo() {
+    const grid = elements.contentGrid;
+    if (!grid) return null;
+    const headerOffset = getTopbarOffset();
+    const children = Array.from(grid.children || []);
+    let first = null;
+    for (const el of children) {
+        const rect = el.getBoundingClientRect();
+        if (rect.bottom > headerOffset + 1) {
+            first = el; break;
+        }
+    }
+    if (!first && children.length) first = children[0];
+    if (!first) return null;
+    const rect = first.getBoundingClientRect();
+    const type = first.classList.contains('album-link') ? 'album'
+                : first.classList.contains('photo-link') ? 'photo' : 'unknown';
+    const id = type === 'album' ? first.getAttribute('data-path')
+             : type === 'photo' ? first.getAttribute('data-url') : null;
+    return {
+        type,
+        id,
+        relativeOffset: Math.max(0, rect.top - headerOffset),
+        headerHeight: headerOffset,
+        layoutMode: state.layoutMode
+    };
+}
+
+function persistAnchorsToSession(anchorsMap) {
+    try {
+        sessionStorage.setItem('sg_route_anchors', JSON.stringify(anchorsMap));
+    } catch {}
+    try {
+        const hs = history.state || {};
+        const next = { ...hs, sg_route_anchors: anchorsMap };
+        history.replaceState(next, document.title);
+    } catch {}
+}
+
+function loadAnchorsFromSession() {
+    try {
+        const raw = sessionStorage.getItem('sg_route_anchors');
+        if (raw) return JSON.parse(raw);
+    } catch {}
+    try {
+        const hs = history.state;
+        if (hs && hs.sg_route_anchors) return hs.sg_route_anchors;
+    } catch {}
+    return {};
+}
+
+function saveCurrentPageAnchorForKey(routeKey) {
+    const info = getFirstVisibleItemInfo();
+    const anchors = loadAnchorsFromSession();
+    anchors[routeKey] = {
+        ...info,
+        savedAt: Date.now()
+    };
+    persistAnchorsToSession(anchors);
+}
+
+function getAnchorForKey(routeKey) {
+    const anchors = loadAnchorsFromSession();
+    return anchors[routeKey] || null;
+}
+
+function cssEscapeCompat(str) {
+    if (typeof CSS !== 'undefined' && CSS.escape) return CSS.escape(str);
+    return String(str).replace(/[^a-zA-Z0-9_\-]/g, m => `\\${m}`);
+}
+
+function scrollToAnchor(pathKey, anchor) {
+    if (!anchor) return false;
+    const grid = elements.contentGrid;
+    if (!grid) return false;
+    const headerOffset = getTopbarOffset();
+    let targetEl = null;
+    if (anchor.id && anchor.type === 'album') {
+        targetEl = grid.querySelector(`.grid-item.album-link[data-path="${cssEscapeCompat(anchor.id)}"]`);
+    } else if (anchor.id && anchor.type === 'photo') {
+        targetEl = grid.querySelector(`.grid-item.photo-link[data-url="${cssEscapeCompat(anchor.id)}"]`);
+    }
+    const desiredOffsetComp = (anchor.headerHeight || 0) - headerOffset;
+    if (targetEl) {
+        const rect = targetEl.getBoundingClientRect();
+        const pageTop = rect.top + window.pageYOffset;
+        const desiredTop = Math.max(0, pageTop - headerOffset - Math.max(0, anchor.relativeOffset) + desiredOffsetComp);
+        const distance = Math.abs((window.pageYOffset || 0) - desiredTop);
+        const useSmooth = distance < Math.max(window.innerHeight * 1.5, 1800);
+        try {
+            window.scrollTo({ top: desiredTop, behavior: useSmooth ? 'smooth' : 'instant' });
+        } catch {
+            window.scrollTo(0, desiredTop);
+        }
+        return true;
+    }
+    // 回退：使用此前的scrollPositions
+    const y = (state.scrollPositions && state.scrollPositions.get && state.scrollPositions.get(pathKey)) || 0;
+    if (y > 0) {
+        try { window.scrollTo({ top: y, behavior: 'instant' }); } catch { window.scrollTo(0, y); }
+        return true;
+    }
+    return false;
+}
+
+function waitForLayoutStable(maxWaitMs = 800) {
+    return new Promise(resolve => {
+        const grid = elements.contentGrid;
+        if (!grid) return resolve();
+        let lastH = grid.offsetHeight;
+        let start = performance.now();
+        const tick = () => {
+            const now = performance.now();
+            const h = grid.offsetHeight;
+            const diff = Math.abs(h - lastH);
+            lastH = h;
+            if (diff < 1 || now - start > maxWaitMs) return resolve();
+            requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+    });
+}
+
+function prepareRouteReturnMemory(navigation) {
+    try {
+        const prevPath = state.currentBrowsePath || '';
+        const prevIsSearch = typeof prevPath === 'string' && prevPath.startsWith('search?q=');
+        const nextIsSearch = navigation.isSearchRoute;
+        const prevPathOnly = prevPath;
+        const nextPathOnly = navigation.pathOnly || '';
+        const goingDeeper = !!prevPathOnly && !!nextPathOnly && nextPathOnly.startsWith(prevPathOnly + '/');
+        const goingUp = !!prevPathOnly && !!nextPathOnly && prevPathOnly.startsWith(nextPathOnly + '/');
+        // 记录锚点（仅普通浏览页，进入子层级时）
+        if (!prevIsSearch && !nextIsSearch && goingDeeper) {
+            const routeKey = getRouteKey(prevPathOnly, state.currentSort || 'smart');
+            saveCurrentPageAnchorForKey(routeKey);
+            try { sessionStorage.setItem('sg_nav_direction', 'forward'); } catch {}
+        }
+        // 返回父层级时，标记待恢复
+        if (!prevIsSearch && !nextIsSearch && goingUp) {
+            __pendingRestoreRouteKey = getRouteKey(nextPathOnly, navigation.currentSortValue || state.currentSort || 'smart');
+            try { sessionStorage.setItem('sg_nav_direction', 'back'); } catch {}
+        } else {
+            __pendingRestoreRouteKey = null;
+        }
+    } catch {}
+}
+
+async function tryRestorePendingAnchor(pathKey) {
+    if (!__pendingRestoreRouteKey) return;
+    const anchor = getAnchorForKey(__pendingRestoreRouteKey);
+    if (!anchor) { __pendingRestoreRouteKey = null; return; }
+    // 动画降级：先淡出，再定位，再淡入
+    const grid = elements.contentGrid;
+    if (grid) {
+        grid.style.transition = 'none';
+        grid.style.opacity = '0';
+        grid.style.transform = 'translateZ(0)';
+    }
+    await waitForLayoutStable(800);
+    scrollToAnchor(pathKey, anchor);
+    requestAnimationFrame(() => {
+        if (!grid) return;
+        grid.style.transition = 'opacity 180ms ease, transform 180ms ease';
+        grid.style.opacity = '1';
+        grid.style.transform = 'none';
+        const cancel = () => {
+            grid.style.transition = 'none';
+            grid.style.opacity = '';
+            grid.style.transform = '';
+            window.removeEventListener('wheel', cancel, { passive: true });
+            window.removeEventListener('touchstart', cancel, { passive: true });
+            window.removeEventListener('keydown', cancel, { passive: true });
+        };
+        window.addEventListener('wheel', cancel, { passive: true, once: true });
+        window.addEventListener('touchstart', cancel, { passive: true, once: true });
+        window.addEventListener('keydown', cancel, { passive: true, once: true });
+    });
+    __pendingRestoreRouteKey = null;
+}
+
+/**
  * hash路由主入口，处理内容加载与导航切换。
  */
 export async function handleHashChange() {
@@ -136,6 +336,8 @@ export async function handleHashChange() {
     }
     hideDownloadPage();
     const navigation = buildNavigationContext(cleanHashString, newDecodedPath);
+    // 预处理返回记忆：在进入子层级前记录锚点，在返回父层级时准备恢复
+    prepareRouteReturnMemory(navigation);
     if (shouldReuseExistingContent(navigation)) {
         return;
     }
@@ -756,6 +958,9 @@ function finalizeNewContent(pathKey) {
     sortAlbumsByViewed();
     state.update('currentColumnCount', getMasonryColumns());
     preloadVisibleImages();
+
+    // 返回父层级时精确恢复锚点位置（虚拟滚动或瀑布流稳定后执行）
+    tryRestorePendingAnchor(pathKey);
     
     // ✅ 修复：不恢复滚动位置，始终从顶部开始
     // 滚动位置恢复会导致进入新目录时出现在中间位置
