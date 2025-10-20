@@ -142,7 +142,7 @@
                 </div>
             </div>
         </div>
-        <button id="modal-close" class="modal-close-button" aria-label="关闭"><svg xmlns="http://www.w3.org/2000/svg"
+        <button id="modal-close" class="btn btn-ghost btn-icon modal-close-button" aria-label="关闭"><svg xmlns="http://www.w3.org/2000/svg"
                 width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
                 stroke-linecap="round" stroke-linejoin="round">
                 <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -153,7 +153,7 @@
         <div class="settings-layout">
             <header class="settings-header">
                 <h2>设置</h2>
-                <button class="close-btn" title="关闭"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                <button class="btn btn-ghost btn-icon close-btn" title="关闭"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
                         viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
                         stroke-linejoin="round">
                         <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -175,8 +175,8 @@
                             <div class="setting-group-content">
                                 <div id="password-enabled-wrapper" class="form-row">
                                     <label for="password-enabled" class="form-label">启用访问密码</label>
-                                    <input type="checkbox" id="password-enabled" name="password_enabled"
-                                        class="toggle-switch">
+                                    <input type="checkbox" id="password-enabled" name="password_enabled" role="switch"
+                                        class="switch">
                                 </div>
                             </div>
                         </div>
@@ -215,8 +215,8 @@
                             <p class="setting-group-description">连接到您的AI服务，为照片生成有趣的描述。</p>
                             <div class="setting-group-content">
                                 <div class="form-row"><label for="ai-enabled" class="form-label">启用 AI
-                                        密语功能</label><input type="checkbox" id="ai-enabled" name="ai_enabled"
-                                        class="toggle-switch"></div>
+                                        密语功能</label><input type="checkbox" id="ai-enabled" name="ai_enabled" role="switch"
+                                        class="switch"></div>
                             </div>
                         </div>
                         <div id="api-settings-group" class="setting-group" style="display: none;">
@@ -279,14 +279,14 @@
                                 <p class="manage-card-description">开启安全开关后，可在相册封面右击或长按进行删除。</p>
                             </div>
                             <div class="manage-card-body">
-                                <div class="manage-toggle-row" id="album-delete-toggle-row" role="button" tabindex="0" aria-pressed="false">
+                                <div class="manage-toggle-row" id="album-delete-toggle-row" role="switch" tabindex="0" aria-checked="false">
                                     <div class="manage-toggle-text">
                                         <div class="manage-toggle-title">启用网页相册删除</div>
                                         <div class="manage-toggle-description">支持直接在前端管理相册内容</div>
                                     </div>
                                     <div class="manage-toggle-control">
                                         <label class="sr-only" for="album-delete-toggle">启用网页相册删除</label>
-                                        <input type="checkbox" id="album-delete-toggle" class="toggle-switch" aria-label="启用网页相册删除">
+                                        <input type="checkbox" id="album-delete-toggle" class="switch" role="switch" aria-label="启用网页相册删除">
                                     </div>
                                 </div>
                                 <p class="manage-helper-text">开启功能时需要管理员验证，删除操作将同步清理索引与缩略图。</p>
@@ -344,8 +344,8 @@
                     </div>
                 </form>
                 <p class="error-message" id="prompt-error-message"></p>
-                <div class="button-group"><button type="button" class="prompt-btn cancel-btn">取消</button><button
-                        type="button" class="prompt-btn confirm-btn"><span class="btn-text">确认</span>
+                <div class="button-group"><button type="button" class="btn btn-secondary prompt-btn cancel-btn">取消</button><button
+                        type="button" class="btn btn-primary prompt-btn confirm-btn"><span class="btn-text">确认</span>
                         <div class="spinner"></div>
                     </button></div>
             </div>

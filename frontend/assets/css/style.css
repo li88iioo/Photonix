@@ -2103,6 +2103,110 @@ body.modal-open #back-to-top-btn.visible {
     background-color: #6B7280; /* gray-500 */
 }
 
+/* New button variants */
+.btn-ghost {
+    background-color: transparent;
+    color: var(--gray-200);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.btn-ghost:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+}
+.btn-danger {
+    background-color: var(--red-400);
+    color: #fff;
+}
+.btn-danger:hover {
+    filter: brightness(0.95);
+}
+.btn-icon {
+    width: 2.5rem;
+    height: 2.5rem;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--component-radius-full);
+}
+.btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+}
+.btn.loading {
+    pointer-events: none;
+    opacity: 0.85;
+}
+
+/* Inputs */
+.form-select {
+    width: 100%;
+    background-color: rgba(0,0,0, 0.2);
+    border: 1px solid var(--gray-600);
+    border-radius: var(--component-radius);
+    color: white;
+    padding: 0.75rem 1rem;
+    transition: all 0.2s;
+    font-size: 0.9rem;
+    -webkit-appearance: none;
+    appearance: none;
+}
+.form-select:focus {
+    outline: none;
+    border-color: var(--violet-400);
+    background-color: rgba(0,0,0,0.3);
+    box-shadow: 0 0 0 3px var(--ring-color);
+}
+.form-input::placeholder, .form-textarea::placeholder, .form-select::placeholder {
+    color: var(--gray-400);
+}
+
+/* Accessible switch */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    background-color: var(--gray-700);
+    border-radius: 9999px;
+    transition: background-color 0.2s ease, box-shadow 0.2s ease;
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+    flex-shrink: 0;
+}
+.switch::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    background-color: white;
+    border-radius: 50%;
+    transition: transform 0.2s ease;
+}
+.switch:checked {
+    background-color: var(--violet-500);
+}
+.switch:checked::after {
+    transform: translateX(20px);
+}
+.switch:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+}
+.switch:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .btn, .switch, .sync-btn, .manage-primary-btn, .manage-input-btn {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+    }
+}
+
 /* === 全站美化通知样式（居中悬浮） === */
 #notification-container {
   position: fixed;
@@ -2153,7 +2257,7 @@ body.modal-open #back-to-top-btn.visible {
 .notification .close-btn:hover { opacity: 1; }
 
 /* 设置页样式 */
-:root { --gray-900: #111827; --gray-800: #1F2937; --gray-700: #374151; --gray-600: #4B5563; --gray-500: #6B7280; --gray-400: #9CA3AF; --gray-300: #D1D5DB; --gray-200: #E5E7EB; --violet-500: #8B5CF6; --violet-600: #7C3AED; --violet-400: #A78BFA; --red-400: #F87171; --emerald-400: #34D399; }
+:root { --gray-900: #111827; --gray-800: #1F2937; --gray-700: #374151; --gray-600: #4B5563; --gray-500: #6B7280; --gray-400: #9CA3AF; --gray-300: #D1D5DB; --gray-200: #E5E7EB; --violet-500: #8B5CF6; --violet-600: #7C3AED; --violet-400: #A78BFA; --red-400: #F87171; --emerald-400: #34D399; --ring-color: rgba(167,139,250,0.35); --ring-color-strong: rgba(129,140,248,0.5); --component-radius: 0.5rem; --component-radius-full: 9999px; --shadow-focus: 0 0 0 3px var(--ring-color); --shadow-sm: 0 4px 12px rgba(0,0,0,0.3); --btn-padding-y: 0.625rem; --btn-padding-x: 1.25rem; }
 *, ::before, ::after { box-sizing: border-box; border-width: 0; border-style: solid; border-color: var(--gray-200); }
 body { margin: 0; line-height: inherit; }
 h1, h2, h3, p, button, input, label, svg, div, textarea { margin: 0; padding: 0; background: none; }
@@ -2290,8 +2394,8 @@ body.settings-open {
 .manage-toggle-title { font-size: 0.9rem; font-weight: 600; color: #e2e8f0; }
 .manage-toggle-description { font-size: 0.8rem; color: rgba(203, 213, 225, 0.7); }
 .manage-toggle-control { display: flex; align-items: center; justify-content: center; }
-.manage-toggle-row .toggle-switch { pointer-events: none; }
-.manage-toggle-row.disabled .toggle-switch { opacity: 0.45; }
+.manage-toggle-row .toggle-switch, .manage-toggle-row .switch { pointer-events: none; }
+.manage-toggle-row.disabled .toggle-switch, .manage-toggle-row.disabled .switch { opacity: 0.45; }
 
 @media (max-width: 640px) {
     .manage-card { padding: 1.25rem 1.5rem; }

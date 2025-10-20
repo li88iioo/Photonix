@@ -52,28 +52,28 @@ function transformValidationMessage(rawMessage) {
  * @returns {Promise} 导入的模块
  */
 export async function importWithRetry(modulePath, maxRetries = 3) {
-	for (let i = 0; i < maxRetries; i++) {
-		try {
-			return await import(modulePath);
-		} catch (error) {
-			utilsLogger.warn('动态导入失败', { attempt: i + 1, maxRetries, modulePath, error });
-			
-			// 如果是 PWA 环境且出现扩展相关错误，尝试使用绝对路径
-			if (error.message && error.message.includes('chrome-extension')) {
-				try {
-					const absolutePath = new URL(modulePath, window.location.origin + '/js/').href;
-					return await import(absolutePath);
-				} catch (absoluteError) {
-					utilsLogger.warn('绝对路径导入也失败', absoluteError);
-				}
-			}
-			
-			if (i === maxRetries - 1) throw error;
-			
-			// 指数退避重试
-			await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * NETWORK.RETRY_BASE_DELAY));
-		}
-	}
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await import(modulePath);
+        } catch (error) {
+            utilsLogger.warn('动态导入失败', { attempt: i + 1, maxRetries, modulePath, error });
+            
+            // 如果是 PWA 环境且出现扩展相关错误，尝试使用绝对路径
+            if (error.message && error.message.includes('chrome-extension')) {
+                try {
+                    const absolutePath = new URL(modulePath, window.location.origin + '/js/').href;
+                    return await import(absolutePath);
+                } catch (absoluteError) {
+                    utilsLogger.warn('绝对路径导入也失败', absoluteError);
+                }
+            }
+            
+            if (i === maxRetries - 1) throw error;
+            
+            // 指数退避重试
+            await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * NETWORK.RETRY_BASE_DELAY));
+        }
+    }
 }
 
 /**
@@ -208,7 +208,7 @@ export function showNotification(message, type = 'info', duration = UI.NOTIFICAT
     notif.dataset.count = '1';
     safeSetInnerHTML(notif, `
         <span>${normalizedMessage}</span>
-        <button class="close-btn" aria-label="关闭">&times;</button>
+        <button class="btn btn-ghost btn-icon close-btn" aria-label="关闭">&times;</button>
     `);
     container.appendChild(notif);
 

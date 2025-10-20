@@ -163,7 +163,7 @@ export function setupManagementTab() {
      */
     const syncToggleVisualState = (enabled = initialSettings.albumDeletionEnabled) => {
       if (toggleRow) {
-        toggleRow.setAttribute('aria-pressed', String(Boolean(enabled)));
+        toggleRow.setAttribute('aria-checked', String(Boolean(enabled)));
       }
     };
 

@@ -45,7 +45,7 @@ function updateAlbumDeletionControls() {
   }
 
   if (toggleRow) {
-    toggleRow.setAttribute('aria-pressed', String(Boolean(initialSettings?.albumDeletionEnabled)));
+    toggleRow.setAttribute('aria-checked', String(Boolean(initialSettings?.albumDeletionEnabled)));
     toggleRow.classList.toggle('disabled', disabled);
     if (disabled) {
       toggleRow.setAttribute('aria-disabled', 'true');
@@ -266,11 +266,21 @@ function updateDynamicUI(isPasswordEnabled, isAiEnabled, hasPassword) {
 
   safeClassList(passwordEnabledWrapper, 'toggle', 'disabled', shouldDisable);
   passwordEnabledWrapper.title = shouldDisable ? '未配置超级管理员密码，无法更改此设置' : '';
+  if (shouldDisable) {
+    passwordEnabledWrapper.setAttribute('aria-disabled', 'true');
+  } else {
+    passwordEnabledWrapper.removeAttribute('aria-disabled');
+  }
 
   if (isPasswordEnabled && newPasswordInput) {
     newPasswordInput.disabled = shouldDisable;
     safeClassList(newPasswordWrapper, 'toggle', 'disabled', shouldDisable);
     newPasswordWrapper.title = shouldDisable ? '未配置超级管理员密码，无法更改此设置' : '';
+    if (shouldDisable) {
+      newPasswordWrapper.setAttribute('aria-disabled', 'true');
+    } else {
+      newPasswordWrapper.removeAttribute('aria-disabled');
+    }
     newPasswordInput.placeholder = hasPassword ? '新密码' : '设置新密码';
   }
 
