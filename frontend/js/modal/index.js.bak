@@ -20,6 +20,38 @@ import {
 
 const modalLogger = createModuleLogger('Modal');
 
+// 安全转义选择器值
+function cssEscape(value) {
+    try {
+        if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+            return CSS.escape(String(value));
+        }
+    } catch {}
+    // 简单回退：仅转义引号和反斜杠，避免选择器解析错误
+    return String(value).replace(/["\\]/g, '\\// 安全转义选择器值
+function cssEscape(value) {
+    try {
+        if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+            return CSS.escape(String(value));
+        }
+    } catch {}
+    // 简单回退：仅转义引号和反斜杠，避免选择器解析错误
+    return String(value).replace(/["\\]/g, '\\// 安全转义选择器值
+function cssEscape(value) {
+    try {
+        if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+            return CSS.escape(String(value));
+        }
+    } catch {}
+    // 简单回退：转义引号和反斜杠
+    return String(value).replace(/["\\]/g, '\\const modalLogger = createModuleLogger('Modal');
+');
+}
+');
+}
+');
+}
+
 /**
  * 生成列表状态唯一键：路径 + 查询/排序参数
  * 示例："/girls/summer?sort=mtime_desc" 或 "search?q=cat"
@@ -95,8 +127,7 @@ function persistListAnchor(anchor) {
  */
 function restoreFromAnchor(anchor) {
     if (!anchor) return false;
-    const idSel = String(anchor.id || '').replace(/"/g, '\\"');
-    const selector = anchor.type === 'photo' ? `[data-url="${idSel}"]` : `[data-path="${idSel}"]`;
+    const selector = anchor.type === 'photo' ? `[data-url="${CSS.escape(anchor.id)}"]` : `[data-path="${CSS.escape(anchor.id)}"]`;
     const el = document.querySelector(selector);
     if (el) {
         // 计算目标滚动位置：使该元素在视口中的相对位置与离开前一致
@@ -832,15 +863,13 @@ export function closeModal() {
         // 在提交前为共享元素命名，并确保目标缩略图在视口附近
         try {
             const currentUrl = state.currentPhotos?.[state.currentPhotoIndex] || null;
-            const idCurrent = String(currentUrl || '').replace(/"/g, '\\"');
-            const gridImg = currentUrl ? (document.querySelector(`[data-url="${idCurrent}"] img`) || document.querySelector(`[data-url="${idCurrent}"]`)) : null;
+            const gridImg = currentUrl ? (document.querySelector(`[data-url="${CSS.escape(currentUrl)}"] img`) || document.querySelector(`[data-url="${CSS.escape(currentUrl)}"]`)) : null;
             if (gridImg) gridImg.style.viewTransitionName = vtName;
             if (elements?.modalImg) elements.modalImg.style.viewTransitionName = vtName;
             // 为了让共享元素目标可见，先根据锚点立即定位
             if (anchor) {
                 try {
-                    const idSel = String(anchor.id || '').replace(/"/g, '\\"');
-                    const selector = anchor.type === 'photo' ? `[data-url="${idSel}"]` : `[data-path="${idSel}"]`;
+                    const selector = anchor.type === 'photo' ? `[data-url="${CSS.escape(anchor.id)}"]` : `[data-path="${CSS.escape(anchor.id)}"]`;
                     const el = document.querySelector(selector);
                     if (el) {
                         const rect = el.getBoundingClientRect();
@@ -1249,13 +1278,3 @@ export function cleanupModal() {
 
 // 页面卸载时清理资源
 window.addEventListener('beforeunload', cleanupModal);
-// 安全转义选择器值
-function cssEscape(value) {
-    try {
-        if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
-            return CSS.escape(String(value));
-        }
-    } catch {}
-    // 简单回退：仅转义引号和反斜杠，避免选择器解析错误
-    return String(value).replace(/["\\]/g, '\\$&');
-}

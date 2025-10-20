@@ -27,6 +27,19 @@ html {
     /* scroll-behavior: smooth; */
 }
 
+/* View Transitions 统一时长与缓动（支持浏览器） */
+@supports (view-transition-name: foo) {
+  ::view-transition-group(*) {
+    animation-duration: 240ms;
+    animation-timing-function: ease-out;
+  }
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 240ms;
+    animation-timing-function: ease-out;
+  }
+}
+
 /* 确保 SVG 图标和图标按钮不使用 ZCOOL KuaiLe 字体 */
 svg, svg *, .sg-icon-btn--light, .sg-icon-btn--light *, #settings-btn, #settings-btn *, 
 button svg, button svg *, .modal-close-button svg, .modal-close-button svg *,
