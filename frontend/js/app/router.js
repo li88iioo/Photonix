@@ -36,6 +36,7 @@ import { setManagedTimeout } from '../core/timer-manager.js';
 import { CACHE, ROUTER } from '../core/constants.js';
 import { escapeHtml } from '../shared/security.js';
 import { isDownloadRoute, showDownloadPage, hideDownloadPage } from '../features/download/index.js';
+import { setPageContext } from './theme-manager.js';
 
 let currentRequestController = null;
 
@@ -131,9 +132,13 @@ export async function handleHashChange() {
     const { cleanHashString, newDecodedPath } = sanitizeHash();
     refreshRouteEventListenersSafely();
     if (isDownloadRoute(cleanHashString)) {
+        // 下载页：设置页面上下文，便于全局主题排除此视图
+        try { setPageContext('download'); } catch {}
         await showDownloadPage();
         return;
     }
+    // 非下载页：恢复全局页面上下文
+    try { setPageContext('gallery'); } catch {}
     hideDownloadPage();
     const navigation = buildNavigationContext(cleanHashString, newDecodedPath);
     if (shouldReuseExistingContent(navigation)) {

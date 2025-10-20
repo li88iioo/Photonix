@@ -18,6 +18,10 @@ import { UI } from './core/constants.js';
 import { createModuleLogger } from './core/logger.js';
 import { safeSetInnerHTML, safeGetElementById, safeQuerySelector, safeClassList } from './shared/dom-utils.js';
 import { eventManager } from './core/event-manager.js';
+import { initializeThemeManager } from './app/theme-manager.js';
+
+// 主题管理需尽早初始化（优先于其它 UI 模块）
+try { initializeThemeManager(); } catch {}
 
 const mainLogger = createModuleLogger('Main');
 
