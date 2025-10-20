@@ -117,6 +117,22 @@ export function initializeRouter() {
         const fromSearch = sessionStorage.getItem('sg_from_search_hash');
         if (fromSearch) state.update('fromSearchHash', fromSearch);
     } catch {}
+
+    // 禁用浏览器自动滚动恢复，避免与自定义锚点恢复冲突
+    try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch {}
+    // bfcache 恢复时避免重复恢复
+    window.addEventListener('pageshow', (e) => {
+        if (e.persisted) {
+            try { window.__restoredFromBFCache = true; } catch {}
+        }
+    });
+
+    // 暴露锚点存取API给交互层调用（点击进入子层级前保存）
+    try {
+        window.saveRouteAnchor = saveAnchorForCurrentView;
+        window.restoreRouteAnchor = restoreAnchorForPath;
+    } catch {}
+
     handleHashChange();
     window.addEventListener('hashchange', handleHashChange);
 }
@@ -205,6 +221,148 @@ function refreshRouteEventListenersSafely() {
         refreshPageEventListeners();
     } catch (error) {
         routerLogger.warn('刷新页面事件监听失败', error);
+    }
+}
+
+/**
+ * 读取当前顶栏占位高度（--topbar-offset）
+ * @returns {number}
+ */
+function getCurrentTopbarOffset() {
+    try {
+        const appContainer = safeGetElementById('app-container');
+        if (!appContainer) return 0;
+        const val = getComputedStyle(appContainer).getPropertyValue('--topbar-offset') || '0';
+        const num = parseFloat(val.replace('px','').trim());
+        if (!isNaN(num)) return num;
+    } catch {}
+    // 兜底：直接量测顶栏高度
+    try {
+        const topbar = safeGetElementById('topbar');
+        const inner = topbar?.querySelector('.topbar-inner');
+        const ctx = safeGetElementById('topbar-context');
+        const persistent = inner?.offsetHeight || 56;
+        const contextH = ctx?.offsetHeight || 0;
+        return persistent + contextH + 16;
+    } catch {}
+    return 0;
+}
+
+/**
+ * 计算当前视图的首个可见项目锚点
+ * @returns {object|null}
+ */
+function computeCurrentViewAnchor() {
+    try {
+        const grid = safeGetElementById('content-grid');
+        if (!grid) return null;
+        const items = Array.from(grid.querySelectorAll('.grid-item'));
+        if (!items.length) return null;
+        let first = null;
+        let firstTop = Infinity;
+        for (const el of items) {
+            const rect = el.getBoundingClientRect();
+            if (rect.bottom <= 0) continue; // 在视口上方
+            if (rect.top < firstTop) {
+                firstTop = rect.top;
+                first = el;
+            }
+        }
+        if (!first) return null;
+        const rect = first.getBoundingClientRect();
+        const id = first.dataset.path || first.dataset.url || null;
+        if (!id) return null;
+        const type = first.classList.contains('album-link') ? 'album' : (first.classList.contains('photo-link') ? 'photo' : 'unknown');
+        const headerHidden = !!(safeGetElementById('topbar') && safeGetElementById('topbar').classList.contains('topbar--hidden'));
+        const topbarOffset = getCurrentTopbarOffset();
+        // 相对偏移：元素当前顶部与视口顶部的距离的相反数
+        const relativeOffset = -rect.top;
+        const hash = window.location.hash || '';
+        const questionMarkIndex = hash.indexOf('?');
+        const urlParams = new URLSearchParams(questionMarkIndex !== -1 ? hash.substring(questionMarkIndex) : '');
+        const sort = urlParams.get('sort') || state.currentSort || 'smart';
+        return { id, type, relativeOffset, topbarOffset, headerHidden, sort };
+    } catch (e) {
+        routerLogger.warn('计算锚点失败', e);
+        return null;
+    }
+}
+
+/**
+ * 保存当前视图的锚点（用于返回时恢复）
+ */
+function saveAnchorForCurrentView() {
+    try {
+        const pathKey = state.currentBrowsePath;
+        if (!pathKey) return false;
+        const anchor = computeCurrentViewAnchor();
+        if (!anchor) return false;
+        const raw = sessionStorage.getItem('sg_route_anchors');
+        const map = raw ? JSON.parse(raw) : {};
+        map[pathKey] = anchor;
+        sessionStorage.setItem('sg_route_anchors', JSON.stringify(map));
+        return true;
+    } catch (e) {
+        routerLogger.warn('保存锚点失败', e);
+        return false;
+    }
+}
+
+/**
+ * 恢复指定路径的锚点
+ * 在布局稳定后定位，避免先滚到顶部再位移造成的抖动
+ * @param {string} pathKey
+ * @returns {boolean}
+ */
+function restoreAnchorForPath(pathKey) {
+    try {
+        if (!pathKey) return false;
+        const raw = sessionStorage.getItem('sg_route_anchors');
+        if (!raw) return false;
+        const map = JSON.parse(raw) || {};
+        const anchor = map[pathKey];
+        if (!anchor) return false;
+
+        const applyRestore = () => {
+            try { if (typeof window.freezeTopbarAutoHide === 'function') window.freezeTopbarAutoHide(260); } catch {}
+            const selector = anchor.type === 'album' ? `[data-path="${CSS.escape(anchor.id)}"]`
+                            : anchor.type === 'photo' ? `[data-url="${CSS.escape(anchor.id)}"]`
+                            : null;
+            let el = null;
+            if (selector) {
+                el = document.querySelector(selector);
+            }
+            const currentY = window.scrollY;
+            const topbarOffsetNow = getCurrentTopbarOffset();
+            const delta = (topbarOffsetNow || 0) - (anchor.topbarOffset || 0);
+            let targetY = 0;
+            if (el) {
+                const rect = el.getBoundingClientRect();
+                const elTopDoc = rect.top + currentY;
+                targetY = elTopDoc + (anchor.relativeOffset || 0) + (delta || 0);
+            } else {
+                // 退化：仅使用相对偏移近似
+                targetY = Math.max(0, currentY + (delta || 0));
+            }
+            // 阈值策略：距离近则平滑，远则瞬时
+            const distance = Math.abs(targetY - currentY);
+            const prefersReduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            const behavior = (!prefersReduce && distance < window.innerHeight) ? 'smooth' : 'auto';
+            window.scrollTo({ top: targetY, behavior });
+            // 一次性使用，避免重复恢复
+            delete map[pathKey];
+            sessionStorage.setItem('sg_route_anchors', JSON.stringify(map));
+            setTimeout(() => { try { if (typeof window.unfreezeTopbarAutoHide === 'function') window.unfreezeTopbarAutoHide(); } catch {} }, 240);
+        };
+
+        // 等待下一帧，确保 DOM 布局完成（特别是瀑布流）
+        requestAnimationFrame(() => {
+            requestAnimationFrame(applyRestore);
+        });
+        return true;
+    } catch (e) {
+        routerLogger.warn('恢复锚点失败', e);
+        return false;
     }
 }
 
@@ -749,25 +907,20 @@ function finalizeNewContent(pathKey) {
             requestAnimationFrame(() => {
                 requestAnimationFrame(() => {
                     applyMasonryLayout();
+                    // 布局完成后尝试基于锚点恢复位置（无抖动）
+                    try { if (typeof window.restoreRouteAnchor === 'function') window.restoreRouteAnchor(pathKey); } catch {}
                 });
             });
+        } else {
+            // 非瀑布流或已恢复懒加载状态时，也尝试锚点恢复
+            try { if (typeof window.restoreRouteAnchor === 'function') window.restoreRouteAnchor(pathKey); } catch {}
         }
     }
     sortAlbumsByViewed();
     state.update('currentColumnCount', getMasonryColumns());
     preloadVisibleImages();
     
-    // ✅ 修复：不恢复滚动位置，始终从顶部开始
-    // 滚动位置恢复会导致进入新目录时出现在中间位置
-    // const scrollPositions = state.scrollPositions;
-    // const scrollY = scrollPositions.get(pathKey);
-    // if (scrollY && scrollY > 0) {
-    //     window.scrollTo({ top: scrollY, behavior: 'instant' });
-    //     const newScrollPositions = new Map(scrollPositions);
-    //     newScrollPositions.delete(pathKey);
-    //     state.scrollPositions = newScrollPositions;
-    // }
-    
+    // 清理占位最小高度
     safeSetStyle(elements.contentGrid, 'minHeight', '');
     state.update('isInitialLoad', false);
 }

@@ -847,12 +847,42 @@ function setupTopbarInteractions() {
     /**
      * 顶栏滚动处理
      */
+    // 读取一次阈值，避免每次滚动取样式
+    let TOP_THRESHOLD = 14;
+    try {
+        const thr = getComputedStyle(document.documentElement).getPropertyValue('--header-threshold') || '14';
+        TOP_THRESHOLD = parseInt(thr, 10) || 14;
+    } catch {}
+
     function onScroll() {
         const currentY = window.scrollY;
         const delta = currentY - lastScrollY;
         
+        // 渐变/实色切换（顶部半透明 + 渐变遮罩）
+        if (currentY <= TOP_THRESHOLD) {
+            safeClassList(topbar, 'remove', 'topbar--solid');
+            safeClassList(topbar, 'add', 'topbar--gradient-visible');
+        } else {
+            safeClassList(topbar, 'add', 'topbar--solid');
+            safeClassList(topbar, 'remove', 'topbar--gradient-visible');
+        }
+        
+        // 搜索/筛选面板打开时，强制展开
+        if (safeClassList(topbar, 'contains', 'topbar--search-open')) {
+            safeClassList(topbar, 'remove', 'topbar--hidden');
+            safeClassList(topbar, 'remove', 'topbar--condensed');
+            lastScrollY = currentY;
+            return;
+        }
+        
         // ✅ 增加滚动阈值，避免滚动到底部时的微小波动导致topbar抽搐
         const SCROLL_DELTA_THRESHOLD = 5; // 忽略小于5px的滚动
+        
+        // 冻结自动隐藏（如：返回恢复阶段）
+        if (window.__freezeTopbarAutoHide) {
+            lastScrollY = currentY;
+            return;
+        }
         
         // 检测是否在页面底部（允许10px误差）
         const isAtBottom = (window.innerHeight + window.scrollY) >= (document.documentElement.scrollHeight - 10);
@@ -914,6 +944,16 @@ function setupTopbarInteractions() {
     const contextEl = safeGetElementById('topbar-context');
     // ✅ 移除多次延迟重试，改由router.js在路由切换前预计算
     // 仅保留初始化调用和响应式更新
+    // 初始化冻结标记与控制方法
+    try {
+        window.__freezeTopbarAutoHide = false;
+        window.freezeTopbarAutoHide = (ms = 240) => {
+            window.__freezeTopbarAutoHide = true;
+            setTimeout(() => { window.__freezeTopbarAutoHide = false; }, ms);
+        };
+        window.unfreezeTopbarAutoHide = () => { window.__freezeTopbarAutoHide = false; };
+    } catch {}
+
     updateTopbarOffset();
     topbarGroup.add(window, 'resize', () => { updateTopbarOffset(); });
     topbarGroup.add(window, 'scroll', () => {
@@ -1069,6 +1109,8 @@ function setupContentInteractions() {
                 return;
             }
             e.preventDefault();
+            // 进入子层级前记录当前锚点（会话内恢复）
+            try { if (typeof window.saveRouteAnchor === 'function') window.saveRouteAnchor(); } catch {}
             const path = albumLink.dataset.path;
             _navigateToAlbum(e, path);
         } else if (photoLink) {

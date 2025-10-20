@@ -1250,6 +1250,14 @@ a.thumbnail-generating .image-placeholder {
 .blurred { filter: blur(12px) !important; transition: filter 0.3s; }
 
 /* === 动态沉浸式顶栏 === */
+:root {
+  /* 可配置的顶栏颜色与渐变（深浅色主题可在运行时覆盖这些变量） */
+  --header-bg-rgba: rgba(17,24,39,0.55);
+  --header-solid-bg: rgba(17,24,39,1);
+  --header-gradient: linear-gradient(180deg, rgba(17,24,39,0.78), rgba(17,24,39,0));
+  --header-threshold: 14px;
+  --header-gradient-enabled: 1; /* 1 开启，0 关闭 */
+}
 .topbar {
   position: fixed;
   top: 0;
@@ -1257,8 +1265,8 @@ a.thumbnail-generating .image-placeholder {
   right: 0;
   z-index: 1000; /* ✅ 提高优先级，确保在所有内容之上（但低于模态9999） */
   transform: translateY(0);
-  transition: transform 0.3s ease, background-color 0.3s ease;
-  background-color: rgba(17,24,39,0.55);
+  transition: transform 0.3s ease, background-color 0.25s ease, opacity 0.2s ease;
+  background: var(--header-bg-rgba);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border-bottom: 1px solid rgba(255,255,255,0.06);
@@ -1267,6 +1275,25 @@ a.thumbnail-generating .image-placeholder {
   --sg-surface-bg-strong: rgba(17,24,39,0.50);
   --sg-surface-border: rgba(255,255,255,0.08);
   --sg-surface-shadow: 0 10px 24px rgba(0,0,0,0.25);
+}
+/* 顶部渐变遮罩，仅在页面顶部时可见，避免与内容产生硬切 */
+.topbar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 48px;
+  pointer-events: none;
+  background: var(--header-gradient);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.topbar.topbar--gradient-visible::after {
+  opacity: calc(var(--header-gradient-enabled));
+}
+.topbar.topbar--solid {
+  background: var(--header-solid-bg);
 }
 .topbar.topbar--hidden {
   transform: translateY(-100%);
