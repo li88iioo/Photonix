@@ -23,7 +23,7 @@
     <div id="app-container" class="transition-opacity duration-500 opacity-0 with-fixed-topbar" style="--topbar-offset: 112px;">
         <div id="page-inner" class="mx-auto max-w-[min(96vw,1760px)] px-2 sm:px-4 md:px-8">
             <header id="topbar" class="topbar">
-                <div class="topbar-inner">
+                <div class="topbar-inner glass-header">
                     <div class="topbar-left">
                         <h1 id="main-title"
                             class="text-2xl sm:text-4xl md:text-5xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-purple-400 via-pink-500 to-red-500 transition-all duration-300">
@@ -31,7 +31,7 @@
                         </h1>
                         <p id="main-subtitle" class="text-gray-400 text-sm sm:text-base">一个属于你的私人写真集</p>
                     </div>
-                    <div class="topbar-right">
+                    <div class="topbar-right flex items-center gap-2 sm:gap-3">
                         <div class="search-container relative">
                             <button id="mobile-search-back-btn" class="search-back-btn sm:hidden" aria-label="返回" title="返回" style="display:none">←</button>
                             <div class="search-field">
@@ -50,6 +50,17 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
                             </svg>
                         </button>
+                        <div id="theme-switcher" class="theme-switcher segmented-control" role="group" aria-label="切换主题">
+                            <button type="button" class="theme-option" data-theme="light" aria-pressed="false" title="浅色">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.8 1.42-1.42zm10.48 14.32l1.79 1.8 1.41-1.41-1.8-1.79-1.4 1.4zM12 4V1h-1v3h1zm0 19v-3h-1v3h1zm7-11h3v-1h-3v1zM1 12h3v-1H1v1zm15.24-7.16l1.42 1.42 1.79-1.8-1.41-1.41-1.8 1.79zM4.22 19.78l1.41 1.41 1.8-1.79-1.42-1.42-1.79 1.8zM12 6a6 6 0 100 12 6 6 0 000-12z"/></svg>
+                            </button>
+                            <button type="button" class="theme-option" data-theme="system" aria-pressed="true" title="跟随系统">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5a2 2 0 012-2h14a2 2 0 012 2v11a2 2 0 01-2 2h-5l-2 3-2-3H5a2 2 0 01-2-2V5zm2 0v11h14V5H5z"/></svg>
+                            </button>
+                            <button type="button" class="theme-option" data-theme="dark" aria-pressed="false" title="深色">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21.64 13a9 9 0 01-11.31 8.62A9 9 0 1012 3a7 7 0 009.64 10z"/></svg>
+                            </button>
+                        </div>
                         <button id="settings-btn" class="sg-icon-btn--light" title="设置" aria-label="设置">
                             <svg xmlns="http://www.w3.org/2000/svg" 
                                  width="24" height="24" 

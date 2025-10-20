@@ -18,6 +18,7 @@ import { UI } from './core/constants.js';
 import { createModuleLogger } from './core/logger.js';
 import { safeSetInnerHTML, safeGetElementById, safeQuerySelector, safeClassList } from './shared/dom-utils.js';
 import { eventManager } from './core/event-manager.js';
+import { initTheme, bindThemeSwitcher } from './shared/theme.js';
 
 const mainLogger = createModuleLogger('Main');
 
@@ -152,6 +153,7 @@ function setUIState(nextState, options = {}) {
  * 应用初始化函数
  */
 async function initializeApp() {
+    try { initTheme(); bindThemeSwitcher(document.getElementById('theme-switcher')); } catch {}
     try { clearExpiredAlbumTombstones(); } catch {}
     // 注入与静态文件一致的 SVG 图标，避免启动时找不到 /assets 时的 404
     try { applyAppIcon(); } catch {}

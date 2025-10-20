@@ -2,6 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 主题与组件令牌 */
+:root {
+  --glass-bg-dark: rgba(17, 24, 39, 0.55);
+  --glass-bg-light: rgba(255, 255, 255, 0.6);
+  --glass-border-dark: rgba(255, 255, 255, 0.08);
+  --glass-border-light: rgba(17, 24, 39, 0.08);
+  --glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
 /* 定义本地 ZCOOL KuaiLe 字体 (TTF格式) */
 @font-face {
   font-family: 'ZCOOL KuaiLe';
@@ -10,6 +19,52 @@
   font-style: normal;
   font-display: swap;
 }
+
+/* 顶栏与玻璃态容器 */
+#topbar { position: sticky; top: 0; z-index: 1000; }
+#topbar .glass-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 10px; border-radius: 16px; border: 1px solid var(--glass-border-dark);
+  background: var(--glass-bg-dark); box-shadow: var(--glass-shadow);
+  backdrop-filter: saturate(180%) blur(12px); -webkit-backdrop-filter: saturate(180%) blur(12px);
+}
+html.theme-light #topbar .glass-header {
+  background: var(--glass-bg-light);
+  border-color: var(--glass-border-light);
+}
+
+/* 移动端搜索显隐 */
+@media (max-width: 640px) {
+  #topbar .search-field { display: none; }
+  #topbar.topbar--inline-search .search-field { display: flex; }
+}
+
+/* 主题切换分段控件 */
+.theme-switcher.segmented-control {
+  display: inline-flex; align-items: center; gap: 0; overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 9999px;
+  background: rgba(255,255,255,0.04);
+}
+html.theme-light .theme-switcher.segmented-control {
+  border-color: rgba(0,0,0,0.08);
+  background: rgba(0,0,0,0.04);
+}
+.theme-switcher .theme-option {
+  appearance: none; background: transparent; border: none; cursor: pointer; outline: none;
+  display: inline-flex; align-items: center; justify-content: center; color: #e5e7eb;
+  width: 36px; height: 36px; padding: 0; transition: background .15s ease, color .15s ease;
+}
+.theme-switcher .theme-option:hover { background: rgba(255,255,255,0.06); }
+.theme-switcher .theme-option[aria-pressed="true"] {
+  background: rgba(124, 58, 237, 0.22); color: #fff;
+}
+.theme-switcher .theme-option:focus-visible {
+  outline: 2px solid rgba(139, 92, 246, 0.6); outline-offset: 1px; border-radius: 8px;
+}
+
+/* 分割线（布局切换与排序间） */
+.layout-divider { display: inline-block; width: 1px; height: 24px; margin: 0 8px; background: rgba(255,255,255,0.12); vertical-align: middle; }
+html.theme-light .layout-divider { background: rgba(0,0,0,0.1); }
 
 /* 处理状态栏沉浸安全区域 */
 body {
