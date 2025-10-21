@@ -37,6 +37,14 @@ import { CACHE, ROUTER } from '../core/constants.js';
 import { escapeHtml } from '../shared/security.js';
 import { isDownloadRoute, showDownloadPage, hideDownloadPage } from '../features/download/index.js';
 
+function setDocumentPage(page) {
+    try {
+        if (document && document.documentElement) {
+            document.documentElement.dataset.page = page;
+        }
+    } catch {}
+}
+
 let currentRequestController = null;
 
 /**
@@ -130,12 +138,20 @@ export async function handleHashChange() {
     const pageSignal = AbortBus.next('page');
     const { cleanHashString, newDecodedPath } = sanitizeHash();
     refreshRouteEventListenersSafely();
+
     if (isDownloadRoute(cleanHashString)) {
+        setDocumentPage('download');
         await showDownloadPage();
         return;
     }
+
     hideDownloadPage();
+
     const navigation = buildNavigationContext(cleanHashString, newDecodedPath);
+
+    // 根据路由类型设置页面标识，供全局主题/样式使用
+    setDocumentPage(navigation.isSearchRoute ? 'search' : 'browse');
+
     if (shouldReuseExistingContent(navigation)) {
         return;
     }

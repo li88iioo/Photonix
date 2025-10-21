@@ -90,12 +90,15 @@ export function generateTimestampHTML(timestampId, label, timestamp) {
  * @returns {string} 操作按钮HTML字符串
  */
 export function generateActionsHTML(actions) {
-    const buttonsHTML = actions.map(action => `
-        <button class="${action.class || 'sync-btn'}" data-action="${action.action}" data-type="${action.type}">
+    const buttonsHTML = actions.map(action => {
+        const cls = action.class || 'btn btn-secondary sync-btn';
+        const aria = action.label ? ` aria-label="${action.label}"` : '';
+        return `
+        <button class="${cls}" type="button" data-action="${action.action}" data-type="${action.type}"${aria}>
             ${action.icon ? action.icon : ''}
             <span>${action.label}</span>
-        </button>
-    `).join('');
+        </button>`;
+    }).join('');
 
     return `<div class="${UI_COMPONENTS.STATUS_CARD.classes.actions}">${buttonsHTML}</div>`;
 }

@@ -134,12 +134,12 @@ class LoadingStateManager {
                 </div>
                 <div class="error-content">
                     <h2 class="error-title">${title ? title.replace(/[<>]/g, '') : ''}</h2>
-                    ${message ? `<p class="error-message">${message.replace(/[<>]/g, '')}</p>` : ''}
+                    ${message ? `<p class=\"error-message\">${message.replace(/[<>]/g, '')}</p>` : ''}
                     ${actions.length > 0 ? `
                         <div class="error-actions">
                             ${actions.map((action, index) => `
-                                <button class="error-btn ${action.primary ? 'error-btn-primary' : 'error-btn-secondary'}"
-                                        data-action="${action.onClick ? action.onClick.toString().replace(/[<>]/g, '') : ''}" data-index="${index}">
+                                <button class="${action.primary ? 'btn btn-primary' : 'btn btn-secondary'}" type="button"
+                                        data-action="${action.onClick ? action.onClick.toString().replace(/[<>]/g, '') : ''}" data-index="${index}" aria-label="${action.text ? action.text.replace(/[<>]/g, '') : ''}">
                                     ${action.text ? action.text.replace(/[<>]/g, '') : ''}
                                 </button>
                             `).join('')}
@@ -152,13 +152,12 @@ class LoadingStateManager {
         if (elements.contentGrid) {
             safeSetInnerHTML(elements.contentGrid, errorHTML);
 
-            // 绑定错误按钮事件
-            const buttons = elements.contentGrid.querySelectorAll('.error-btn');
+            // 绑定错误按钮事件（根据 data-action）
+            const buttons = elements.contentGrid.querySelectorAll('.error-actions button[data-action]');
             buttons.forEach(button => {
                 button.addEventListener('click', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    // 获取按钮的 data-action 属性
                     const action = e.currentTarget.dataset.action;
                     loadingLogger.debug('Error button clicked', { action });
                     if (action === 'reload') {
@@ -215,12 +214,12 @@ class LoadingStateManager {
                 </div>
                 <div class="empty-content">
                     <h2 class="empty-title">${title ? title.replace(/[<>]/g, '') : ''}</h2>
-                    ${message ? `<p class="empty-message">${message.replace(/[<>]/g, '')}</p>` : ''}
+                    ${message ? `<p class=\"empty-message\">${message.replace(/[<>]/g, '')}</p>` : ''}
                     ${actions.length > 0 ? `
                         <div class="empty-actions">
                             ${actions.map((action, index) => `
-                                <button class="empty-btn ${action.primary ? 'empty-btn-primary' : 'empty-btn-secondary'}"
-                                        data-action="${action.onClick ? action.onClick.toString().replace(/[<>]/g, '') : ''}" data-index="${index}">
+                                <button class="${action.primary ? 'btn btn-primary' : 'btn btn-secondary'}" type="button"
+                                        data-action="${action.onClick ? action.onClick.toString().replace(/[<>]/g, '') : ''}" data-index="${index}" aria-label="${action.text ? action.text.replace(/[<>]/g, '') : ''}">
                                     ${action.text ? action.text.replace(/[<>]/g, '') : ''}
                                 </button>
                             `).join('')}
@@ -233,13 +232,12 @@ class LoadingStateManager {
         if (elements.contentGrid) {
             safeSetInnerHTML(elements.contentGrid, emptyHTML);
 
-            // 绑定空状态按钮事件
-            const buttons = elements.contentGrid.querySelectorAll('.empty-btn');
+            // 绑定空状态按钮事件（根据 data-action）
+            const buttons = elements.contentGrid.querySelectorAll('.empty-actions button[data-action]');
             buttons.forEach(button => {
                 button.addEventListener('click', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    // 获取按钮的 data-action 属性
                     const action = e.currentTarget.dataset.action;
                     loadingLogger.debug('Empty button clicked', { action });
                     if (action === 'reload') {

@@ -992,6 +992,7 @@ export function isDownloadRoute(hash) {
 export async function showDownloadPage() {
   ensureDownloadRoot();
   initializeInteractions();
+  try { document.documentElement.dataset.page = 'download'; } catch {}
   setRootVisible(true);
   updateConfigForm(downloadState.config || {});
   switchPage(downloadState.activePage || 'dashboard');
@@ -1016,6 +1017,7 @@ export async function showDownloadPage() {
 
 export function hideDownloadPage({ redirect = false } = {}) {
   setRootVisible(false);
+  try { document.documentElement.dataset.page = 'gallery'; } catch {}
   stopAutoRefresh();
   cleanupInteractions(); // 清理事件监听器（简单方案）
   cleanupAllModals(); // 清理所有模态框

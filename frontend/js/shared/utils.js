@@ -52,28 +52,28 @@ function transformValidationMessage(rawMessage) {
  * @returns {Promise} 导入的模块
  */
 export async function importWithRetry(modulePath, maxRetries = 3) {
-	for (let i = 0; i < maxRetries; i++) {
-		try {
-			return await import(modulePath);
-		} catch (error) {
-			utilsLogger.warn('动态导入失败', { attempt: i + 1, maxRetries, modulePath, error });
-			
-			// 如果是 PWA 环境且出现扩展相关错误，尝试使用绝对路径
-			if (error.message && error.message.includes('chrome-extension')) {
-				try {
-					const absolutePath = new URL(modulePath, window.location.origin + '/js/').href;
-					return await import(absolutePath);
-				} catch (absoluteError) {
-					utilsLogger.warn('绝对路径导入也失败', absoluteError);
-				}
-			}
-			
-			if (i === maxRetries - 1) throw error;
-			
-			// 指数退避重试
-			await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * NETWORK.RETRY_BASE_DELAY));
-		}
-	}
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await import(modulePath);
+        } catch (error) {
+            utilsLogger.warn('动态导入失败', { attempt: i + 1, maxRetries, modulePath, error });
+            
+            // 如果是 PWA 环境且出现扩展相关错误，尝试使用绝对路径
+            if (error.message && error.message.includes('chrome-extension')) {
+                try {
+                    const absolutePath = new URL(modulePath, window.location.origin + '/js/').href;
+                    return await import(absolutePath);
+                } catch (absoluteError) {
+                    utilsLogger.warn('绝对路径导入也失败', absoluteError);
+                }
+            }
+            
+            if (i === maxRetries - 1) throw error;
+            
+            // 指数退避重试
+            await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * NETWORK.RETRY_BASE_DELAY));
+        }
+    }
 }
 
 /**
@@ -172,44 +172,63 @@ export function showNotification(message, type = 'info', duration = UI.NOTIFICAT
         container = document.createElement('div');
         container.id = targetContainerId;
         container.className = theme === 'download' ? 'download-notification-container' : '';
+        // ARIA live region for toasts
+        container.setAttribute('aria-live', 'polite');
+        container.setAttribute('aria-atomic', 'false');
+        container.setAttribute('role', 'region');
+        container.dataset.theme = theme;
         containerParent.appendChild(container);
     }
+
     const fallbackMap = {
         success: '操作成功',
         error: '操作失败',
         warning: '请注意',
         info: '通知'
     };
+
     const normalizedMessage = resolveMessage(message, fallbackMap[type] || '通知');
     const key = `${type}:${normalizedMessage}`;
-    // 查找是否已有相同通知
+
+    // 查找是否已有相同通知（按 message+type 去重，并累计次数）
     const existing = Array.from(container.querySelectorAll('.notification'))
         .find(el => el.dataset && el.dataset.key === key);
+
     if (existing) {
         const count = (Number(existing.dataset.count || '1') + 1);
         existing.dataset.count = String(count);
-        const spanEl = existing.querySelector('span');
+        const spanEl = existing.querySelector('.notification-message') || existing.querySelector('span');
         if (spanEl) spanEl.textContent = count > 1 ? `${normalizedMessage}（x${count}）` : normalizedMessage;
         // 重新计时：延长展示时间
         if (existing._hideTimeout) clearTimeout(existing._hideTimeout);
         existing._hideTimeout = setTimeout(() => remove(existing), duration);
-        // 轻微动效反馈（可选，不影响样式不存在时的兼容）
+        // 轻微动效反馈
         safeClassList(existing, 'remove', 'show');
-        // 下一帧再添加以触发过渡
         requestAnimationFrame(() => safeClassList(existing, 'add', 'show'));
         return;
     }
-    
-    // 创建通知元素
+
+    // 创建通知元素（带ARIA属性）
     const notif = document.createElement('div');
     const themeClass = theme === 'download' ? 'download-notification' : '';
+    const notifId = `notif-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
     notif.className = ['notification', type, themeClass].filter(Boolean).join(' ');
     notif.dataset.key = key;
     notif.dataset.count = '1';
+    notif.dataset.type = type;
+    notif.dataset.state = 'open';
+    notif.id = notifId;
+    notif.setAttribute('role', 'status');
+    notif.setAttribute('aria-live', 'polite');
+    notif.setAttribute('aria-atomic', 'true');
+    notif.setAttribute('aria-hidden', 'false');
+
     safeSetInnerHTML(notif, `
-        <span>${normalizedMessage}</span>
-        <button class="close-btn" aria-label="关闭">&times;</button>
+        <span class="notification-message">${normalizedMessage}</span>
+        <button class="close-btn" type="button" aria-label="关闭通知" aria-controls="${notifId}">&times;</button>
     `);
+
     container.appendChild(notif);
 
     // 动画显示
@@ -225,12 +244,15 @@ export function showNotification(message, type = 'info', duration = UI.NOTIFICAT
     });
 
     // 手动关闭按钮
-    notif.querySelector('.close-btn').onclick = () => remove(notif);
+    const closeBtn = notif.querySelector('.close-btn');
+    if (closeBtn) closeBtn.onclick = () => remove(notif);
 
     // 移除通知的函数
     function remove(el) {
         try { if (el && el._hideTimeout) clearTimeout(el._hideTimeout); } catch {}
         const node = el || notif;
+        node.dataset.state = 'closing';
+        node.setAttribute('aria-hidden', 'true');
         safeClassList(node, 'remove', 'show');
         setTimeout(() => {
             node.remove();

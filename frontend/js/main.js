@@ -133,6 +133,7 @@ function setUIState(nextState, options = {}) {
                 safeClassList(app, 'remove', 'opacity-0');
                 safeClassList(app, 'add', 'opacity-100');
             }
+            try { document.documentElement.dataset.page = 'gallery'; } catch {}
             hideOverlay();
             break;
         case 'login':
@@ -140,9 +141,11 @@ function setUIState(nextState, options = {}) {
                 safeClassList(app, 'remove', 'opacity-100');
                 safeClassList(app, 'add', 'opacity-0');
             }
+            try { document.documentElement.dataset.page = 'auth'; } catch {}
             showOverlay();
             break;
         case 'error':
+            try { document.documentElement.dataset.page = 'error'; } catch {}
             showOverlay();
             break;
     }
