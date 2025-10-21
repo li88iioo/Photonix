@@ -479,6 +479,48 @@ body { font-family: 'Noto Sans SC', sans-serif; }
     object-fit: cover;
 }
 
+/* 性能优化：为网格/列布局的卡片开启内容可见性并设置固有尺寸，降低滚动时的布局成本 */
+#content-grid.grid-mode .grid-item,
+#content-grid.columns-mode .grid-item {
+    content-visibility: auto;
+    contain-intrinsic-size: var(--cis-grid-item, 300px);
+}
+
+/* CSS Columns 回退的瀑布流布局 */
+#content-grid.columns-mode {
+    position: relative !important;
+    column-gap: 1rem; /* 与JS瀑布流的列间距保持一致 */
+    column-fill: balance;
+    height: auto !important;
+}
+#content-grid.columns-mode .grid-item {
+    break-inside: avoid;
+    -webkit-column-break-inside: avoid;
+    page-break-inside: avoid;
+    width: 100% !important;
+    display: block !important;
+    margin: 0 0 1rem 0 !important; /* 列间距的下间距 */
+    transform: none !important;
+    left: auto !important;
+    top: auto !important;
+    position: static !important;
+}
+/* 让无限加载器在列布局中跨列显示 */
+#content-grid.columns-mode #infinite-scroll-loader,
+#content-grid.columns-mode #infinite-scroll-loader-container {
+    column-span: all;
+}
+
+/* 列数响应式断点（与常量中配置保持一致） */
+#content-grid.columns-mode { column-count: 2; }
+@media (min-width: 768px)  { #content-grid.columns-mode { column-count: 3; } }
+@media (min-width: 1024px) { #content-grid.columns-mode { column-count: 4; } }
+@media (min-width: 1280px) { #content-grid.columns-mode { column-count: 5; } }
+@media (min-width: 1536px) { #content-grid.columns-mode { column-count: 6; } }
+@media (min-width: 1920px) { #content-grid.columns-mode { column-count: 8; } }
+@media (min-width: 2560px) { #content-grid.columns-mode { column-count: 10; } }
+@media (min-width: 3840px) { #content-grid.columns-mode { column-count: 12; } }
+
 /* 移动端：网格一行两个 */
 @media (max-width: 768px) {
   #content-grid.grid-mode {

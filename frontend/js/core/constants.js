@@ -153,6 +153,28 @@ export const STYLE = {
 };
 
 /**
+ * 功能开关（可通过 window.__APP_SETTINGS.features 覆盖）
+ * @namespace FEATURES
+ */
+export const FEATURES = {
+    COLUMNS_WATERFALL_FALLBACK: false
+};
+
+/**
+ * 检测是否启用 CSS columns 瀑布流回退方案
+ * 优先读取全局配置 window.__APP_SETTINGS.features.columnsWaterfall
+ */
+export function isColumnsFallbackEnabled() {
+    try {
+        const cfg = window.__APP_SETTINGS?.features;
+        if (cfg && typeof cfg.columnsWaterfall !== 'undefined') {
+            return Boolean(cfg.columnsWaterfall);
+        }
+    } catch {}
+    return Boolean(FEATURES.COLUMNS_WATERFALL_FALLBACK);
+}
+
+/**
  * 媒体处理相关常量
  * @namespace MEDIA
  */

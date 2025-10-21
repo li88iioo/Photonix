@@ -61,6 +61,36 @@ let layoutScheduleTimer = null;
 // 虚拟滚动器实例
 let virtualScroller = null;
 
+// ResizeObserver 用于监听容器尺寸变化，按需重排
+let masonryResizeObserver = null;
+let lastObservedWidth = 0;
+
+/**
+ * 确保为内容容器注册 ResizeObserver
+ * 仅当宽度实际发生变化时触发布局重算
+ */
+export function ensureMasonryResizeObserver() {
+    if (typeof window === 'undefined' || !window.ResizeObserver) return;
+    if (masonryResizeObserver) return;
+    const { contentGrid } = elements;
+    if (!contentGrid) return;
+    masonryResizeObserver = new ResizeObserver((entries) => {
+        const entry = entries && entries[0];
+        const width = Math.round(entry?.contentRect?.width || 0);
+        if (!Number.isFinite(width)) return;
+        if (Math.abs(width - lastObservedWidth) < 1) return; // 忽略微小变化
+        lastObservedWidth = width;
+        requestAnimationFrame(() => {
+            if (safeClassList(elements.contentGrid, 'contains', 'masonry-mode')) {
+                applyMasonryLayout();
+            }
+        });
+    });
+    try {
+        masonryResizeObserver.observe(contentGrid);
+    } catch {}
+}
+
 /**
  * 增量瀑布流布局，仅布局新添加的项目
  * 优化版：批量处理新项目
@@ -691,6 +721,7 @@ function renderMediaForVirtualScroll(type, mediaData, element, index) {
     img.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E";
     img.alt = isVideo ? '视频缩略图' : '图片缩略图';
     img.dataset.src = mediaData.thumbnailUrl;
+    try { img.loading = 'lazy'; } catch {}
 
     // 图片事件监听
     img.onload = () => {

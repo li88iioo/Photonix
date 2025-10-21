@@ -303,37 +303,21 @@ function handleImageLoad(event) {
         safeClassList(img, 'add', 'error');
         return;
     }
-    safeClassList(img, 'add', 'loaded');
-    // 清理残留的处理中/错误态样式
-    safeClassList(img, 'remove', 'processing');
-    safeClassList(img, 'remove', 'error');
-    img.dataset.thumbStatus = '';
-
-    // 清理父元素的生成状态类
-    const parent = img.closest('.photo-item, .album-card');
-    if (parent) {
-        safeClassList(parent, 'remove', 'thumbnail-generating');
-    }
 
     const gridItem = img.closest('.grid-item');
-    
-    // ✅ 优化：检查图片实际尺寸是否与预期一致
-    // 只有尺寸不匹配时才触发布局重排，避免不必要的reflow
+
+    // 仅进行读取操作：判断是否需要重排
     let needsReflow = false;
     if (gridItem) {
         const expectedWidth = parseFloat(gridItem.getAttribute('data-width'));
         const expectedHeight = parseFloat(gridItem.getAttribute('data-height'));
         const actualWidth = img.naturalWidth;
         const actualHeight = img.naturalHeight;
-        
-        // 允许2%的误差范围（考虑压缩等因素）
         const tolerance = 0.02;
         if (expectedWidth > 0 && expectedHeight > 0 && actualWidth > 0 && actualHeight > 0) {
             const expectedRatio = expectedHeight / expectedWidth;
             const actualRatio = actualHeight / actualWidth;
             const ratioDiff = Math.abs(expectedRatio - actualRatio) / expectedRatio;
-            
-            // 尺寸比例差异超过阈值，需要重排
             if (ratioDiff > tolerance) {
                 needsReflow = true;
                 lazyloadLogger.debug('图片实际尺寸与预期不符，触发重排', {
@@ -343,48 +327,59 @@ function handleImageLoad(event) {
                 });
             }
         } else if (!expectedWidth || !expectedHeight) {
-            // 缺失尺寸数据，安全起见触发重排
             needsReflow = true;
-        }
-        
-        if (gridItem.style) {
-            gridItem.style.removeProperty('height');
         }
     }
 
-    // 隐藏占位符和加载覆盖层
-    const container = img.parentElement;
-    if (container) {
-        const placeholder = container.querySelector('.image-placeholder');
-        const loadingOverlay = container.querySelector('.loading-overlay');
-        const processingIndicator = container.querySelector('.processing-indicator');
-        if (placeholder) {
-            safeSetStyle(placeholder, {
-                opacity: '0',
-                animation: 'none',
-                pointerEvents: 'none'
-            });
+    // 将所有 DOM 写入集中到下一帧，减少 layout thrash
+    requestAnimationFrame(() => {
+        safeClassList(img, 'add', 'loaded');
+        safeClassList(img, 'remove', 'processing');
+        safeClassList(img, 'remove', 'error');
+        img.dataset.thumbStatus = '';
+
+        // 清理父元素的生成状态类
+        const parent = img.closest('.photo-item, .album-card');
+        if (parent) {
+            safeClassList(parent, 'remove', 'thumbnail-generating');
         }
-        if (loadingOverlay) {
-            safeSetStyle(loadingOverlay, {
-                display: 'none',
-                opacity: '0'
-            });
+
+        if (gridItem && gridItem.style) {
+            gridItem.style.removeProperty('height');
         }
-        if (processingIndicator) {
-            processingIndicator.remove();
+
+        // 隐藏占位符和加载覆盖层
+        const container = img.parentElement;
+        if (container) {
+            const placeholder = container.querySelector('.image-placeholder');
+            const loadingOverlay = container.querySelector('.loading-overlay');
+            const processingIndicator = container.querySelector('.processing-indicator');
+            if (placeholder) {
+                safeSetStyle(placeholder, {
+                    opacity: '0',
+                    animation: 'none',
+                    pointerEvents: 'none'
+                });
+            }
+            if (loadingOverlay) {
+                safeSetStyle(loadingOverlay, {
+                    display: 'none',
+                    opacity: '0'
+                });
+            }
+            if (processingIndicator) {
+                processingIndicator.remove();
+            }
         }
-    }
-    
-    // ✅ 仅在必要时触发布局重排
-    if (needsReflow) {
-        triggerMasonryUpdate();
-        if (gridItem) {
-            requestAnimationFrame(() => {
-                triggerMasonryUpdate();
-            });
+
+        // 仅在必要时触发布局重排，并在下一帧再次确认
+        if (needsReflow) {
+            triggerMasonryUpdate();
+            if (gridItem) {
+                requestAnimationFrame(() => triggerMasonryUpdate());
+            }
         }
-    }
+    });
 }
 
 /**
@@ -966,6 +961,45 @@ export function clearRestoreProtection() {
 }
 
 /**
+ * 使用 AbortSignal 安全地等待图片 decode 完成
+ * 在不支持 decode() 的环境中回退到 load 事件
+ * @param {HTMLImageElement} img
+ * @param {AbortSignal|null} signal
+ */
+async function waitForImageDecode(img, signal) {
+    // 若已中止，直接抛出
+    if (signal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+    }
+    const abortPromise = signal ? new Promise((_, reject) => {
+        const onAbort = () => reject(new DOMException('Aborted', 'AbortError'));
+        signal.addEventListener('abort', onAbort, { once: true });
+    }) : null;
+
+    // 支持 decode()
+    if (typeof img.decode === 'function') {
+        const decodePromise = img.decode();
+        return abortPromise ? Promise.race([decodePromise, abortPromise]) : decodePromise;
+    }
+
+    // 回退：等待 load 或 error
+    if (img.complete && img.naturalWidth > 0) return;
+    await new Promise((resolve, reject) => {
+        const cleanup = () => {
+            img.removeEventListener('load', onLoad);
+            img.removeEventListener('error', onError);
+            signal?.removeEventListener('abort', onAbort);
+        };
+        const onLoad = () => { cleanup(); resolve(); };
+        const onError = (e) => { cleanup(); reject(e); };
+        const onAbort = () => { cleanup(); reject(new DOMException('Aborted', 'AbortError')); };
+        img.addEventListener('load', onLoad, { once: true });
+        img.addEventListener('error', onError, { once: true });
+        if (signal) signal.addEventListener('abort', onAbort, { once: true });
+    });
+}
+
+/**
  * 获取或创建图片 IntersectionObserver
  * @returns {IntersectionObserver}
  */
@@ -977,7 +1011,19 @@ function getOrCreateImageObserver() {
             const img = entry.target;
             if (img._processingLazyLoad) return;
             img._processingLazyLoad = true;
-            img.onload = handleImageLoad;
+            img.onload = async (ev) => {
+                try {
+                    // 使用页面级 AbortSignal 中止未完成的解码
+                    const sig = AbortBus.get('page') || AbortBus.get('thumb');
+                    await waitForImageDecode(img, sig);
+                } catch (err) {
+                    if (err && err.name === 'AbortError') {
+                        // 路由切换等导致的中止，直接忽略
+                        return;
+                    }
+                }
+                handleImageLoad(ev);
+            };
             img.onerror = handleImageError;
             enqueueLazyImage(img, { rect: entry.boundingClientRect });
             if (!img._noContextMenuBound) {
@@ -1025,6 +1071,8 @@ export function setupLazyLoading() {
     const observer = getOrCreateImageObserver();
     ensureScrollVelocityListener();
     document.querySelectorAll('.lazy-image').forEach(img => {
+        // 确保使用原生懒加载
+        try { if (!img.getAttribute('loading')) img.setAttribute('loading', 'lazy'); } catch {}
         if (!img._observed) {
             observer.observe(img);
             img._observed = true;
