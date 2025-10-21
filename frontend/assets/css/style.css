@@ -66,66 +66,10 @@ html, body {
 }
 
 
-/* 智能加载指示器 */
-.smart-loading {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 3px;
-    background-color: rgba(255, 255, 255, 0.1);
-    z-index: 9999;
-    display: none;
-}
-
-.smart-loading-bar {
-    height: 100%;
-    background: linear-gradient(90deg, #8B5CF6, #EC4899, #F59E0B);
-    width: 0%;
-    transition: width 0.3s ease;
-    position: relative;
-    overflow: hidden;
-}
-
-.smart-loading-bar::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
-    animation: shimmer 2s infinite;
-}
-
-@keyframes shimmer {
-    0% { left: -100%; }
-    100% { left: 100%; }
-}
-
-
+/* removed legacy block: smart-loading */
 
 /* 图片加载动画 */
-.image-loading-animation {
-    position: relative;
-    overflow: hidden;
-}
-
-.image-loading-animation::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-    animation: image-shimmer 1.5s infinite;
-}
-
-@keyframes image-shimmer {
-    0% { left: -100%; }
-    100% { left: 100%; }
-}
+/* removed legacy block: image-loading-animation */
 
 /* 按钮加载状态 */
 .btn-loading {

@@ -89,7 +89,7 @@ const CORE_ASSETS = [
   '/js/dist/main.js',
 
   // --- 静态资源 (assets) ---
-
+  '/assets/icon.svg'
 
   // --- 外部资源 ---
 
@@ -348,10 +348,10 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // 0. 前端构建产物（/js/dist/* 与 /output.css）：网络优先 + 回退缓存，减少升级不一致导致的白屏
+  // 0. 前端构建产物（/js/dist/* 与 /assets/css/output.css）：网络优先 + 回退缓存，减少升级不一致导致的白屏
   if (
     url.pathname.startsWith('/js/dist/') ||
-    url.pathname === '/output.css'
+    url.pathname === '/assets/css/output.css'
   ) {
     event.respondWith(
       fetch(request)
