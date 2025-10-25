@@ -11,25 +11,31 @@
     <link rel="manifest" href="/manifest.json">   
     <link rel="preload" href="/assets/css/output.css" as="style">
     <link rel="modulepreload" href="/js/dist/main.js">
-    <!-- AI密语字体文件 -->
-    <style>
-        body, html {
-            font-family: 'ZCOOL KuaiLe', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif;
-        }
-    </style>
     <link rel="stylesheet" href="/assets/css/output.css">
 </head>
-<body class="bg-gray-900 text-white selection:bg-purple-500 selection:text-white">
+<body data-theme="dark">
     <div id="app-container" class="transition-opacity duration-500 opacity-0 with-fixed-topbar" style="--topbar-offset: 112px;">
         <div id="page-inner" class="mx-auto max-w-[min(96vw,1760px)] px-2 sm:px-4 md:px-8">
             <header id="topbar" class="topbar">
                 <div class="topbar-inner">
                     <div class="topbar-left">
-                        <h1 id="main-title"
-                            class="text-2xl sm:text-4xl md:text-5xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-purple-400 via-pink-500 to-red-500 transition-all duration-300">
-                            Photonix
-                        </h1>
-                        <p id="main-subtitle" class="text-gray-400 text-sm sm:text-base">一个属于你的私人写真集</p>
+                        <div style="display: flex; align-items: center; gap: 0.75rem;">
+                            <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <defs>
+                                    <linearGradient id="logo-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                        <stop offset="0%" style="stop-color:#64FFDA;stop-opacity:1" />
+                                        <stop offset="100%" style="stop-color:#448AFF;stop-opacity:1" />
+                                    </linearGradient>
+                                </defs>
+                                <circle cx="20" cy="20" r="18" stroke="url(#logo-gradient)" stroke-width="2" fill="none" opacity="0.3"/>
+                                <circle cx="20" cy="20" r="13" stroke="url(#logo-gradient)" stroke-width="2" fill="none" opacity="0.6"/>
+                                <circle cx="20" cy="20" r="8" fill="url(#logo-gradient)" opacity="0.9"/>
+                            </svg>
+                            <h1 id="main-title" style="font-size: clamp(1.25rem, 3vw, 1.75rem); font-weight: 700; background: linear-gradient(135deg, #64FFDA, #448AFF); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">
+                                Photonix
+                            </h1>
+                        </div>
+                        <p id="main-subtitle" style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.25rem;">一个属于你的私人写真集</p>
                     </div>
                     <div class="topbar-right">
                         <div class="search-container relative">
@@ -353,7 +359,17 @@
     </template>
     <div id="notification-container"></div>
     <script type="module" src="/js/dist/main.js"></script>
+    <button id="theme-toggle-btn" aria-label="切换主题" title="切换主题">
+        <svg id="theme-icon-light" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" />
+        </svg>
+        <svg id="theme-icon-dark" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" style="display: none;">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" />
+        </svg>
+    </button>
     <button id="back-to-top-btn" aria-label="回到顶部" title="回到顶部"><svg xmlns="http://www.w3.org/2000/svg" fill="none"
             viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" />
         </svg></button>
+</body>
+</html>

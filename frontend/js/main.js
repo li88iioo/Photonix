@@ -18,6 +18,7 @@ import { UI } from './core/constants.js';
 import { createModuleLogger } from './core/logger.js';
 import { safeSetInnerHTML, safeGetElementById, safeQuerySelector, safeClassList } from './shared/dom-utils.js';
 import { eventManager } from './core/event-manager.js';
+import { initializeTheme } from './features/theme.js';
 
 const mainLogger = createModuleLogger('Main');
 
@@ -155,6 +156,10 @@ async function initializeApp() {
     try { clearExpiredAlbumTombstones(); } catch {}
     // 注入与静态文件一致的 SVG 图标，避免启动时找不到 /assets 时的 404
     try { applyAppIcon(); } catch {}
+    // Initialize theme system early for proper styling
+    try { initializeTheme(); } catch (e) {
+        mainLogger.error('Theme initialization failed', e);
+    }
     // 1. 初始化基础组件和事件监听
     state.update('userId', initializeAuth());
     try {

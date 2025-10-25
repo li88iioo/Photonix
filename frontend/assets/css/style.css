@@ -2,7 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 定义本地 ZCOOL KuaiLe 字体 (TTF格式) */
+/* ===================================
+   Modern Design System with Theme Support
+   =================================== */
+
+/* Import Inter font from Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* 定义本地 ZCOOL KuaiLe 字体 (TTF格式) - Keep for fallback */
 @font-face {
   font-family: 'ZCOOL KuaiLe';
   src: url('/assets/fonts/ZCOOLKuaiLe-Regular.ttf') format('truetype');
@@ -11,12 +18,139 @@
   font-display: swap;
 }
 
-/* 处理状态栏沉浸安全区域 */
+/* ===================================
+   CSS Custom Properties - Light Theme (Default)
+   =================================== */
+:root,
+[data-theme="light"] {
+  /* Morning Mist Gradient Colors */
+  --gradient-start: #64FFDA;
+  --gradient-end: #448AFF;
+  
+  /* Background Colors */
+  --bg-primary: #f5f7fa;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #e8ecf1;
+  --bg-overlay: rgba(0, 0, 0, 0.5);
+  
+  /* Text Colors */
+  --text-primary: #1a202c;
+  --text-secondary: #4a5568;
+  --text-tertiary: #718096;
+  --text-inverse: #ffffff;
+  
+  /* Border Colors */
+  --border-light: rgba(0, 0, 0, 0.08);
+  --border-medium: rgba(0, 0, 0, 0.12);
+  --border-strong: rgba(0, 0, 0, 0.2);
+  
+  /* Card & Surface Colors */
+  --card-bg: #ffffff;
+  --card-hover-bg: #fafbfc;
+  --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.06);
+  --card-shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.12), 0 4px 8px rgba(0, 0, 0, 0.08);
+  
+  /* Header/Topbar Colors */
+  --topbar-bg: rgba(255, 255, 255, 0.85);
+  --topbar-border: rgba(0, 0, 0, 0.06);
+  --topbar-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  
+  /* Button & Input Surface Colors */
+  --surface-bg: rgba(0, 0, 0, 0.04);
+  --surface-bg-strong: rgba(0, 0, 0, 0.06);
+  --surface-border: rgba(0, 0, 0, 0.12);
+  --surface-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  
+  /* Accent Colors */
+  --accent-primary: #448AFF;
+  --accent-primary-hover: #2979FF;
+  --accent-secondary: #64FFDA;
+  --accent-gradient: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+  
+  /* Status Colors */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+}
+
+/* ===================================
+   CSS Custom Properties - Dark Theme
+   =================================== */
+[data-theme="dark"] {
+  /* Morning Mist Gradient Colors (same for both themes) */
+  --gradient-start: #64FFDA;
+  --gradient-end: #448AFF;
+  
+  /* Background Colors */
+  --bg-primary: #1a1f2e;
+  --bg-secondary: #252b3b;
+  --bg-tertiary: #2d3548;
+  --bg-overlay: rgba(0, 0, 0, 0.7);
+  
+  /* Text Colors */
+  --text-primary: #e5e7eb;
+  --text-secondary: #9ca3af;
+  --text-tertiary: #6b7280;
+  --text-inverse: #1a202c;
+  
+  /* Border Colors */
+  --border-light: rgba(255, 255, 255, 0.06);
+  --border-medium: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.15);
+  
+  /* Card & Surface Colors */
+  --card-bg: #252b3b;
+  --card-hover-bg: #2d3548;
+  --card-shadow: 0 2px 12px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
+  --card-shadow-hover: 0 8px 32px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.3);
+  
+  /* Header/Topbar Colors */
+  --topbar-bg: rgba(26, 31, 46, 0.85);
+  --topbar-border: rgba(255, 255, 255, 0.06);
+  --topbar-shadow: 0 2px 16px rgba(0, 0, 0, 0.4);
+  
+  /* Button & Input Surface Colors */
+  --surface-bg: rgba(255, 255, 255, 0.04);
+  --surface-bg-strong: rgba(255, 255, 255, 0.08);
+  --surface-border: rgba(255, 255, 255, 0.12);
+  --surface-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  
+  /* Accent Colors */
+  --accent-primary: #448AFF;
+  --accent-primary-hover: #64FFDA;
+  --accent-secondary: #64FFDA;
+  --accent-gradient: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+  
+  /* Status Colors */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+}
+
+/* ===================================
+   Base Styles with Theme Support
+   =================================== */
 body {
-    padding-top: env(safe-area-inset-top);
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
-    padding-bottom: env(safe-area-inset-bottom);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  transition: background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  padding-top: env(safe-area-inset-top);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+::selection {
+  background: var(--accent-gradient);
+  color: white;
+}
+
+::-moz-selection {
+  background: var(--accent-gradient);
+  color: white;
 }
 
 /* 修复抖动 */
@@ -456,7 +590,7 @@ body { font-family: 'Noto Sans SC', sans-serif; }
     position: relative !important;
     display: grid !important;
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: 1rem;
+    gap: 2rem; /* Modern: 32px gap */
     /* ✅ 强制覆盖瀑布流可能设置的容器高度 */
     height: auto !important;
 }
@@ -504,11 +638,11 @@ body { font-family: 'Noto Sans SC', sans-serif; }
 @media (min-width: 640px) { .grid-item { margin-bottom: 1rem; } }
 #content-grid.grid-mode .grid-item { contain-intrinsic-size: 300px 400px; }
 #modal { 
-    z-index: 9999; /* 确保模态框在最顶层，高于topbar(1000)和下载页(1500) */
-    transition: opacity 0.3s ease;
-    background-color: rgba(17, 24, 39, 0.7);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+    z-index: 9999;
+    transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    background-color: var(--bg-overlay);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
 }
 .spinner { 
     border: 4px solid rgba(255, 255, 255, 0.3); 
@@ -1255,18 +1389,19 @@ a.thumbnail-generating .image-placeholder {
   top: 0;
   left: 0;
   right: 0;
-  z-index: 1000; /* ✅ 提高优先级，确保在所有内容之上（但低于模态9999） */
+  z-index: 1000;
   transform: translateY(0);
-  transition: transform 0.3s ease, background-color 0.3s ease;
-  background-color: rgba(17,24,39,0.55);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  background: var(--topbar-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--topbar-border);
+  box-shadow: var(--topbar-shadow);
   /* 统一表面变量：用于按钮、输入、下拉等在顶栏上的外观协调 */
-  --sg-surface-bg: rgba(17,24,39,0.42);
-  --sg-surface-bg-strong: rgba(17,24,39,0.50);
-  --sg-surface-border: rgba(255,255,255,0.08);
-  --sg-surface-shadow: 0 10px 24px rgba(0,0,0,0.25);
+  --sg-surface-bg: var(--surface-bg);
+  --sg-surface-bg-strong: var(--surface-bg-strong);
+  --sg-surface-border: var(--surface-border);
+  --sg-surface-shadow: var(--surface-shadow);
 }
 .topbar.topbar--hidden {
   transform: translateY(-100%);
@@ -1844,6 +1979,77 @@ html.modal-open {
 
 
 /* --- 新增：回到顶部按钮样式 --- */
+/* ===================================
+   Theme Toggle Button
+   =================================== */
+#theme-toggle-btn {
+    position: fixed;
+    bottom: 5.5rem; /* Above back-to-top button */
+    right: 2rem;
+    z-index: 40;
+    
+    /* Button appearance */
+    width: 2.75rem; /* 44px */
+    height: 2.75rem; /* 44px */
+    border-radius: 9999px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-light);
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--card-shadow);
+    
+    /* Glassmorphism effect */
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    
+    /* Smooth transitions */
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#theme-toggle-btn:hover {
+    transform: scale(1.1);
+    box-shadow: var(--card-shadow-hover);
+    background: var(--card-hover-bg);
+    border-color: var(--border-medium);
+}
+
+#theme-toggle-btn:active {
+    transform: scale(0.95);
+}
+
+#theme-toggle-btn svg {
+    width: 1.25rem; /* 20px */
+    height: 1.25rem; /* 20px */
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Hide theme button when modal is open */
+body.modal-open #theme-toggle-btn {
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* Mobile adjustments */
+@media (max-width: 768px) {
+    #theme-toggle-btn {
+        bottom: 6rem;
+        right: 1.5rem;
+        width: 3rem; /* 48px */
+        height: 3rem; /* 48px */
+    }
+    
+    #theme-toggle-btn svg {
+        width: 1.5rem; /* 24px */
+        height: 1.5rem; /* 24px */
+    }
+}
+
+/* ===================================
+   Back to Top Button (Updated for Theme Support)
+   =================================== */
 #back-to-top-btn {
     position: fixed;
     bottom: 2rem; /* 距离底部 32px */
@@ -1854,13 +2060,14 @@ html.modal-open {
     width: 2.75rem; /* 44px */
     height: 2.75rem; /* 44px */
     border-radius: 9999px; /* 圆形 */
-    background-color: rgba(110, 110, 115, 0.4); /* 半透明背景，类似 iOS/macOS 控件 */
-    color: rgba(235, 235, 245, 0.6); /* 图标颜色 */
-    border: none;
+    background: var(--card-bg);
+    border: 1px solid var(--border-light);
+    color: var(--text-secondary);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
+    box-shadow: var(--card-shadow);
     
     /* 玻璃拟态效果 */
     backdrop-filter: blur(12px);
@@ -1890,8 +2097,11 @@ body.modal-open #back-to-top-btn.visible {
 
 /* 鼠标悬浮效果 */
 #back-to-top-btn:hover {
-    background-color: rgba(120, 120, 128, 0.5);
-    color: white;
+    background: var(--card-hover-bg);
+    border-color: var(--border-medium);
+    box-shadow: var(--card-shadow-hover);
+    color: var(--text-primary);
+    transform: translateY(-2px);
 }
 
 /* 按钮内的 SVG 图标大小 */
@@ -2085,22 +2295,29 @@ body.modal-open #back-to-top-btn.visible {
     cursor: pointer;
 }
 .btn-primary {
-    background-color: #8B5CF6; /* violet-500 */
+    background: var(--accent-gradient);
     color: white;
+    border: none;
+    box-shadow: 0 4px 12px rgba(68, 138, 255, 0.3);
 }
 .btn-primary:hover {
-    background-color: #7C3AED; /* violet-600 */
+    box-shadow: 0 6px 16px rgba(68, 138, 255, 0.4);
+    transform: translateY(-1px);
 }
 .btn-primary:disabled {
-    background-color: #4B5563;
+    background: var(--surface-bg-strong);
+    color: var(--text-tertiary);
     cursor: not-allowed;
+    box-shadow: none;
 }
 .btn-secondary {
-    background-color: #4B5563; /* gray-600 */
-    color: white;
+    background-color: var(--surface-bg-strong);
+    color: var(--text-primary);
+    border: 1px solid var(--border-medium);
 }
 .btn-secondary:hover {
-    background-color: #6B7280; /* gray-500 */
+    background-color: var(--surface-bg);
+    border-color: var(--border-strong);
 }
 
 /* === 全站美化通知样式（居中悬浮） === */
@@ -2167,30 +2384,31 @@ body.demo-body { background-color: var(--gray-900); color: white; display: flex;
 #settings-modal { 
     position: fixed; 
     inset: 0; 
-    z-index: 2000; /* ✅ 高于 topbar (1000)，确保设置页在最上层 */
-    background-color: rgba(0,0,0,0.5); 
+    z-index: 2000;
+    background-color: var(--bg-overlay);
     display: flex; 
     align-items: center; 
     justify-content: center; 
     padding: 0; 
-    transition: opacity 0.3s; 
+    transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
     opacity: 0; 
     pointer-events: none; 
-    backdrop-filter: blur(8px); 
-    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(16px); 
+    -webkit-backdrop-filter: blur(16px);
 }
 
 #settings-card { 
     width: 100%; 
     height: 100%; 
-    background: var(--gray-900); 
-    border: none; 
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-light);
     border-radius: 0; 
     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); 
     display: flex; 
     flex-direction: column; 
     overflow: hidden; 
     transform: translateY(100%);
+    box-shadow: var(--card-shadow);
 }
 
 /* 设置模态框打开时隐藏页面滚动条 */
@@ -2200,16 +2418,16 @@ body.settings-open {
 #settings-modal.visible { opacity: 1; pointer-events: auto; }
 #settings-modal.visible #settings-card { transform: translateY(0); }
 .settings-layout { display: flex; flex-direction: column; height: 100%; }
-.settings-header { padding: 1rem 1rem; border-bottom: 1px solid rgba(255, 255, 255, 0.1); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
-.settings-header h2 { font-size: 1.125rem; font-weight: 600; }
-.settings-header .close-btn { color: var(--gray-400); cursor: pointer; transition: color .2s; }
-.settings-header .close-btn:hover { color: white; }
+.settings-header { padding: 1rem 1rem; border-bottom: 1px solid var(--border-light); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+.settings-header h2 { font-size: 1.125rem; font-weight: 600; color: var(--text-primary); }
+.settings-header .close-btn { color: var(--text-secondary); cursor: pointer; transition: color 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+.settings-header .close-btn:hover { color: var(--text-primary); }
 .settings-main { display: flex; flex-direction: column; flex-grow: 1; overflow: hidden; }
-.settings-nav { display: flex; flex-direction: row; padding: 0.5rem; flex-shrink: 0; border-bottom: 1px solid rgba(255, 255, 255, 0.1); gap: 0.5rem; }
-.settings-nav button { display: flex; align-items: center; justify-content: center; gap: 0.5rem; flex-grow: 1; padding: 0.625rem 0.5rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 500; color: var(--gray-300); cursor: pointer; transition: all 0.2s; }
+.settings-nav { display: flex; flex-direction: row; padding: 0.5rem; flex-shrink: 0; border-bottom: 1px solid var(--border-light); gap: 0.5rem; }
+.settings-nav button { display: flex; align-items: center; justify-content: center; gap: 0.5rem; flex-grow: 1; padding: 0.625rem 0.5rem; border-radius: 12px; font-size: 0.875rem; font-weight: 500; color: var(--text-secondary); cursor: pointer; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
 .settings-nav button svg { width: 1.125rem; height: 1.125rem; flex-shrink: 0; }
-.settings-nav button:hover { background-color: rgba(255, 255, 255, 0.05); color: white; }
-.settings-nav button.active { background-color: var(--gray-700); color: white; }
+.settings-nav button:hover { background-color: var(--surface-bg); color: var(--text-primary); }
+.settings-nav button.active { background: var(--accent-gradient); color: white; }
 .settings-content-panel { flex-grow: 1; position: relative; }
 .settings-tab-content { 
     position: absolute; 
@@ -2301,14 +2519,14 @@ body.settings-open {
     .manage-input-btn { flex: 0 0 auto; padding: 0.65rem 1.15rem; justify-content: center; min-width: 120px; }
 }
 .form-row { display: flex; justify-content: space-between; align-items: center; }
-.form-label { font-size: 0.9rem; color: var(--gray-200); font-weight: 500; }
-.form-input, .form-textarea { width: 100%; background-color: rgba(0,0,0, 0.2); border: 1px solid var(--gray-600); border-radius: 0.5rem; color: white; padding: 0.75rem 1rem; transition: all 0.2s; font-size: 0.9rem; }
-.form-input:focus, .form-textarea:focus { outline: none; border-color: var(--violet-400); background-color: rgba(0,0,0,0.3); box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.2); }
-.form-input.input-error { border-color: var(--red-400) !important; animation: shake 0.3s; }
-.toggle-switch { position: relative; display: inline-block; width: 44px; height: 24px; background-color: var(--gray-700); border-radius: 9999px; transition: background-color 0.2s; cursor: pointer; -webkit-appearance: none; appearance: none; flex-shrink: 0; }
-.toggle-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; background-color: white; border-radius: 50%; transition: transform 0.2s; }
-.toggle-switch:checked { background-color: var(--violet-500); }
-.toggle-switch:checked::after { transform: translateX(20px); }
+.form-label { font-size: 0.9rem; color: var(--text-primary); font-weight: 500; }
+.form-input, .form-textarea { width: 100%; background-color: var(--surface-bg); border: 1px solid var(--border-medium); border-radius: 12px; color: var(--text-primary); padding: 0.75rem 1rem; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); font-size: 0.9rem; }
+.form-input:focus, .form-textarea:focus { outline: none; border-color: var(--accent-primary); background-color: var(--surface-bg-strong); box-shadow: 0 0 0 3px rgba(68, 138, 255, 0.2); }
+.form-input.input-error { border-color: var(--color-error) !important; animation: shake 0.3s; }
+.toggle-switch { position: relative; display: inline-block; width: 44px; height: 24px; background-color: var(--surface-bg-strong); border: 1px solid var(--border-medium); border-radius: 9999px; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); cursor: pointer; -webkit-appearance: none; appearance: none; flex-shrink: 0; }
+.toggle-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; background-color: var(--text-tertiary); border-radius: 50%; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+.toggle-switch:checked { background: var(--accent-gradient); border-color: transparent; }
+.toggle-switch:checked::after { transform: translateX(20px); background-color: white; }
 .settings-footer { padding: 1rem; border-top: 1px solid rgba(255, 255, 255, 0.1); display: flex; justify-content: flex-end; align-items: center; gap: 0.75rem; flex-shrink: 0; }
 .footer-btn { padding: 0.75rem 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; transition: all .2s; flex-grow: 1; }
 /* --- 修复：设置页保存按钮加载状态样式 (增强版) --- */
@@ -2464,19 +2682,18 @@ html.download-page-active .confirm-btn:disabled{
 .album-card {
     position: relative;
     overflow: hidden;
-    border-radius: 0.75rem;
-    /* 额外强制裁剪，避免 GPU 合成层导致的圆角失效 */
-    clip-path: inset(0 round 0.75rem);
+    border-radius: 16px; /* Modern: 16px for large cards */
+    clip-path: inset(0 round 16px);
     contain: paint;
+    background: var(--card-bg);
+    box-shadow: var(--card-shadow);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     cursor: pointer;
 }
 
 .album-card:hover {
-    /* 避免外层元素缩放引发圆角裁剪失效 */
-    transform: none;
-    /* ✅ 移除阴影 */
-    box-shadow: none;
+    transform: translateY(-4px);
+    box-shadow: var(--card-shadow-hover);
 }
 
 /* 仅缩放内部内容容器，确保外层圆角不受影响 */
@@ -2490,9 +2707,29 @@ html.download-page-active .confirm-btn:disabled{
    2) 让内部图片与覆盖层继承圆角，保证边缘一致；
 */
 .album-card,
-.photo-item { border-radius: 0.75rem; overflow: hidden; clip-path: inset(0 round 0.75rem); contain: paint; }
+.photo-item { 
+    border-radius: 16px; 
+    overflow: hidden; 
+    clip-path: inset(0 round 16px); 
+    contain: paint;
+    background: var(--card-bg);
+}
 .album-card:hover,
-.photo-item:hover { border-radius: 0.75rem; overflow: hidden; clip-path: inset(0 round 0.75rem); }
+.photo-item:hover { 
+    border-radius: 16px; 
+    overflow: hidden; 
+    clip-path: inset(0 round 16px); 
+}
+
+.photo-item {
+    box-shadow: var(--card-shadow);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.photo-item:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--card-shadow-hover);
+}
 /* 内部首个容器与常见覆盖层/图片继承圆角 */
 .album-card > div:first-child,
 .photo-item > div:first-child,
