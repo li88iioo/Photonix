@@ -19,36 +19,32 @@
             <header id="topbar" class="topbar">
                 <div class="topbar-inner">
                     <div class="topbar-left">
-                        <div style="display: flex; align-items: center; gap: 0.75rem;">
-                            <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <a href="#/" style="display: flex; align-items: center; gap: 0.75rem; text-decoration: none; color: inherit;">
+                            <svg width="32" height="32" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
                                 <defs>
                                     <linearGradient id="logo-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
                                         <stop offset="0%" style="stop-color:#64FFDA;stop-opacity:1" />
                                         <stop offset="100%" style="stop-color:#448AFF;stop-opacity:1" />
                                     </linearGradient>
                                 </defs>
-                                <circle cx="20" cy="20" r="18" stroke="url(#logo-gradient)" stroke-width="2" fill="none" opacity="0.3"/>
-                                <circle cx="20" cy="20" r="13" stroke="url(#logo-gradient)" stroke-width="2" fill="none" opacity="0.6"/>
-                                <circle cx="20" cy="20" r="8" fill="url(#logo-gradient)" opacity="0.9"/>
+                                <path fill="url(#logo-gradient)" d="M50,0 C77.61,0 100,22.39 100,50 C100,77.61 77.61,100 50,100 C22.39,100 0,77.61 0,50 C0,22.39 22.39,0 50,0 Z M50,15 C30.67,15 15,30.67 15,50 C15,69.33 30.67,85 50,85 C69.33,85 85,69.33 85,50 C85,30.67 69.33,15 50,15 Z M62.5,25 L37.5,25 L37.5,50 L62.5,50 C69.4,50 75,44.4 75,37.5 C75,30.6 69.4,25 62.5,25 Z"/>
                             </svg>
-                            <h1 id="main-title" style="font-size: clamp(1.25rem, 3vw, 1.75rem); font-weight: 700; background: linear-gradient(135deg, #64FFDA, #448AFF); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">
+                            <h1 id="main-title" style="font-size: 1.5rem; font-weight: 700; background: linear-gradient(135deg, #64FFDA, #448AFF); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin: 0;">
                                 Photonix
                             </h1>
-                        </div>
-                        <p id="main-subtitle" style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.25rem;">一个属于你的私人写真集</p>
+                        </a>
                     </div>
                     <div class="topbar-right">
-                        <div class="search-container relative">
-                            <button id="mobile-search-back-btn" class="search-back-btn sm:hidden" aria-label="返回" title="返回" style="display:none">←</button>
+                        <div class="search-container">
                             <div class="search-field">
-                                <input type="text" id="search-input" class="search-input" placeholder="搜索相册或图片..." inputmode="search" enterkeyhint="search" autocomplete="off" autocapitalize="none" autocorrect="off">
-                                <button id="search-submit-btn" class="search-submit-btn" aria-label="执行搜索" type="button">
-                                    <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                        <circle cx="11" cy="11" r="7"/>
-                                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                                    </svg>
-                                </button>
+                                <input type="text" id="search-input" class="search-input" placeholder="搜索写真集..." inputmode="search" enterkeyhint="search" autocomplete="off" autocapitalize="none" autocorrect="off">
                             </div>
+                            <button class="sg-icon-btn--light" aria-label="搜索" id="search-expand-btn">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="11" cy="11" r="8"></circle>
+                                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                                </svg>
+                            </button>
                             <div id="search-history" class="absolute top-full left-0 right-0 mt-1 z-50 hidden max-h-60 overflow-y-auto"></div>
                         </div>
                         <button id="mobile-search-btn" class="sg-icon-btn--light sm:hidden" aria-label="搜索">

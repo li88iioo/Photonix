@@ -19,6 +19,7 @@ import { createModuleLogger } from './core/logger.js';
 import { safeSetInnerHTML, safeGetElementById, safeQuerySelector, safeClassList } from './shared/dom-utils.js';
 import { eventManager } from './core/event-manager.js';
 import { initializeTheme } from './features/theme.js';
+import { initializeTopbarInteractions, updateBreadcrumb } from './features/topbar-interactions.js';
 
 const mainLogger = createModuleLogger('Main');
 
@@ -209,6 +210,13 @@ function startMainApp() {
     showMinimalLoader({ text: '初始化中...' });
     initializeSSE();
     initializeUI();
+    
+    // 初始化顶栏交互功能
+    try {
+        initializeTopbarInteractions();
+    } catch (e) {
+        mainLogger.error('顶栏交互初始化失败', e);
+    }
 
     try {
         initializeRouter();
