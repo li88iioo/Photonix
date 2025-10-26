@@ -820,6 +820,15 @@ export function setupEventListeners() {
         });
     }
 
+    // Photonix 标题点击返回首页
+    const mainTitle = safeGetElementById('main-title');
+    if (mainTitle) {
+        uiGroup.add(mainTitle, 'click', () => {
+            // 和键盘快捷键 'h' 行为保持一致
+            window.location.hash = '#/';
+        });
+    }
+
     // 激活 UI 事件组
     uiGroup.activate();
 }

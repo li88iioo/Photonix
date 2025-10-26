@@ -1,0 +1,64 @@
+<svg width="192" height="192" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- 定义用于圆环的线性渐变 -->
+    <linearGradient id="ring-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8B5CF6" />
+      <stop offset="100%" stop-color="#F472B6" />
+    </linearGradient>
+    <!-- 定义用于中心发光核心的径向渐变 -->
+    <radialGradient id="core-glow" cx="50%" cy="50%" r="50%" fx="50%" fy="50%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="1" />
+      <stop offset="70%" stop-color="#F472B6" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#8B5CF6" stop-opacity="0" />
+    </radialGradient>
+    <style>
+      /* 基础样式和动画原点设置 */
+      .ring {
+        fill: none;
+        stroke-width: 2;
+        transform-origin: 50% 50%;
+      }
+      .core {
+        transform-origin: 50% 50%;
+        animation: pulse 3s ease-in-out infinite;
+      }
+
+      /* 定义关键帧动画 */
+      @keyframes rotate-cw {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      @keyframes rotate-ccw {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(-360deg); }
+      }
+      @keyframes pulse {
+        0% { transform: scale(0.9); opacity: 0.8; }
+        50% { transform: scale(1.1); opacity: 1; }
+        100% { transform: scale(0.9); opacity: 0.8; }
+      }
+
+      /* 将动画应用到具体元素 */
+      #outer-ring {
+        animation: rotate-cw 20s linear infinite;
+      }
+      #middle-ring {
+        animation: rotate-ccw 15s linear infinite;
+      }
+      #inner-ring {
+        animation: rotate-cw 10s linear infinite;
+      }
+    </style>
+  </defs>
+
+  <!-- 背景，增加一点深度感 -->
+  <circle cx="50" cy="50" r="50" fill="#111827" />
+
+  <!-- 发光和脉冲的核心 -->
+  <circle class="core" cx="50" cy="50" r="15" fill="url(#core-glow)" />
+
+  <!-- 三个交错旋转的圆环 -->
+  <circle id="outer-ring" class="ring" cx="50" cy="50" r="45" stroke="url(#ring-gradient)" stroke-opacity="0.5" />
+  <circle id="middle-ring" class="ring" cx="50" cy="50" r="35" stroke="url(#ring-gradient)" />
+  <circle id="inner-ring" class="ring" cx="50" cy="50" r="25" stroke="white" stroke-opacity="0.8" />
+</svg>

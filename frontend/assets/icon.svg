@@ -1,64 +1,10 @@
-<svg width="192" height="192" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <!-- 定义用于圆环的线性渐变 -->
-    <linearGradient id="ring-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#8B5CF6" />
-      <stop offset="100%" stop-color="#F472B6" />
-    </linearGradient>
-    <!-- 定义用于中心发光核心的径向渐变 -->
-    <radialGradient id="core-glow" cx="50%" cy="50%" r="50%" fx="50%" fy="50%">
-      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="1" />
-      <stop offset="70%" stop-color="#F472B6" stop-opacity="0.8" />
-      <stop offset="100%" stop-color="#8B5CF6" stop-opacity="0" />
-    </radialGradient>
-    <style>
-      /* 基础样式和动画原点设置 */
-      .ring {
-        fill: none;
-        stroke-width: 2;
-        transform-origin: 50% 50%;
-      }
-      .core {
-        transform-origin: 50% 50%;
-        animation: pulse 3s ease-in-out infinite;
-      }
-
-      /* 定义关键帧动画 */
-      @keyframes rotate-cw {
-        from { transform: rotate(0deg); }
-        to { transform: rotate(360deg); }
-      }
-      @keyframes rotate-ccw {
-        from { transform: rotate(0deg); }
-        to { transform: rotate(-360deg); }
-      }
-      @keyframes pulse {
-        0% { transform: scale(0.9); opacity: 0.8; }
-        50% { transform: scale(1.1); opacity: 1; }
-        100% { transform: scale(0.9); opacity: 0.8; }
-      }
-
-      /* 将动画应用到具体元素 */
-      #outer-ring {
-        animation: rotate-cw 20s linear infinite;
-      }
-      #middle-ring {
-        animation: rotate-ccw 15s linear infinite;
-      }
-      #inner-ring {
-        animation: rotate-cw 10s linear infinite;
-      }
-    </style>
-  </defs>
-
-  <!-- 背景，增加一点深度感 -->
-  <circle cx="50" cy="50" r="50" fill="#111827" />
-
-  <!-- 发光和脉冲的核心 -->
-  <circle class="core" cx="50" cy="50" r="15" fill="url(#core-glow)" />
-
-  <!-- 三个交错旋转的圆环 -->
-  <circle id="outer-ring" class="ring" cx="50" cy="50" r="45" stroke="url(#ring-gradient)" stroke-opacity="0.5" />
-  <circle id="middle-ring" class="ring" cx="50" cy="50" r="35" stroke="url(#ring-gradient)" />
-  <circle id="inner-ring" class="ring" cx="50" cy="50" r="25" stroke="white" stroke-opacity="0.8" />
-</svg>
+<svg width="200" height="200" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <defs>
+                                    <linearGradient id="logo-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                        <stop offset="0%" style="stop-color:#a78bfa;stop-opacity:1"></stop>
+                                        <stop offset="70%" style="stop-color:#f472b6;stop-opacity:1"></stop>
+                                        <stop offset="100%" style="stop-color:#f87171;stop-opacity:1"></stop>
+                                    </linearGradient>
+                                </defs>
+                                <path fill="url(#logo-gradient)" d="M50,0 C77.61,0 100,22.39 100,50 C100,77.61 77.61,100 50,100 C22.39,100 0,77.61 0,50 C0,22.39 22.39,0 50,0 Z M50,15 C30.67,15 15,30.67 15,50 C15,69.33 30.67,85 50,85 C69.33,85 85,69.33 85,50 C85,30.67 69.33,15 50,15 Z M62.5,25 L37.5,25 L37.5,50 L62.5,50 C69.4,50 75,44.4 75,37.5 C75,30.6 69.4,25 62.5,25 Z"></path>
+                            </svg>
