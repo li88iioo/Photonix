@@ -11,8 +11,7 @@ import { showNotification } from './shared/utils.js';
 import { initializeSSE } from './app/sse.js';
 import { setupEventListeners } from './features/gallery/listeners.js';
 import { initializeRouter } from './app/router.js';
-import { blobUrlManager } from './features/gallery/lazyload.js';
-import { saveLazyLoadState, restoreLazyLoadState, clearLazyLoadProtection } from './features/gallery/lazyload-state-manager.js';
+import { blobUrlManager, savePageLazyState, restorePageLazyState, clearRestoreProtection } from './features/gallery/lazyload.js';
 import { initializeUI } from './features/gallery/ui.js';
 import { UI } from './core/constants.js';
 import { createModuleLogger } from './core/logger.js';
@@ -40,7 +39,7 @@ function showGalleryShortcutsHint() {
         if (!hintEl) return;
 
         safeClassList(hintEl, 'add', 'show');
-        
+
         // 标记已显示，下次不再显示
         try {
             localStorage.setItem('hasShownGalleryShortcuts', 'true');
@@ -133,9 +132,9 @@ function setUIState(nextState, options = {}) {
  * 应用初始化函数
  */
 async function initializeApp() {
-    try { clearExpiredAlbumTombstones(); } catch {}
+    try { clearExpiredAlbumTombstones(); } catch { }
     // 注入与静态文件一致的 SVG 图标，避免启动时找不到 /assets 时的 404
-    try { applyAppIcon(); } catch {}
+    try { applyAppIcon(); } catch { }
     // 1. 初始化基础组件和事件监听
     state.update('userId', initializeAuth());
     try {
@@ -161,7 +160,7 @@ async function initializeApp() {
 
         setUIState('error');
         const authContainer = safeGetElementById('auth-container');
-        if(authContainer) {
+        if (authContainer) {
             safeSetInnerHTML(authContainer, `
                 <div class="auth-card text-center">
                     <h2 class="auth-title text-red-500">应用加载失败</h2>
@@ -199,7 +198,7 @@ function startMainApp() {
     // 🔧 修复问题2：网络状态通知去抖，避免移动设备/内网穿透环境频繁提示
     let offlineNotificationTimer = null;
     let wasOfflineNotified = false;
-    
+
     window.addEventListener('offline', () => {
         // 延迟3秒后才显示通知，避免短暂断连误报
         if (offlineNotificationTimer) clearTimeout(offlineNotificationTimer);
@@ -210,7 +209,7 @@ function startMainApp() {
             }
         }, 3000);
     });
-    
+
     window.addEventListener('online', () => {
         // 清除待显示的offline通知
         if (offlineNotificationTimer) {
@@ -223,7 +222,7 @@ function startMainApp() {
             wasOfflineNotified = false;
         }
     });
-    
+
     window.addEventListener('auth:required', () => {
         removeAuthToken();
         setUIState('login');
@@ -358,7 +357,7 @@ function initializeLifecycleGuards() {
     window.addEventListener('beforeunload', () => {
         try {
             blobUrlManager.cleanupAll();
-            saveLazyLoadState(window.location.hash);
+            savePageLazyState(window.location.hash);
             eventManager.destroy();
             mainLogger.debug('页面卸载，完成缓存和事件清理');
         } catch (error) {
@@ -381,7 +380,7 @@ function initializeLifecycleGuards() {
                     mainLogger.debug('页面长时间隐藏，开始清理部分缓存');
                     try {
                         blobUrlManager.cleanupExpired();
-                        saveLazyLoadState(window.location.hash);
+                        savePageLazyState(window.location.hash);
                     } catch (error) {
                         mainLogger.warn('页面隐藏清理失败', error);
                     }

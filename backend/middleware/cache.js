@@ -225,11 +225,8 @@ function cache(duration) {
         const sortParam = (urlObj.searchParams.get('sort') || 'smart').toLowerCase();
         let bucket = 'public';
         if (pathname.startsWith('/api/browse')) {
-            // ✅ 优化4: 修正缓存分桶逻辑
-            // - viewed_desc：用户相关（基于浏览历史）
-            // - smart：用户相关（前端会基于浏览状态分组，即使根目录也需隔离）
-            // - name/mtime：公共缓存（纯文件系统排序，与用户无关）
-            if (sortParam === 'viewed_desc' || sortParam === 'smart') {
+            // smart 模式依赖用户视图信息，因此需要按用户隔离缓存
+            if (sortParam === 'smart') {
                 bucket = userId !== 'anonymous' ? `user:${userId}` : 'public';
             }
         }

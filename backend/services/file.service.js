@@ -276,8 +276,8 @@ async function findCoverPhotosBatchDb(relativeDirs) {
 /**
  * 直接子项（相册/媒体）分页，排序全部在 SQL 完成
  * @param {string} relativePathPrefix 相对路径前缀（'' 表示根）
- * @param {string} userId 用户ID（用于最近浏览排序）
- * @param {string} sort 排序策略：smart | name_asc | name_desc | mtime_asc | mtime_desc | viewed_desc
+ * @param {string} userId 用户ID
+ * @param {string} sort 排序策略：smart | name_asc | name_desc | mtime_asc | mtime_desc
  * @param {number} limit 分页大小
  * @param {number} offset 偏移量
  * @returns {Promise<{ total:number, rows:Array }>}
@@ -307,10 +307,6 @@ async function getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, 
             break;
         case 'mtime_desc':
             orderBy = `ORDER BY is_dir DESC, mtime DESC`;
-            break;
-        case 'viewed_desc':
-            // 不跨库 JOIN，先按名称排序，稍后在页面内做二次排序
-            orderBy = `ORDER BY is_dir DESC, name COLLATE NOCASE ASC`;
             break;
         default: // smart 或其他未知值 -> 默认为 mtime_desc
             orderBy = `ORDER BY is_dir DESC, mtime DESC`;

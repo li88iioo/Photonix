@@ -20,6 +20,47 @@ import { state } from '../core/state.js';
 
 let lastButtonStateUpdate = 0;
 
+const NAV_LABEL_RESPONSIVE_BREAKPOINT = '(max-width: 430px)';
+const NAV_LABEL_MAP = {
+  security: { short: '安全' },
+  ai: { short: 'AI' },
+  status: { short: '状态' },
+  manage: { short: '运维' }
+};
+
+function updateNavLabels(nav, useShort) {
+  if (!nav) return;
+  nav.querySelectorAll('button').forEach((btn) => {
+    const labelEl = btn.querySelector('span');
+    if (!labelEl) return;
+    const full = btn.dataset.fullLabel || labelEl.textContent.trim();
+    if (!btn.dataset.fullLabel) {
+      btn.dataset.fullLabel = full;
+    }
+    if (useShort) {
+      const shortLabel = NAV_LABEL_MAP[btn.dataset.tab]?.short;
+      if (shortLabel) {
+        labelEl.textContent = shortLabel;
+        return;
+      }
+    }
+    labelEl.textContent = btn.dataset.fullLabel;
+  });
+}
+
+function setupResponsiveNavLabels(nav) {
+  if (!nav || nav.dataset.labelResponsive === 'true' || typeof window === 'undefined') return;
+  const mediaQuery = window.matchMedia(NAV_LABEL_RESPONSIVE_BREAKPOINT);
+  const handler = (event) => updateNavLabels(nav, event.matches);
+  handler(mediaQuery);
+  if (typeof mediaQuery.addEventListener === 'function') {
+    mediaQuery.addEventListener('change', handler);
+  } else if (typeof mediaQuery.addListener === 'function') {
+    mediaQuery.addListener(handler);
+  }
+  nav.dataset.labelResponsive = 'true';
+}
+
 /**
  * 根据初始配置更新相册删除相关控件的可用状态。
  * @returns {void}
@@ -110,12 +151,16 @@ export function setupListeners() {
   const newPasswordInput = card.querySelector('#new-password');
   const newPasswordWrapper = card.querySelector('#new-password-wrapper');
 
-  newPasswordWrapper.addEventListener('click', (e) => {
-    if (newPasswordInput.disabled) {
-      e.preventDefault();
-      showNotification('未配置超级管理员密码，无法更改此设置', 'error');
-    }
-  });
+  if (newPasswordWrapper) {
+    newPasswordWrapper.addEventListener('click', (e) => {
+      if (newPasswordInput && newPasswordInput.disabled) {
+        e.preventDefault();
+        showNotification('未配置超级管理员密码，无法更改此设置', 'error');
+      }
+    });
+  }
+
+  setupResponsiveNavLabels(nav);
 
   nav.addEventListener('click', e => {
     const btn = e.target.closest('button');
@@ -123,7 +168,11 @@ export function setupListeners() {
     safeClassList(nav.querySelector('.active'), 'remove', 'active');
     panels.forEach(p => safeClassList(p, 'remove', 'active'));
     safeClassList(btn, 'add', 'active');
-    safeClassList(card.querySelector(`#${btn.dataset.tab}-settings-content`), 'add', 'active');
+    const targetTab = card.querySelector(`#${btn.dataset.tab}-settings-content`);
+    if (targetTab) {
+      safeClassList(targetTab, 'add', 'active');
+      targetTab.scrollTop = 0;
+    }
 
     if (btn.dataset.tab === 'status') {
       const containers = ['index-status', 'thumbnail-status', 'hls-status'];
@@ -135,26 +184,22 @@ export function setupListeners() {
       });
 
       loadStatusTables({ silent: true });
-      const footer = card.querySelector('.settings-footer');
-      if (footer) {
-        safeSetStyle(footer, 'display', 'none');
-      }
-    } else if (btn.dataset.tab === 'manage') {
-      const footer = card.querySelector('.settings-footer');
-      if (footer) {
-        safeSetStyle(footer, 'display', 'none');
-      }
-    } else {
-      const footer = card.querySelector('.settings-footer');
-      if (footer) {
-        safeSetStyle(footer, 'display', '');
-      }
     }
   });
 
-  card.querySelector('.close-btn').addEventListener('click', closeSettingsModal);
-  card.querySelector('.cancel-btn').addEventListener('click', closeSettingsModal);
-  card.querySelector('.save-btn').addEventListener('click', handleSave);
+  const closeButtons = card.querySelectorAll('.settings-close-btn');
+  const cancelButtons = card.querySelectorAll('#security-settings-content .cancel-btn, #ai-settings-content .cancel-btn');
+  const saveButtons = card.querySelectorAll('#security-settings-content .save-btn, #ai-settings-content .save-btn');
+
+  closeButtons.forEach((btn) => {
+    btn.addEventListener('click', closeSettingsModal);
+  });
+  cancelButtons.forEach((btn) => {
+    btn.addEventListener('click', closeSettingsModal);
+  });
+  saveButtons.forEach((btn) => {
+    btn.addEventListener('click', handleSave);
+  });
 
   card.querySelectorAll('input:not(#password-enabled), textarea').forEach(el => {
     el.addEventListener('input', checkForChanges);
@@ -403,8 +448,8 @@ function updateButtonStates() {
 function checkForChanges() {
   const { card, initialSettings } = settingsContext;
   if (!card) return;
-  const saveBtn = card.querySelector('.save-btn');
-  if (!saveBtn) return;
+  const saveButtons = card.querySelectorAll('#security-settings-content .save-btn, #ai-settings-content .save-btn');
+  if (saveButtons.length === 0) return;
   const currentData = {
     PASSWORD_ENABLED: card.querySelector('#password-enabled').checked,
     AI_ENABLED: card.querySelector('#ai-enabled').checked,
@@ -414,16 +459,18 @@ function checkForChanges() {
   };
   let hasChanged = false;
   if (String(currentData.PASSWORD_ENABLED) !== String(initialSettings.PASSWORD_ENABLED === 'true') ||
-      String(currentData.AI_ENABLED) !== String(initialSettings.AI_ENABLED === 'true') ||
-      currentData.AI_URL !== initialSettings.AI_URL ||
-      currentData.AI_MODEL !== initialSettings.AI_MODEL ||
-      currentData.AI_PROMPT !== initialSettings.AI_PROMPT) {
+    String(currentData.AI_ENABLED) !== String(initialSettings.AI_ENABLED === 'true') ||
+    currentData.AI_URL !== initialSettings.AI_URL ||
+    currentData.AI_MODEL !== initialSettings.AI_MODEL ||
+    currentData.AI_PROMPT !== initialSettings.AI_PROMPT) {
     hasChanged = true;
   }
   if (card.querySelector('#new-password').value || card.querySelector('#ai-key').value) {
     hasChanged = true;
   }
-  saveBtn.disabled = !hasChanged;
+  saveButtons.forEach(btn => {
+    btn.disabled = !hasChanged;
+  });
 }
 
 /**
@@ -434,7 +481,7 @@ async function handleSave() {
   const { card, initialSettings } = settingsContext;
   if (!card) return;
 
-  const saveBtn = card.querySelector('.save-btn');
+  const saveButtons = card.querySelectorAll('#security-settings-content .save-btn, #ai-settings-content .save-btn');
   const newPassInput = card.querySelector('#new-password');
   const isPasswordEnabled = card.querySelector('#password-enabled').checked;
   const newPasswordValue = newPassInput.value;
@@ -446,8 +493,10 @@ async function handleSave() {
   if (needsAdmin) {
     if (!initialSettings.isAdminSecretConfigured) {
       showNotification('操作失败：未配置超级管理员密码', 'error');
-      safeClassList(saveBtn, 'remove', 'loading');
-      saveBtn.disabled = false;
+      saveButtons.forEach(btn => {
+        safeClassList(btn, 'remove', 'loading');
+        btn.disabled = false;
+      });
       return;
     }
 
@@ -456,13 +505,13 @@ async function handleSave() {
     showPasswordPrompt({
       useAdminSecret: true,
       onConfirm: async (adminSecret) => {
-    if (shouldDisableAlbumDeletion) {
+        if (shouldDisableAlbumDeletion) {
           try {
             await toggleAlbumDeletion(false, adminSecret);
             initialSettings.albumDeletionEnabled = false;
             state.update('albumDeletionEnabled', false);
-          updateAlbumDeletionControls();
-          showNotification('已同时关闭相册删除功能', 'info');
+            updateAlbumDeletionControls();
+            showNotification('已同时关闭相册删除功能', 'info');
           } catch (error) {
             throw error;
           }
@@ -488,9 +537,11 @@ async function executeSave(adminSecret = null, options = {}) {
   const { card, initialSettings } = settingsContext;
   if (!card) return false;
 
-  const saveBtn = card.querySelector('.save-btn');
-  safeClassList(saveBtn, 'add', 'loading');
-  saveBtn.disabled = true;
+  const saveButtons = card.querySelectorAll('#security-settings-content .save-btn, #ai-settings-content .save-btn');
+  saveButtons.forEach(btn => {
+    safeClassList(btn, 'add', 'loading');
+    btn.disabled = true;
+  });
 
   const newPassInput = card.querySelector('#new-password');
   safeClassList(newPassInput, 'remove', 'input-error');
@@ -499,12 +550,14 @@ async function executeSave(adminSecret = null, options = {}) {
   const newPasswordValue = newPassInput.value;
 
   if (isPasswordEnabled && !initialSettings.hasPassword && !newPasswordValue) {
-    showNotification('请设置新密码以启用密码访问', 'error');
-    card.querySelector('button[data-tab="security"]').click();
-    newPassInput.focus();
-    safeClassList(newPassInput, 'add', 'input-error');
-    safeClassList(saveBtn, 'remove', 'loading');
-    saveBtn.disabled = false;
+        showNotification('请设置新密码以启用密码访问', 'error');
+        card.querySelector('button[data-tab="security"]').click();
+        newPassInput.focus();
+        safeClassList(newPassInput, 'add', 'input-error');
+        saveButtons.forEach(btn => {
+          safeClassList(btn, 'remove', 'loading');
+          btn.disabled = false;
+        });
     return false;
   }
 
@@ -625,8 +678,10 @@ async function executeSave(adminSecret = null, options = {}) {
     updateAlbumDeletionControls();
 
     setTimeout(closeSettingsModal, 1000);
-    safeClassList(saveBtn, 'remove', 'loading');
-    saveBtn.disabled = false;
+    saveButtons.forEach(btn => {
+      safeClassList(btn, 'remove', 'loading');
+      btn.disabled = false;
+    });
     checkForChanges();
     return true;
   } catch (error) {
@@ -646,8 +701,10 @@ async function executeSave(adminSecret = null, options = {}) {
         updateButtonStates();
       }
     }
-    safeClassList(saveBtn, 'remove', 'loading');
-    saveBtn.disabled = false;
+    saveButtons.forEach(btn => {
+      safeClassList(btn, 'remove', 'loading');
+      btn.disabled = false;
+    });
     checkForChanges();
     throw error;
   }

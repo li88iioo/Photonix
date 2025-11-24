@@ -8,6 +8,42 @@ import { createModuleLogger } from '../core/logger.js';
 import { INDEXEDDB } from '../core/constants.js';
 import { setManagedInterval } from '../core/timer-manager.js';
 
+const HISTORY_DB_VERSION = 3;
+const HISTORY_PARENT_INDEX = 'by_parent_path';
+const HISTORY_PARENT_TS_INDEX = 'by_parent_path_timestamp';
+
+function normalizeHistoryPath(rawPath = '') {
+    if (rawPath == null) return '';
+    const str = String(rawPath).trim();
+    if (!str) return '';
+    return str
+        .split('/')
+        .filter(Boolean)
+        .map(segment => {
+            try {
+                return decodeURIComponent(segment);
+            } catch {
+                return segment;
+            }
+        })
+        .join('/');
+}
+
+function getParentHistoryPath(path = '') {
+    const normalized = normalizeHistoryPath(path);
+    if (!normalized) return '';
+    const idx = normalized.lastIndexOf('/');
+    if (idx === -1) return '';
+    return normalized.substring(0, idx);
+}
+
+function deriveNameFromPath(path = '') {
+    const normalized = normalizeHistoryPath(path);
+    if (!normalized) return '';
+    const parts = normalized.split('/');
+    return parts[parts.length - 1] || '';
+}
+
 /**
  * 轻量级数据加密/解密辅助函数
  * 使用简单的XOR加密 + Base64编码，适合本地存储数据保护
@@ -27,7 +63,13 @@ class DataEncryption {
     encrypt(data) {
         try {
             // 只加密数据值部分，保持 path 字段为明文（用作IndexedDB键）
-            const { path, ...dataToEncrypt } = data;
+            const {
+                path,
+                parentPath = '',
+                entryType = 'album',
+                viewedAt = Date.now(),
+                ...dataToEncrypt
+            } = data;
             const jsonStr = JSON.stringify(dataToEncrypt);
             const keyBytes = new TextEncoder().encode(this.key);
             const dataBytes = new TextEncoder().encode(jsonStr);
@@ -42,8 +84,14 @@ class DataEncryption {
             const binaryStr = Array.from(encrypted, byte => String.fromCharCode(byte)).join('');
             const encryptedDataStr = btoa(binaryStr);
 
-            // 返回包含明文path和加密数据值的对象
-            return { path, encryptedData: encryptedDataStr };
+            // 返回包含索引所需字段和加密数据值的对象
+            return {
+                path,
+                parentPath,
+                entryType,
+                viewedAt,
+                encryptedData: encryptedDataStr
+            };
         } catch (error) {
             indexeddbLogger.warn('数据加密失败，使用原文存储', error);
             return data;
@@ -78,7 +126,15 @@ class DataEncryption {
                 const decryptedData = JSON.parse(jsonStr);
 
                 // 重新组合完整对象
-                return { path: data.path, ...decryptedData };
+                return {
+                    path: data.path,
+                    parentPath: normalizeHistoryPath(
+                        data.parentPath ?? decryptedData.parentPath ?? getParentHistoryPath(data.path)
+                    ),
+                    entryType: decryptedData.entryType || data.entryType || 'album',
+                    viewedAt: Number(data.viewedAt || decryptedData.viewedAt || decryptedData.timestamp || Date.now()),
+                    ...decryptedData
+                };
             } else {
                 // 旧格式或明文数据：尝试作为JSON解析
                 indexeddbLogger.warn('检测到旧格式数据，尝试直接解析', data);
@@ -133,26 +189,70 @@ const { MAX_RECORDS, MAX_AGE_MS } = getAdaptiveLimits();
  * 打开或创建 IndexedDB 数据库
  * @returns {Promise<IDBDatabase>} 数据库实例
  */
+function upgradeLegacyHistoryRecords(store) {
+    try {
+        const cursorRequest = store.openCursor();
+        cursorRequest.onsuccess = event => {
+            const cursor = event.target.result;
+            if (!cursor) return;
+            const value = cursor.value;
+            if (!value || typeof value !== 'object') {
+                cursor.continue();
+                return;
+            }
+            if (!('parentPath' in value) || !('viewedAt' in value)) {
+                const decrypted = dataEncryption.decrypt(value);
+                const normalizedPath = normalizeHistoryPath(decrypted.path || value.path || '');
+                const parentPath = getParentHistoryPath(normalizedPath);
+                const viewedAt = Number(decrypted.viewedAt || decrypted.timestamp || Date.now());
+                const entryType = decrypted.entryType || value.entryType || 'album';
+                const migrated = {
+                    ...decrypted,
+                    path: normalizedPath,
+                    parentPath,
+                    entryType,
+                    viewedAt,
+                    timestamp: decrypted.timestamp || viewedAt
+                };
+                cursor.update(dataEncryption.encrypt(migrated));
+            }
+            cursor.continue();
+        };
+    } catch (error) {
+        indexeddbLogger.warn('迁移旧历史记录失败', error);
+    }
+}
+
 export function openDb() {
     return new Promise((resolve, reject) => {
-        const req = indexedDB.open(INDEXEDDB.HISTORY_DB_NAME, 2);
-        
+        const req = indexedDB.open(INDEXEDDB.HISTORY_DB_NAME, HISTORY_DB_VERSION);
+
         // 数据库升级处理
         req.onupgradeneeded = e => {
             const db = e.target.result;
+            const transaction = e.target.transaction;
             let store;
             if (!db.objectStoreNames.contains(INDEXEDDB.HISTORY_STORE_NAME)) {
                 // 创建对象存储，使用 path 作为主键
                 store = db.createObjectStore(INDEXEDDB.HISTORY_STORE_NAME, { keyPath: 'path' });
             } else {
-                store = req.transaction.objectStore(INDEXEDDB.HISTORY_STORE_NAME);
+                store = transaction.objectStore(INDEXEDDB.HISTORY_STORE_NAME);
             }
             // 添加时间戳索引
             if (store && !store.indexNames.contains(INDEXEDDB.HISTORY_INDEX_NAME)) {
                 store.createIndex(INDEXEDDB.HISTORY_INDEX_NAME, 'timestamp', { unique: false });
             }
+            if (store && !store.indexNames.contains(HISTORY_PARENT_INDEX)) {
+                store.createIndex(HISTORY_PARENT_INDEX, 'parentPath', { unique: false });
+            }
+            if (store && !store.indexNames.contains(HISTORY_PARENT_TS_INDEX)) {
+                store.createIndex(HISTORY_PARENT_TS_INDEX, ['parentPath', 'viewedAt'], { unique: false });
+            }
+            if (e.oldVersion < 3 && store) {
+                upgradeLegacyHistoryRecords(store);
+            }
         };
-        
+
         req.onsuccess = e => resolve(e.target.result);
         req.onerror = e => reject(e.target.error);
     });
@@ -245,17 +345,74 @@ async function __flushViewedWrites(db) {
 }
 
 /**
- * 保存访问记录到本地数据库
+ * 保存访问记录到本地数据库（增强版）
  * @param {string} path - 访问的路径
- * @param {number} timestamp - 访问时间戳（默认当前时间）
- * @param {boolean} synced - 是否已同步到服务器（默认false）
+ * @param {Object} options - 选项
+ * @param {number} options.timestamp - 访问时间戳（默认当前时间）
+ * @param {string} options.name - 相册名称（可选）
+ * @param {string} options.coverUrl - 封面URL（可选）
+ * @param {number} options.duration - 停留时长ms（可选）
  * @returns {Promise} 事务完成Promise
  */
-export async function saveViewed(path, timestamp = Date.now(), synced = false) {
+export async function saveViewed(path, options = {}) {
+    const normalizedPath = normalizeHistoryPath(path);
+    if (normalizedPath == null || normalizedPath === '') return false;
     const db = await openDb();
 
+    const timestamp = Number(options.timestamp || Date.now());
+    const parentOverride = options.parentPath != null ? options.parentPath : undefined;
+    const defaultParent = getParentHistoryPath(normalizedPath);
+    const parentPath = normalizeHistoryPath(parentOverride == null ? defaultParent : parentOverride);
+    const name = options.name || '';
+    const coverUrl = options.coverUrl || '';
+    const thumbnailUrl = options.thumbnailUrl || '';
+    const duration = Number(options.duration || 0);
+    const entryType = options.entryType || 'album';
+    const width = Number.isFinite(options.width) ? Number(options.width) : undefined;
+    const height = Number.isFinite(options.height) ? Number(options.height) : undefined;
+    const needsHydration = typeof options.needsHydration === 'boolean' ? options.needsHydration : undefined;
+    const preserveViewCount = options.preserveViewCount === true;
+
+    let existingRecord = null;
+    let viewCount = 1;
+    try {
+        const tx = db.transaction(INDEXEDDB.HISTORY_STORE_NAME, 'readonly');
+        const store = tx.objectStore(INDEXEDDB.HISTORY_STORE_NAME);
+        const existingRecordRaw = await new Promise((resolve) => {
+            const req = store.get(normalizedPath);
+            req.onsuccess = () => resolve(req.result || null);
+            req.onerror = () => resolve(null);
+        });
+        if (existingRecordRaw) {
+            existingRecord = dataEncryption.decrypt(existingRecordRaw);
+            if (existingRecord && existingRecord.viewCount) {
+                viewCount = preserveViewCount ? existingRecord.viewCount : existingRecord.viewCount + 1;
+            }
+        }
+    } catch (error) {
+        indexeddbLogger.debug('读取现有记录失败，使用默认值', error);
+    }
+
+    const mergedRecord = {
+        path: normalizedPath,
+        parentPath,
+        entryType: entryType || existingRecord?.entryType || 'album',
+        name: name || existingRecord?.name || deriveNameFromPath(normalizedPath),
+        coverUrl: coverUrl || existingRecord?.coverUrl || '',
+        thumbnailUrl: thumbnailUrl || existingRecord?.thumbnailUrl || coverUrl || existingRecord?.coverUrl || '',
+        width: Number.isFinite(width) ? width : (existingRecord?.width || 0),
+        height: Number.isFinite(height) ? height : (existingRecord?.height || 0),
+        duration: duration || existingRecord?.duration || 0,
+        viewCount,
+        timestamp,
+        viewedAt: timestamp,
+        lastUpdatedAt: Date.now(),
+        needsHydration: needsHydration != null ? needsHydration : (existingRecord?.needsHydration ?? false)
+    };
+
     // 入队，延迟批量写入到单事务，降低主线程阻塞
-    __idbWriteQueue.push({ path, timestamp, synced });
+    __idbWriteQueue.push(mergedRecord);
+
     if (!__idbFlushScheduled) {
         __idbFlushScheduled = true;
         const batchDelay = getBatchDelay();
@@ -271,10 +428,10 @@ export async function saveViewed(path, timestamp = Date.now(), synced = false) {
  * 立即写入访问记录（逃逸API，用于关键路径）
  * @param {string} path - 访问的路径
  * @param {number} timestamp - 访问时间戳（默认当前时间）
- * @param {boolean} synced - 是否已同步到服务器（默认false）
  * @returns {Promise} 事务完成Promise
  */
-export async function saveViewedImmediate(path, timestamp = Date.now(), synced = false) {
+export async function saveViewedImmediate(path, timestamp = Date.now()) {
+    const normalizedPath = normalizeHistoryPath(path);
     const db = await openDb();
 
     return new Promise(resolve => {
@@ -282,7 +439,12 @@ export async function saveViewedImmediate(path, timestamp = Date.now(), synced =
             const tx = db.transaction(INDEXEDDB.HISTORY_STORE_NAME, 'readwrite');
             const store = tx.objectStore(INDEXEDDB.HISTORY_STORE_NAME);
             // 加密数据后存储
-            const encryptedData = dataEncryption.encrypt({ path, timestamp, synced });
+            const encryptedData = dataEncryption.encrypt({
+                path: normalizedPath,
+                parentPath: getParentHistoryPath(normalizedPath),
+                timestamp,
+                viewedAt: timestamp
+            });
             store.put(encryptedData);
 
             tx.oncomplete = () => {
@@ -313,6 +475,88 @@ export function getIndexedDBStats() {
     };
 }
 
+export async function getRecentEntriesByParent(parentPath = '', limit = 60) {
+    const normalizedParent = normalizeHistoryPath(parentPath);
+    const db = await openDb();
+    return new Promise(resolve => {
+        try {
+            const tx = db.transaction(INDEXEDDB.HISTORY_STORE_NAME, 'readonly');
+            const store = tx.objectStore(INDEXEDDB.HISTORY_STORE_NAME);
+            const hasIndex = store.indexNames.contains(HISTORY_PARENT_TS_INDEX);
+            const results = [];
+            const onCursorSuccess = (event) => {
+                const cursor = event.target.result;
+                if (!cursor || results.length >= limit) {
+                    resolve(results);
+                    return;
+                }
+                const value = cursor.value;
+                if (hasIndex || normalizeHistoryPath(value.parentPath) === normalizedParent) {
+                    results.push(dataEncryption.decrypt(value));
+                }
+                cursor.continue();
+            };
+            const onCursorError = () => resolve(results);
+            if (hasIndex) {
+                const index = store.index(HISTORY_PARENT_TS_INDEX);
+                const range = IDBKeyRange.bound(
+                    [normalizedParent, 0],
+                    [normalizedParent, Number.MAX_SAFE_INTEGER]
+                );
+                const req = index.openCursor(range, 'prev');
+                req.onsuccess = onCursorSuccess;
+                req.onerror = onCursorError;
+            } else {
+                const req = store.openCursor(null, 'prev');
+                req.onsuccess = onCursorSuccess;
+                req.onerror = onCursorError;
+            }
+        } catch (error) {
+            indexeddbLogger.warn('读取最近浏览历史失败', error);
+            resolve([]);
+        }
+    });
+}
+
+export async function hasHistoryForParent(parentPath = '') {
+    const normalizedParent = normalizeHistoryPath(parentPath);
+    const db = await openDb();
+    return new Promise(resolve => {
+        try {
+            const tx = db.transaction(INDEXEDDB.HISTORY_STORE_NAME, 'readonly');
+            const store = tx.objectStore(INDEXEDDB.HISTORY_STORE_NAME);
+            const hasIndex = store.indexNames.contains(HISTORY_PARENT_INDEX);
+            const onSuccess = event => {
+                const cursor = event.target.result;
+                if (!cursor) {
+                    resolve(false);
+                    return;
+                }
+                if (hasIndex || normalizeHistoryPath(cursor.value.parentPath) === normalizedParent) {
+                    resolve(true);
+                } else {
+                    cursor.continue();
+                }
+            };
+            const onError = () => resolve(false);
+            if (hasIndex) {
+                const index = store.index(HISTORY_PARENT_INDEX);
+                const range = IDBKeyRange.only(normalizedParent);
+                const req = index.openCursor(range, 'prev');
+                req.onsuccess = onSuccess;
+                req.onerror = onError;
+            } else {
+                const req = store.openCursor(null, 'prev');
+                req.onsuccess = onSuccess;
+                req.onerror = onError;
+            }
+        } catch (error) {
+            indexeddbLogger.debug('检测历史记录失败', error);
+            resolve(false);
+        }
+    });
+}
+
 /**
  * 获取所有访问记录
  * @returns {Promise<Array>} 访问记录数组
@@ -326,13 +570,12 @@ export async function getAllViewed() {
         const req = store.getAll();
         req.onsuccess = () => {
             const encryptedData = req.result || [];
-            // 解密数据
             const decryptedData = encryptedData
                 .map(data => dataEncryption.decrypt(data))
-                .filter(data => data !== null); // 过滤解密失败的数据
+                .filter(data => data !== null);
             resolve(decryptedData);
         };
-        req.onerror = () => resolve([]);  // 出错时返回空数组
+        req.onerror = () => resolve([]);
     });
 }
 
@@ -341,58 +584,6 @@ export async function getAllViewed() {
  * 用于网络恢复后批量同步到服务器
  * @returns {Promise<Array>} 未同步的记录数组
  */
-export async function getUnsyncedViewed() {
-    const db = await openDb();
-    const tx = db.transaction(INDEXEDDB.HISTORY_STORE_NAME, 'readonly');
-    const store = tx.objectStore(INDEXEDDB.HISTORY_STORE_NAME);
-    
-    return new Promise(resolve => {
-        const req = store.openCursor();
-        const unsynced = [];
-        
-        req.onsuccess = e => {
-            const cursor = e.target.result;
-            if (cursor) {
-                // 解密数据
-                const decryptedData = dataEncryption.decrypt(cursor.value);
-                if (decryptedData && !decryptedData.synced) {
-                    unsynced.push(decryptedData);
-                }
-                cursor.continue();
-            } else {
-                resolve(unsynced);
-            }
-        };
-    });
-}
-
-/**
- * 标记访问记录为已同步
- * 在成功同步到服务器后调用
- * @param {string} path - 要标记的路径
- * @returns {Promise} 事务完成Promise
- */
-export async function markAsSynced(path) {
-    const db = await openDb();
-    const tx = db.transaction(INDEXEDDB.HISTORY_STORE_NAME, 'readwrite');
-    const store = tx.objectStore(INDEXEDDB.HISTORY_STORE_NAME);
-
-    // 获取记录并更新同步状态
-    const storedRecord = await store.get(path);
-    if (storedRecord) {
-        // 解密数据
-        const record = dataEncryption.decrypt(storedRecord);
-        if (record) {
-            record.synced = true;
-            // 重新加密后存储
-            const encryptedData = dataEncryption.encrypt(record);
-            store.put(encryptedData);
-        }
-    }
-
-    await tx.complete;
-    return true;
-} 
 
 /**
  * 执行 LRU/时间窗清理
@@ -476,3 +667,5 @@ if (typeof window !== 'undefined') {
     setManagedInterval(() => scheduleRetention(), 5 * 60 * 1000, 'retention-cleanup');
 }
 scheduleRetention();
+
+export { normalizeHistoryPath, getParentHistoryPath, deriveNameFromPath };

@@ -7,6 +7,7 @@ import { state, backdrops } from '../core/state.js';
 import { elements } from '../shared/dom-elements.js';
 import { preloadNextImages, showNotification } from '../shared/utils.js';
 import { generateImageCaption } from '../app/api.js';
+import { recordHierarchyView } from '../features/history/history-service.js';
 import Hls from 'hls.js';
 import { enablePinchZoom } from '../features/gallery/touch.js';
 import { createModuleLogger } from '../core/logger.js';
@@ -699,6 +700,19 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
     if (!photoItem || safeClassList(photoItem, 'contains', 'is-loading')) return;
 
     const isVideo = /\.(mp4|webm|mov)$/i.test(mediaSrc);
+    const relativePath = extractRelativePathFromStaticUrl(mediaSrc);
+    if (relativePath) {
+        const thumbEl = element.querySelector('img[data-src]');
+        const thumbUrl = thumbEl?.dataset?.src || '';
+        recordHierarchyView(relativePath, {
+            entryType: isVideo ? 'video' : 'photo',
+            name: relativePath.split('/').pop() || '',
+            thumbnailUrl: thumbUrl,
+            coverUrl: thumbUrl,
+            width: Number(element.dataset.width) || 0,
+            height: Number(element.dataset.height) || 0
+        }).catch(() => {});
+    }
 
     if (isVideo) {
         // 视频直接打开模态框
@@ -842,6 +856,21 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
         });
 }
 
+function extractRelativePathFromStaticUrl(url = '') {
+    if (!url || !url.startsWith('/static/')) return '';
+    const relative = url.substring(8);
+    return relative
+        .split('/')
+        .map(segment => {
+            try {
+                return decodeURIComponent(segment);
+            } catch {
+                return segment;
+            }
+        })
+        .join('/');
+}
+
 /**
  * 打开模态框并根据媒体源更新内容
  * @param {string} mediaSrc - 媒体源 URL
@@ -897,8 +926,20 @@ export function _openModal(mediaSrc, index = 0, isObjectURL = false, originalPat
 export function _navigateToAlbum(event, albumPath) {
     event.preventDefault();
     if (document.activeElement) document.activeElement.blur();
-    
-    window.location.hash = `/${encodeURIComponent(albumPath)}`;
+
+    const resolveSortQuery = () => {
+        if (state.currentSort && state.currentSort !== 'smart') {
+            return `?sort=${state.currentSort}`;
+        }
+        if (state.entrySort && state.entrySort !== 'smart') {
+            return `?sort=${state.entrySort}`;
+        }
+        const hash = window.location.hash || '';
+        const idx = hash.indexOf('?');
+        return idx !== -1 ? hash.substring(idx) : '';
+    };
+
+    window.location.hash = `/${encodeURIComponent(albumPath)}${resolveSortQuery()}`;
 }
 
 // =======================================================

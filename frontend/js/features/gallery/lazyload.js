@@ -28,7 +28,7 @@ const blobUrlManager = {
      * 安全地撤销图片的 blob URL
      * @param {HTMLImageElement} img
      */
-    revokeBlobUrl: function(img) {
+    revokeBlobUrl: function (img) {
         const storedUrl = this.activeBlobUrls.get(img);
         if (!storedUrl) return;
         try {
@@ -50,7 +50,7 @@ const blobUrlManager = {
      * @param {Blob} blob
      * @returns {string|null}
      */
-    setBlobUrl: function(img, blob) {
+    setBlobUrl: function (img, blob) {
         try {
             // 先清理旧的 blob URL
             this.revokeBlobUrl(img);
@@ -70,7 +70,7 @@ const blobUrlManager = {
                 }
                 try {
                     URL.revokeObjectURL(newBlobUrl);
-                } catch {}
+                } catch { }
                 return null;
             }
 
@@ -98,14 +98,14 @@ const blobUrlManager = {
      * 清理指定图片的 blob URL
      * @param {HTMLImageElement} img
      */
-    cleanup: function(img) {
+    cleanup: function (img) {
         this.revokeBlobUrl(img);
     },
 
     /**
      * 清理所有 blob URL（页面卸载时使用）
      */
-    cleanupAll: function() {
+    cleanupAll: function () {
         for (const [img, blobUrl] of this.activeBlobUrls) {
             try {
                 URL.revokeObjectURL(blobUrl);
@@ -120,7 +120,7 @@ const blobUrlManager = {
     /**
      * 清理过期的 blob URL（内存优化）
      */
-    cleanupExpired: function() {
+    cleanupExpired: function () {
         const now = Date.now();
         const toCleanup = [];
         for (const [img, creationTime] of this.blobCreationTimes) {
@@ -231,7 +231,7 @@ const imageObserverResource = {
         if (globalImageObserver) {
             try {
                 globalImageObserver.disconnect();
-            } catch {}
+            } catch { }
             globalImageObserver = null;
         }
     }
@@ -316,7 +316,7 @@ function handleImageLoad(event) {
     }
 
     const gridItem = img.closest('.grid-item');
-    
+
     // ✅ 优化：检查图片实际尺寸是否与预期一致
     // 只有尺寸不匹配时才触发布局重排，避免不必要的reflow
     let needsReflow = false;
@@ -325,14 +325,14 @@ function handleImageLoad(event) {
         const expectedHeight = parseFloat(gridItem.getAttribute('data-height'));
         const actualWidth = img.naturalWidth;
         const actualHeight = img.naturalHeight;
-        
+
         // 允许2%的误差范围（考虑压缩等因素）
         const tolerance = 0.02;
         if (expectedWidth > 0 && expectedHeight > 0 && actualWidth > 0 && actualHeight > 0) {
             const expectedRatio = expectedHeight / expectedWidth;
             const actualRatio = actualHeight / actualWidth;
             const ratioDiff = Math.abs(expectedRatio - actualRatio) / expectedRatio;
-            
+
             // 尺寸比例差异超过阈值，需要重排
             if (ratioDiff > tolerance) {
                 needsReflow = true;
@@ -346,7 +346,7 @@ function handleImageLoad(event) {
             // 缺失尺寸数据，安全起见触发重排
             needsReflow = true;
         }
-        
+
         if (gridItem.style) {
             gridItem.style.removeProperty('height');
         }
@@ -375,7 +375,7 @@ function handleImageLoad(event) {
             processingIndicator.remove();
         }
     }
-    
+
     // ✅ 仅在必要时触发布局重排
     if (needsReflow) {
         triggerMasonryUpdate();
@@ -401,10 +401,11 @@ function handleImageError(event) {
     // 使用内联 SVG 作为兜底占位
     const brokenSvg = `
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-            <rect width="100" height="100" fill="#374151"/>
-            <g fill="none" stroke="#C084FC" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="100" height="100" fill="#F3F4F6"/>
+            <rect x="0.5" y="0.5" width="99" height="99" fill="none" stroke="#E5E7EB" stroke-width="1"/>
+            <g fill="none" stroke="#9CA3AF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M18 70 L38 50 L55 65 L70 55 L82 70"/>
-                <circle cx="65" cy="35" r="7" fill="#C084FC" stroke="none"/>
+                <circle cx="65" cy="35" r="7" fill="#9CA3AF" stroke="none"/>
             </g>
             <text x="50" y="90" text-anchor="middle" fill="#9CA3AF" font-size="10" font-family="Arial, sans-serif">BROKEN</text>
         </svg>`;

@@ -188,7 +188,7 @@ export function showNotification(message, type = 'info', duration = UI.NOTIFICAT
     if (existing) {
         const count = (Number(existing.dataset.count || '1') + 1);
         existing.dataset.count = String(count);
-        const spanEl = existing.querySelector('span');
+        const spanEl = existing.querySelector('.notification-message');
         if (spanEl) spanEl.textContent = count > 1 ? `${normalizedMessage}（x${count}）` : normalizedMessage;
         // 重新计时：延长展示时间
         if (existing._hideTimeout) clearTimeout(existing._hideTimeout);
@@ -207,7 +207,10 @@ export function showNotification(message, type = 'info', duration = UI.NOTIFICAT
     notif.dataset.key = key;
     notif.dataset.count = '1';
     safeSetInnerHTML(notif, `
-        <span>${normalizedMessage}</span>
+        <div class="notification-icon" aria-hidden="true">${renderIcon(type)}</div>
+        <div class="notification-body">
+            <span class="notification-message">${normalizedMessage}</span>
+        </div>
         <button class="close-btn" aria-label="关闭">&times;</button>
     `);
     container.appendChild(notif);
@@ -241,6 +244,16 @@ export function showNotification(message, type = 'info', duration = UI.NOTIFICAT
             }
         }, 300);
     }
+}
+
+function renderIcon(type) {
+    const map = {
+        success: '✔',
+        error: '✕',
+        warning: '! ',
+        info: 'ℹ'
+    };
+    return map[type] || 'ℹ';
 }
 
 /**

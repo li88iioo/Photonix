@@ -251,7 +251,7 @@ export function createBackArrow({
         'stroke-linecap': 'round',
         'stroke-linejoin': 'round'
     });
-    
+
     if (marginRight) {
         svg.style.marginRight = marginRight;
     }
@@ -438,3 +438,137 @@ export const iconCheck = iconCircleCheck;
 
 /** 待处理别名（与iconCircleX一致） */
 export const iconPending = iconCircleX;
+
+/**
+ * 创建新版网格布局图标 
+ * @returns {SVGSVGElement} 网格图标SVG元素
+ */
+export function createGridIconNew() {
+    const svg = createSVGElement('svg', {
+        id: 'icon-grid',
+        class: 'block transition-transform duration-300 group-active:scale-90',
+        width: '20',
+        height: '20',
+        viewBox: '0 0 24 24',
+        fill: 'none',
+        stroke: 'currentColor',
+        'stroke-width': '2'
+    });
+
+    const path = createSVGElement('path', {
+        d: 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z'
+    });
+
+    svg.appendChild(path);
+    return svg;
+}
+
+/**
+ * 创建新版瀑布流布局图标 (demo.html风格)
+ * @returns {SVGSVGElement} 瀑布流图标SVG元素
+ */
+export function createMasonryIconNew() {
+    const svg = createSVGElement('svg', {
+        id: 'icon-masonry',
+        class: 'hidden transition-transform duration-300 group-active:scale-90',
+        width: '20',
+        height: '20',
+        viewBox: '0 0 24 24',
+        fill: 'none',
+        stroke: 'currentColor',
+        'stroke-width': '2'
+    });
+
+    const path = createSVGElement('path', {
+        d: 'M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v10a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h4a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6z'
+    });
+
+    svg.appendChild(path);
+    return svg;
+}
+
+/**
+ * 创建排序图标 - 名称升序 (A-Z)
+ * @returns {string} SVG路径字符串
+ */
+export function getSortIconPath(sortType) {
+    const icons = {
+        'name_asc': '<path d="M18 15V5M18 5L22 9M18 5L14 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 10L6 4L8 10M5.1 8H6.9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 14H8L4 20H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+        'name_desc': '<path d="M18 9V19M18 19L22 15M18 19L14 15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 20L6 14L8 20M5.1 18H6.9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 4H8L4 10H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+        'mtime_desc': '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>',
+        'mtime_asc': '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>',
+        'viewed_desc': '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>'
+    };
+    return icons[sortType] || icons['mtime_desc'];
+}
+
+/**
+ * 创建搜索图标
+ * @returns {SVGSVGElement} 搜索图标SVG元素
+ */
+export function createSearchIcon() {
+    const svg = createSVGElement('svg', {
+        width: '16',
+        height: '16',
+        fill: 'none',
+        stroke: 'currentColor',
+        'stroke-width': '2',
+        viewBox: '0 0 24 24'
+    });
+
+    const path = createSVGElement('path', {
+        d: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z'
+    });
+
+    svg.appendChild(path);
+    return svg;
+}
+
+/**
+ * 创建首页图标 (房子形状)
+ * @returns {SVGSVGElement} 首页图标SVG元素
+ */
+export function createHomeIcon() {
+    const svg = createSVGElement('svg', {
+        width: '16',
+        height: '16',
+        viewBox: '0 0 24 24',
+        fill: 'none',
+        stroke: 'currentColor',
+        'stroke-width': '2',
+        'stroke-linecap': 'round',
+        'stroke-linejoin': 'round'
+    });
+
+    const path1 = createSVGElement('path', {
+        d: 'M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'
+    });
+
+    const polyline = createSVGElement('polyline', {
+        points: '9 22 9 12 15 12 15 22'
+    });
+
+    svg.appendChild(path1);
+    svg.appendChild(polyline);
+    return svg;
+}
+
+/**
+ * 创建时钟图标 (用于搜索历史)
+ * @returns {SVGSVGElement} 时钟图标SVG元素
+ */
+export function createClockIcon() {
+    const svg = createSVGElement('svg', {
+        class: 'w-3.5 h-3.5 text-gray-400',
+        fill: 'none',
+        stroke: 'currentColor',
+        viewBox: '0 0 24 24'
+    });
+
+    const path = createSVGElement('path', {
+        d: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z'
+    });
+
+    svg.appendChild(path);
+    return svg;
+}

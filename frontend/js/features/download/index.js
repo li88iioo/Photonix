@@ -65,12 +65,12 @@ import { showConfirmDialog, openTaskFormModal, showPreviewModal, cleanupAllModal
 import { bindInteractions, cleanupInteractions } from './interactions.js';
 import { cachedAggregateMetrics, clearAllCaches } from './utils/cache.js';
 import { formatBytes } from './view/utils.js';
-import { 
-  exchangeSecretForToken, 
-  getDownloadToken, 
+import {
+  exchangeSecretForToken,
+  getDownloadToken,
   clearDownloadToken,
   refreshDownloadToken,
-  hasValidAuth 
+  hasValidAuth
 } from './auth-helper.js';
 
 const ADMIN_SECRET_STORAGE_KEY = 'photonix:download:adminSecret';
@@ -112,7 +112,7 @@ function persistAdminSecret(secret) {
     } else {
       localStorage.removeItem(ADMIN_SECRET_STORAGE_KEY);
     }
-  } catch {}
+  } catch { }
 }
 
 function loadPersistedAdminSecret() {
@@ -139,14 +139,14 @@ function markAdminVerified() {
   downloadState.lastVerifiedAt = ts;
   try {
     localStorage.setItem(VERIFIED_AT_STORAGE_KEY, String(ts));
-  } catch {}
+  } catch { }
 }
 
 function clearAdminVerificationMark() {
   downloadState.lastVerifiedAt = 0;
   try {
     localStorage.removeItem(VERIFIED_AT_STORAGE_KEY);
-  } catch {}
+  } catch { }
 }
 
 function matchesTaskId(task, identifier) {
@@ -172,7 +172,7 @@ function findTaskById(taskIdAttr) {
   let decoded = taskIdAttr;
   try {
     decoded = decodeURIComponent(taskIdAttr);
-  } catch {}
+  } catch { }
 
   if (decoded.startsWith('task-')) {
     const index = Number(decoded.split('-')[1]);
@@ -372,10 +372,10 @@ async function ensureAdminSecret(forcePrompt = false) {
   if (window.__PHOTONIX_DOWNLOAD_ADMIN_SECRET__) {
     const secret = String(window.__PHOTONIX_DOWNLOAD_ADMIN_SECRET__);
     delete window.__PHOTONIX_DOWNLOAD_ADMIN_SECRET__;
-    
+
     // 暂时保存原始密钥
     downloadState.originalSecret = secret;
-    
+
     // 用密钥交换Token
     const tokenResult = await exchangeSecretForToken(secret);
     if (tokenResult.success) {
@@ -384,7 +384,7 @@ async function ensureAdminSecret(forcePrompt = false) {
       showDownloadNotification('认证成功，已获取安全令牌', 'success');
       return 'TOKEN_AUTH';
     }
-    
+
     // Token获取失败，降级到密钥模式
     setAdminSecret(secret);
     persistAdminSecret(secret);
@@ -396,7 +396,19 @@ async function ensureAdminSecret(forcePrompt = false) {
     const storedSecret = loadPersistedAdminSecret();
     if (storedSecret) {
       const storedTimestamp = loadPersistedVerifiedAt();
-      if (isVerificationFresh(storedTimestamp)) {
+
+      // 检查 Token 模式下的有效性
+      let isValid = isVerificationFresh(storedTimestamp);
+      if (isValid && storedSecret === 'TOKEN_AUTH') {
+        // 如果标记为 Token 模式，必须确保本地有 Token
+        const token = getDownloadToken();
+        if (!token) {
+          console.warn('[Download] 存储状态为 TOKEN_AUTH 但本地无 Token，需重新验证');
+          isValid = false;
+        }
+      }
+
+      if (isValid) {
         setAdminSecret(storedSecret);
         markAdminVerified();
         return storedSecret;
@@ -414,20 +426,21 @@ async function ensureAdminSecret(forcePrompt = false) {
         try {
           // 先验证密钥是否正确
           await verifyAdminSecret(adminSecret);
-          
+
           // 暂时保存原始密钥，因为后端还需要
           downloadState.originalSecret = adminSecret;
-          
+
           // 尝试用密钥交换Token
           const tokenResult = await exchangeSecretForToken(adminSecret);
           if (tokenResult.success) {
             setAdminSecret('TOKEN_AUTH');
+            persistAdminSecret('TOKEN_AUTH'); // 修复：持久化 Token 认证状态
             markAdminVerified();
             showDownloadNotification('认证成功，已获取安全令牌', 'success');
             resolve('TOKEN_AUTH');
             return true;
           }
-          
+
           // Token获取失败，降级到密钥模式
           console.warn('[Download] Token获取失败，使用密钥模式');
           setAdminSecret(adminSecret);
@@ -450,10 +463,10 @@ async function ensureAdminSecret(forcePrompt = false) {
 async function refreshData({ silent = false } = {}) {
   if (!downloadState.adminSecret) return;
   if (!silent) setLoading(true);
-  
+
   // 使用getAuthParam统一处理
   const authParam = getAuthParam();
-  
+
   try {
     const [status, tasks, logs, historyResult] = await Promise.all([
       fetchDownloadStatus(authParam).catch((error) => {
@@ -483,7 +496,7 @@ async function refreshData({ silent = false } = {}) {
         const config = await fetchDownloadConfig(downloadState.adminSecret);
         downloadState.config = config;
         downloadState.status.config = config;
-      } catch {}
+      } catch { }
     }
     const metrics = cachedAggregateMetrics({
       tasks: taskList,
@@ -506,7 +519,7 @@ async function refreshData({ silent = false } = {}) {
       images: metrics.imagesDownloaded,
       storage: metrics.storageBytes
     };
-    
+
     // 调试：检查数据是否有变化
     if (!silent) {
       console.log('[Dashboard] 更新数据:', {
@@ -516,7 +529,7 @@ async function refreshData({ silent = false } = {}) {
         存储: formatBytes(snapshot.storage)
       });
     }
-    
+
     pushMetricSnapshot(snapshot);
     renderFromState();
 
@@ -534,7 +547,7 @@ async function refreshData({ silent = false } = {}) {
 
 async function handleSaveConfig() {
   if (!downloadState.adminSecret) {
-    await ensureAdminSecret(true).catch(() => {});
+    await ensureAdminSecret(true).catch(() => { });
     if (!downloadState.adminSecret) return;
   }
 
@@ -562,7 +575,7 @@ async function handleSaveConfig() {
 
 async function reloadConfigSnapshot({ silent = false } = {}) {
   if (!downloadState.adminSecret) {
-    await ensureAdminSecret(true).catch(() => {});
+    await ensureAdminSecret(true).catch(() => { });
     if (!downloadState.adminSecret) return;
   }
 
@@ -662,7 +675,7 @@ async function handleClearLogs() {
 
 async function ensureReadyForMutation() {
   if (!downloadState.adminSecret) {
-    await ensureAdminSecret(false).catch(() => {});
+    await ensureAdminSecret(false).catch(() => { });
   }
   return Boolean(downloadState.adminSecret);
 }

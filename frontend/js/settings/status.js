@@ -418,11 +418,14 @@ function getIconSVG(iconName) {
 }
 
 function calculateIndexProgress(statusData, totalItems) {
-  if (totalItems === 0) return 0;
+  if (totalItems === 0) {
+    return statusData.processedFiles > 0 ? 100 : 0;
+  }
   if (statusData.status === 'complete') {
     return 100;
   }
-  return Math.round((statusData.processedFiles / totalItems) * 100);
+  const processed = Number(statusData.processedFiles) || 0;
+  return Math.round((processed / totalItems) * 100);
 }
 
 function generateIndexDetailsHTML(statusData, computedData) {
@@ -440,12 +443,43 @@ function renderIndexStatus(statusData) {
   const container = safeGetElementById('index-status');
   if (!container) return;
 
-  const statusClass = getStatusClass(statusData.status);
-  const totalItems = statusData.itemsStats?.reduce((sum, stat) => sum + stat.count, 0) || 0;
-  const processedPercent = calculateIndexProgress(statusData, totalItems);
+  const statsTotal = statusData.itemsStats?.reduce((sum, stat) => sum + stat.count, 0) || 0;
+  const backendTotal = Number(statusData.totalFiles) || 0;
+  const totalItems = backendTotal > 0 ? backendTotal : (statsTotal || statusData.ftsCount || 0);
+
+  let processedFiles = Number(statusData.processedFiles) || 0;
+  if (processedFiles === 0) {
+    if (statusData.status === 'complete' && totalItems > 0) {
+      processedFiles = totalItems;
+    } else if (statusData.ftsCount > 0) {
+      processedFiles = totalItems > 0 ? Math.min(statusData.ftsCount, totalItems) : statusData.ftsCount;
+    }
+  }
+
+  let normalizedStatus = (statusData.status || '').trim();
+  if (!normalizedStatus || normalizedStatus === 'unknown') {
+    if (totalItems === 0 && processedFiles === 0) {
+      normalizedStatus = 'idle';
+    } else if (processedFiles >= totalItems && totalItems > 0) {
+      normalizedStatus = 'complete';
+    } else if (processedFiles > 0) {
+      normalizedStatus = 'building';
+    } else {
+      normalizedStatus = 'pending';
+    }
+  }
+
+  const normalizedStatusData = {
+    ...statusData,
+    status: normalizedStatus,
+    processedFiles
+  };
+
+  const statusClass = getStatusClass(normalizedStatus);
+  const processedPercent = calculateIndexProgress(normalizedStatusData, totalItems);
 
   const computedData = { statusClass, totalItems };
-  const detailsHTML = generateIndexDetailsHTML(statusData, computedData);
+  const detailsHTML = generateIndexDetailsHTML(normalizedStatusData, computedData);
 
   const actions = [{
     action: 'sync',

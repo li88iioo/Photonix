@@ -98,7 +98,7 @@ async function processThumbnailBatch(batch) {
     try {
         await Promise.all(tasks);
     } finally {
-        try { triggerMasonryUpdate(); } catch {}
+        try { triggerMasonryUpdate(); } catch { }
     }
 }
 
@@ -145,7 +145,7 @@ async function updateThumbnailImage(img, imagePath) {
         } else {
             try {
                 if (img.src && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
-            } catch {}
+            } catch { }
         }
 
         const newBlobUrl = URL.createObjectURL(blob);
@@ -164,7 +164,7 @@ async function updateThumbnailImage(img, imagePath) {
 
         setManagedTimeout(() => {
             if (img.onload) img.onload = null;
-            try { triggerMasonryUpdate(); } catch {}
+            try { triggerMasonryUpdate(); } catch { }
             delete img.dataset.processingBySSE;
         }, 100, 'sse-thumbnail-finalize');
     }, 10, 'sse-thumbnail-update');
@@ -175,11 +175,11 @@ async function updateThumbnailImage(img, imagePath) {
  */
 function clearActiveConnection() {
     if (eventSource) {
-        try { eventSource.close(); } catch {}
+        try { eventSource.close(); } catch { }
     }
     eventSource = null;
     if (streamAbortController) {
-        try { streamAbortController.abort(); } catch {}
+        try { streamAbortController.abort(); } catch { }
     }
     streamAbortController = null;
 }
@@ -200,7 +200,7 @@ function scheduleReconnect() {
 function handleConnectedEvent(data) {
     try {
         if (!data) return;
-    } catch {}
+    } catch { }
 }
 
 /**
@@ -250,16 +250,29 @@ function parseAndDispatch(rawEvent) {
             dataLines.push(line.slice(5).trim());
         }
     }
+
     if (dataLines.length === 0) {
-        dispatchSseEvent(eventType, null);
+        // 即使没有数据，如果是特定事件类型，也可能需要分发（视具体业务而定，目前保持原逻辑）
+        // 但为了安全起见，避免分发 undefined
+        if (eventType !== 'message') {
+            dispatchSseEvent(eventType, null);
+        }
         return;
     }
+
     const rawData = dataLines.join('\n');
+
+    // 针对 Firefox 可能出现的空对象字符串 "{}" 或 "[]" 做预处理不是必须的，
+    // 但 try-catch 是必须的。
     try {
+        // 尝试解析 JSON
         const parsed = JSON.parse(rawData);
         dispatchSseEvent(eventType, parsed);
     } catch (error) {
-        sseError('解析 SSE 数据失败:', error);
+        // 仅在非空数据解析失败时记录警告，避免干扰正常日志
+        if (rawData.trim().length > 0) {
+            sseWarn('解析 SSE 数据失败:', error, 'Raw Data:', rawData.substring(0, 100));
+        }
     }
 }
 

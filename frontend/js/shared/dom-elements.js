@@ -57,7 +57,10 @@ export function reinitializeElements() {
     elements.breadcrumbNav = safeGetElementById('breadcrumb-nav');
     elements.infiniteScrollLoader = safeGetElementById('infinite-scroll-loader');
     elements.infiniteScrollLoaderContainer = safeGetElementById('infinite-scroll-loader-container');
-    elements.sortContainer = safeGetElementById('sort-container');
+    // sortContainer现在是topbar右侧的按钮容器区域
+    // 我们使用包含layout-toggle-wrap和sort-wrapper的父容器
+    const topbarRightContainer = document.querySelector('#topbar .flex.items-center.space-x-1');
+    elements.sortContainer = topbarRightContainer;
     elements.layoutToggle = safeGetElementById('layout-toggle');
     elements.layoutToggleBtn = safeGetElementById('layout-toggle-btn');
 }

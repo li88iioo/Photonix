@@ -1,46 +1,70 @@
 /**
- * @file ui.js
- * @description UI 渲染模块，负责页面 UI 元素的渲染和更新。
+ * 智能排序：已查看的相册自动后置（已废弃，仅保留结构，不予特殊处理）
  */
 
 import { state, stateManager } from '../../core/state.js';
 import * as api from '../../app/api.js';
-import { getAllViewed } from '../../shared/indexeddb-helper.js';
 import { applyMasonryLayout, triggerMasonryUpdate } from './masonry.js';
+import { setupLazyLoading } from './lazyload.js';
 import { MATH, UI } from '../../core/constants.js';
 import { uiLogger } from '../../core/logger.js';
-import { createProgressCircle, createPlayButton, createGridIcon, createMasonryIcon, createSortArrow, createDeleteIcon, createBackArrow } from '../../shared/svg-utils.js';
+import { createProgressCircle, createPlayButton, createGridIcon, createMasonryIcon, createSortArrow, createDeleteIcon, createBackArrow, createGridIconNew, createMasonryIconNew, createHomeIcon } from '../../shared/svg-utils.js';
 import { elements, reinitializeElements } from '../../shared/dom-elements.js';
 import { safeSetInnerHTML, safeClassList, safeSetStyle, safeCreateElement, safeGetElementById, safeQuerySelectorAll } from '../../shared/dom-utils.js';
 
-// 向后兼容导出 elements
+// 向后兼容，导出 elements
 export { elements };
 
 /**
- * 安全创建 DOM 元素并设置属性和内容
- * @param {string} tag 标签名
- * @param {Object} options 选项
+ * 从 URL hash 中提取纯路径部分，去除 # 和查询参数
+ * @returns {string} 路径字符串
+ */
+function getPathOnlyFromHash() {
+	const hash = window.location.hash;
+	const cleanHash = hash.replace(/^#/, '').replace(/\?.*$/, '');
+	return decodeURIComponent(cleanHash.replace(/^\//, ''));
+}
+
+/**
+ * 安全创建 DOM 元素并设置属性与内容
+ * @param {string} tag 元素标签名
+ * @param {Object} options 创建选项
  * @param {Array} options.classes CSS 类名数组
  * @param {Object} options.attributes 属性对象
  * @param {string} options.textContent 文本内容
- * @param {Array} options.children 子元素数组
- * @returns {HTMLElement} 创建的元素
+ * @param {Array} options.children 子节点元素数组
+ * @returns {HTMLElement}
  */
 function createElement(tag, { classes = [], attributes = {}, textContent = '', children = [] } = {}) {
 	return safeCreateElement(tag, { classes, attributes, textContent, children });
 }
 
 /**
+ * 请求下一帧刷新布局
+ */
+function scheduleLayoutRefresh() {
+	requestAnimationFrame(() => {
+		try {
+			applyLayoutMode();
+			triggerMasonryUpdate();
+			setupLazyLoading();
+		} catch (error) {
+			uiLogger.warn('刷新布局模式失败', error);
+		}
+	});
+}
+
+/**
  * 格式化时间显示
  * @param {number|string} timestamp 时间戳
- * @returns {string} 格式化后的时间字符串
+ * @returns {string} 格式化后的时间
  */
 function formatTime(timestamp) {
 	if (timestamp == null || timestamp === '') return '';
 
-	const timestampNum = typeof timestamp === 'number' ? timestamp :
-	                    typeof timestamp === 'string' ? parseInt(timestamp, 10) :
-	                    Number(timestamp);
+	const timestampNum = typeof timestamp === 'number'
+		? timestamp
+		: (typeof timestamp === 'string' ? parseInt(timestamp, 10) : Number(timestamp));
 
 	if (isNaN(timestampNum) || timestampNum <= 0) return '';
 
@@ -56,73 +80,94 @@ function formatTime(timestamp) {
 }
 
 /**
- * 智能排序缓存（避免频繁查询IndexedDB）
+ * 解析当前的排序查询参数
+ * @returns {string} 排序参数字符串，如 ?sort=name_asc
  */
-let sortCache = {
-	viewedPaths: null,
-	timestamp: 0,
-	CACHE_TTL: 30000 // ✅ 优化3: 5秒 → 30秒缓存有效期
-};
+function resolveActiveSortQuery() {
+	const currentSort = state.currentSort && state.currentSort !== 'smart' ? state.currentSort : null;
+	const entrySort = state.entrySort && state.entrySort !== 'smart' ? state.entrySort : null;
+	const activeSort = currentSort || entrySort;
+	if (activeSort) return `?sort=${activeSort}`;
+	const hash = window.location.hash || '';
+	const questionMarkIndex = hash.indexOf('?');
+	return questionMarkIndex !== -1 ? hash.substring(questionMarkIndex) : '';
+}
 
 /**
- * 根据已查看状态对相册进行排序
- * 优化版：避免与后端排序冲突，仅在必要时执行
- * 
- * 排序逻辑说明：
- * - smart + 根目录：后端按时间排序 + 前端按查看状态分组（未查看优先）
- * - smart + 子目录：后端已按浏览时间排序，前端跳过（避免冲突）
- * - viewed_desc：后端已排序，前端辅助增强
- * - name/mtime：后端完全处理，前端跳过
+ * 路径字符串按分隔符逐级编码，适用于 hash URL
+ * @param {string} path
+ * @returns {string} 编码后的路径
  */
-export async function sortAlbumsByViewed() {
-	const hash = window.location.hash;
-	const questionMarkIndex = hash.indexOf('?');
-	const urlParams = new URLSearchParams(questionMarkIndex !== -1 ? hash.substring(questionMarkIndex) : '');
-	const currentSort = urlParams.get('sort') || 'smart';
-	
-	// ✅ 优化2: viewed_desc也启用前端增强排序
-	const shouldSort = currentSort === 'smart' || currentSort === 'viewed_desc';
-	if (!shouldSort) return;
-	
-	// ✅ 优化1: 检测是否为子目录（后端已处理浏览排序，避免冲突）
-	const pathPart = hash.split('?')[0].substring(2); // 移除 '#/'
-	const isSubdirectory = pathPart.length > 0;
-	
-	// smart模式下，子目录已由后端排序，前端跳过（避免冲突和性能浪费）
-	if (currentSort === 'smart' && isSubdirectory) {
-		return;
+function encodePathForHash(path) {
+	return path.split('/').map(encodeURIComponent).join('/');
+}
+
+/**
+ * 清除排序缓存（保留 API 但无实际操作，兼容调用）
+ */
+export function clearSortCache() {}
+
+/**
+ * 确保排序按钮容器节点位于设置按钮之前
+ * @param {HTMLElement} sortContainer 排序按钮父容器
+ * @returns {HTMLElement} 已创建或复用的排序容器
+ */
+function ensureSortWrapperElement(sortContainer) {
+	const settingsBtn = sortContainer.querySelector('#settings-btn');
+	let sortWrapper = sortContainer.querySelector('#sort-wrapper');
+	if (!sortWrapper) {
+		sortWrapper = document.createElement('div');
+		sortWrapper.id = 'sort-wrapper';
+		sortWrapper.className = 'relative';
+		safeSetStyle(sortWrapper, {
+			display: 'inline-block',
+			position: 'relative'
+		});
 	}
-	
-	// 使用30秒缓存，避免频繁查询IndexedDB
-	const now = Date.now();
-	if (!sortCache.viewedPaths || now - sortCache.timestamp > sortCache.CACHE_TTL) {
-		const viewedAlbumsData = await getAllViewed();
-		sortCache.viewedPaths = viewedAlbumsData.map(item => item.path);
-		sortCache.timestamp = now;
+	if (settingsBtn) {
+		sortContainer.insertBefore(sortWrapper, settingsBtn);
+	} else if (!sortWrapper.parentNode) {
+		sortContainer.appendChild(sortWrapper);
 	}
-	
-	const viewedAlbumPaths = sortCache.viewedPaths;
-	const albumElements = Array.from(safeQuerySelectorAll('.album-link'));
-	
-	// 如果没有相册元素，直接返回
-	if (albumElements.length === 0) return;
-	
-	// 排序：未查看的相册排在前面
-	albumElements.sort((a, b) => {
-		const viewedA = viewedAlbumPaths.includes(a.dataset.path);
-		const viewedB = viewedAlbumPaths.includes(b.dataset.path);
-		if (viewedA && !viewedB) return 1;  // 已查看后置
-		if (!viewedA && viewedB) return -1; // 未查看前置
-		return 0; // 同类保持原序（后端排序）
-	});
-	
-	const grid = elements.contentGrid;
-	if (!grid) return;
-	
-	// 使用DocumentFragment批量插入，避免多次reflow
-	const fragment = document.createDocumentFragment();
-	albumElements.forEach(el => fragment.appendChild(el));
-	grid.appendChild(fragment); // 单次DOM操作，触发1次reflow
+	return sortWrapper;
+}
+
+/**
+ * 确保排序分隔线节点紧邻排序按钮
+ * @param {HTMLElement} sortContainer
+ */
+function ensureLayoutDividerElement(sortContainer) {
+	const sortWrapper = sortContainer.querySelector('#sort-wrapper');
+	let divider = sortContainer.querySelector('.layout-divider');
+	if (!divider) {
+		divider = document.createElement('div');
+		divider.className = 'layout-divider';
+	}
+	const referenceNode = sortWrapper || sortContainer.querySelector('#settings-btn');
+	if (referenceNode) {
+		sortContainer.insertBefore(divider, referenceNode);
+	} else if (!divider.parentNode) {
+		sortContainer.appendChild(divider);
+	}
+}
+
+/**
+ * 移除排序相关 DOM 节点，清除冗余空白
+ * @param {HTMLElement} sortContainer
+ */
+export function removeSortControls(sortContainer) {
+	const container =
+		sortContainer
+		|| elements.sortContainer
+		|| document.querySelector('#topbar .flex.items-center.space-x-1')
+		|| safeGetElementById('sort-container');
+	if (!container) return;
+
+	const sortWrapper = container.querySelector('#sort-wrapper') || document.getElementById('sort-wrapper');
+	if (sortWrapper) sortWrapper.remove();
+
+	const divider = container.querySelector('.layout-divider');
+	if (divider) divider.remove();
 }
 
 /**
@@ -132,20 +177,15 @@ export async function sortAlbumsByViewed() {
 export function renderBreadcrumb(path) {
 	const breadcrumbNav = elements.breadcrumbNav;
 	if (!breadcrumbNav) return;
-	
+
 	const parts = path ? path.split('/').filter(p => p) : [];
 	let currentPath = '';
-	let sortParam = '';
-	if (state.entrySort && state.entrySort !== 'smart') sortParam = `?sort=${state.entrySort}`; else {
-		const hash = window.location.hash;
-		const questionMarkIndex = hash.indexOf('?');
-		sortParam = questionMarkIndex !== -1 ? hash.substring(questionMarkIndex) : '';
-	}
-	
-	// 确保 breadcrumbLinks 和 sortContainer 存在
+	const sortParam = resolveActiveSortQuery();
+
+	// 确保必要节点存在
 	let breadcrumbLinks = breadcrumbNav.querySelector('#breadcrumb-links');
 	let sortContainer = breadcrumbNav.querySelector('#sort-container');
-	
+
 	if (!breadcrumbLinks || !sortContainer) {
 		// 初始化：清空并重建结构
 		while (breadcrumbNav.firstChild) {
@@ -155,115 +195,135 @@ export function renderBreadcrumb(path) {
 		sortContainer = createElement('div', { classes: ['flex-shrink-0', 'ml-4'], attributes: { id: 'sort-container' } });
 		breadcrumbNav.append(breadcrumbLinks, sortContainer);
 	}
-	
-	// ✅ 首页不显示面包屑导航，只清空 breadcrumbLinks，保留 sortContainer
+
+	// 首页显示 icon.svg 图标，点击返回主页
 	if (!path || path === '') {
 		while (breadcrumbLinks.firstChild) {
 			breadcrumbLinks.removeChild(breadcrumbLinks.firstChild);
 		}
+		const homeLink = createElement('a', {
+			classes: ['flex', 'items-center', 'transition-opacity', 'hover:opacity-70'],
+			attributes: { href: '#/', title: '首页' }
+		});
+		const iconImg = createElement('img', {
+			classes: ['w-6', 'h-6'],
+			attributes: { src: 'assets/icon.svg', alt: 'Photonix' }
+		});
+		const brandText = createElement('span', {
+			classes: ['ml-2', 'font-bold', 'text-lg', 'tracking-tight', 'text-gray-900'],
+			textContent: 'Photonix'
+		});
+		homeLink.appendChild(iconImg);
+		homeLink.appendChild(brandText);
+		breadcrumbLinks.appendChild(homeLink);
 		return;
 	}
-	const container = createElement('div', { classes: ['flex', 'flex-wrap', 'items-center'] });
-	
-	// 如果来自搜索页，添加"返回搜索"链接
+	const container = createElement('div', { classes: ['flex', 'items-center', 'whitespace-nowrap'] });
+
+	// 若来源自搜索页，添加返回搜索链接
 	if (state.fromSearchHash) {
-		const searchLink = createElement('a', { 
-			classes: ['text-purple-400', 'hover:text-purple-300', 'flex', 'items-center'],
+		const searchLink = createElement('a', {
+			classes: ['breadcrumb-link', 'text-gray-500', 'hover:text-black', 'flex', 'items-center', 'transition-colors'],
 			attributes: { href: state.fromSearchHash, title: '返回搜索结果' }
 		});
 		searchLink.appendChild(createBackArrow());
-		searchLink.appendChild(document.createTextNode('搜索'));
-		
+		searchLink.appendChild(document.createTextNode('返回'));
 		container.appendChild(searchLink);
-		container.appendChild(createElement('span', { classes: ['mx-2', 'text-gray-500'], textContent: '|' }));
+		container.appendChild(createElement('span', { classes: ['mx-2', 'text-gray-300'], textContent: '|' }));
 	}
-	
-	container.appendChild(createElement('a', { classes: ['text-purple-400', 'hover:text-purple-300'], attributes: { href: `#/${sortParam}` }, textContent: '首页' }));
+
+	// 添加“首页”
+	container.appendChild(createElement('a', {
+		classes: ['text-gray-500', 'hover:text-black', 'transition-colors'],
+		attributes: { href: `#/${sortParam}` },
+		textContent: '首页'
+	}));
 	parts.forEach((part, index) => {
 		currentPath += (currentPath ? '/' : '') + part;
 		const isLast = index === parts.length - 1;
-		container.appendChild(createElement('span', { classes: ['mx-2'], textContent: '/' }));
+		container.appendChild(createElement('span', { classes: ['mx-2', 'text-gray-300'], textContent: '/' }));
 		if (isLast) {
-			container.appendChild(createElement('span', { classes: ['text-white'], textContent: decodeURIComponent(part) }));
+			container.appendChild(createElement('span', { classes: ['text-black', 'font-bold'], textContent: decodeURIComponent(part) }));
 		} else {
-			container.appendChild(createElement('a', { classes: ['text-purple-400', 'hover:text-purple-300'], attributes: { href: `#/${encodeURIComponent(currentPath)}${sortParam}` }, textContent: decodeURIComponent(part) }));
+			container.appendChild(createElement('a', {
+				classes: ['text-gray-500', 'hover:text-black', 'transition-colors'],
+				attributes: { href: `#/${encodeURIComponent(currentPath)}${sortParam}` },
+				textContent: decodeURIComponent(part)
+			}));
 		}
 	});
-	// XSS 安全：使用 DOM 操作替代 innerHTML
-	while (breadcrumbLinks.firstChild) {
-		breadcrumbLinks.removeChild(breadcrumbLinks.firstChild);
-	}
+	// DOM 安全清空插入
+	while (breadcrumbLinks.firstChild) breadcrumbLinks.removeChild(breadcrumbLinks.firstChild);
 	breadcrumbLinks.appendChild(container);
+
 	setTimeout(() => {
 		const sortContainer = elements.sortContainer;
-		if (sortContainer) {
-			// 不清空容器，避免闪烁
-			let toggleWrap = sortContainer.querySelector('#layout-toggle-wrap');
-			if (!toggleWrap) {
-				const toggle = createLayoutToggle();
-				sortContainer.appendChild(toggle.container);
-				toggleWrap = toggle.container;
+		if (!sortContainer) return;
+
+		// 确保布局切换按钮存在
+		let toggleWrap = sortContainer.querySelector('#layout-toggle-wrap');
+		if (!toggleWrap) {
+			const toggle = createLayoutToggle();
+			if (toggle?.button) {
+				toggleWrap = document.createElement('div');
+				toggleWrap.id = 'layout-toggle-wrap';
+				toggleWrap.className = 'relative';
+				const settingsBtn = sortContainer.querySelector('#settings-btn');
+				if (settingsBtn) {
+					sortContainer.insertBefore(toggleWrap, settingsBtn);
+				} else {
+					sortContainer.appendChild(toggleWrap);
+				}
+				toggleWrap.appendChild(toggle.button);
 			}
-			// 分割线
-			if (!sortContainer.querySelector('.layout-divider')) {
-				const divider = document.createElement('div');
-				divider.className = 'layout-divider';
-				sortContainer.appendChild(divider);
-			}
-			// 排序下拉专用容器
-			let sortWrapper = sortContainer.querySelector('#sort-wrapper');
-			if (!sortWrapper) {
-				sortWrapper = document.createElement('div');
-				sortWrapper.id = 'sort-wrapper';
-				safeSetStyle(sortWrapper, {
-					display: 'inline-block',
-					position: 'relative'
-				});
-				sortContainer.appendChild(sortWrapper);
-			}
-			// 没有媒体文件时才显示排序下拉
-			checkIfHasMediaFiles(path)
-				.then(hasMedia => {
-					if (!hasMedia) {
-						while (sortWrapper.firstChild) {
-							sortWrapper.removeChild(sortWrapper.firstChild);
-						}
-						renderSortDropdown();
-					} else {
-						while (sortWrapper.firstChild) {
-							sortWrapper.removeChild(sortWrapper.firstChild);
-						}
-					}
-				})
-				.catch(() => {
-					while (sortWrapper.firstChild) {
-						sortWrapper.removeChild(sortWrapper.firstChild);
-					}
-					renderSortDropdown();
-				});
 		}
+
+		const shouldRemoveSort = Boolean(state.fromSearchHash || window.location.hash.includes('/search'));
+		if (shouldRemoveSort) {
+			removeSortControls(sortContainer);
+			return;
+		}
+
+		const displaySortDropdown = () => {
+			ensureSortWrapperElement(sortContainer);
+			ensureLayoutDividerElement(sortContainer);
+			renderSortDropdown();
+		};
+
+		checkIfHasMediaFiles(path)
+			.then(hasMedia => {
+				if (hasMedia) {
+					removeSortControls(sortContainer);
+				} else {
+					displaySortDropdown();
+				}
+			})
+			.catch(() => {
+				displaySortDropdown();
+			});
 	}, 100);
 }
 
 /**
- * 渲染相册卡片（安全 DOM 操作）
+ * 渲染相册卡片
  * @param {Object} album 相册数据
- * @returns {HTMLElement} 相册卡片元素
+ * @returns {HTMLElement}
  */
 export function displayAlbum(album) {
 	const aspectRatio = album.coverHeight ? album.coverWidth / album.coverHeight : 1;
 	const timeText = formatTime(album.mtime);
-	let sortParam = '';
-	if (state.entrySort && state.entrySort !== 'smart') sortParam = `?sort=${state.entrySort}`; else {
-		const hash = window.location.hash;
-		const questionMarkIndex = hash.indexOf('?');
-		sortParam = questionMarkIndex !== -1 ? hash.substring(questionMarkIndex) : '';
-	}
-	const img = createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': album.coverUrl, alt: album.name } });
+	const sortParam = resolveActiveSortQuery();
+	const img = createElement('img', {
+		classes: ['w-full', 'h-full', 'object-cover', 'absolute', 'inset-0', 'lazy-image', 'transition-opacity', 'duration-300'],
+		attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': album.coverUrl, alt: album.name }
+	});
 	const albumTitle = createElement('div', { classes: ['album-title'], textContent: album.name });
 	const albumMetaKids = [createElement('span', { classes: ['album-type'], textContent: '相册' })];
 	if (timeText) albumMetaKids.push(createElement('span', { classes: ['album-time'], textContent: timeText }));
-	const infoOverlay = createElement('div', { classes: ['card-info-overlay'], children: [albumTitle, createElement('div', { classes: ['album-meta'], children: albumMetaKids })] });
+	const infoOverlay = createElement('div', {
+		classes: ['card-info-overlay'],
+		children: [albumTitle, createElement('div', { classes: ['album-meta'], children: albumMetaKids })]
+	});
 
 	const deleteTrigger = createElement('button', {
 		classes: ['album-delete-trigger'],
@@ -274,20 +334,41 @@ export function displayAlbum(album) {
 	const deleteCancel = createElement('button', { classes: ['album-delete-cancel'], attributes: { type: 'button' }, textContent: '取消' });
 	const confirmGroup = createElement('div', { classes: ['album-delete-confirm-group'], children: [deleteConfirm, deleteCancel] });
 	const deleteStage = createElement('div', { classes: ['album-delete-stage'], children: [deleteTrigger, confirmGroup] });
-	const deleteOverlay = createElement('div', { classes: ['album-delete-overlay'], attributes: { 'data-state': 'idle', 'data-path': album.path }, children: [deleteStage] });
+	const deleteOverlay = createElement('div', {
+		classes: ['album-delete-overlay'],
+		attributes: { 'data-state': 'idle', 'data-path': album.path },
+		children: [deleteStage]
+	});
 
-	const relativeDiv = createElement('div', { classes: ['relative'], attributes: { style: `aspect-ratio: ${aspectRatio}` }, children: [createElement('div', { classes: ['image-placeholder','absolute','inset-0'] }), img, infoOverlay, deleteOverlay] });
-	const link = createElement('a', { classes: ['album-card','group','block','bg-gray-800','rounded-lg','overflow-hidden','shadow-lg','hover:shadow-purple-500/30','transition-shadow'], attributes: { href: `#/${encodeURIComponent(album.path)}${sortParam}` }, children: [relativeDiv] });
-	return createElement('div', { classes: ['grid-item','album-link'], attributes: { 'data-path': album.path, 'data-width': album.coverWidth || 1, 'data-height': album.coverHeight || 1 }, children: [link] });
+	const relativeDiv = createElement('div', {
+		classes: ['relative'],
+		attributes: { style: `aspect-ratio: ${aspectRatio}` },
+		children: [
+			createElement('div', { classes: ['image-placeholder', 'absolute', 'inset-0'] }),
+			img,
+			infoOverlay,
+			deleteOverlay
+		]
+	});
+	const link = createElement('a', {
+		classes: ['album-card', 'group', 'block', 'bg-white', 'border', 'border-gray-200', 'rounded-lg', 'overflow-hidden', 'shadow-sm', 'hover:shadow-md', 'transition-shadow'],
+		attributes: { href: `#/${encodeURIComponent(album.path)}${sortParam}` },
+		children: [relativeDiv]
+	});
+	return createElement('div', {
+		classes: ['grid-item', 'album-link'],
+		attributes: { 'data-path': album.path, 'data-width': album.coverWidth || 1, 'data-height': album.coverHeight || 1 },
+		children: [link]
+	});
 }
 
 /**
- * 渲染流式媒体项（安全 DOM 操作，增强布局稳定性）
+ * 渲染流式媒体项（图片或视频）
  * @param {string} type 媒体类型
  * @param {Object} mediaData 媒体数据
  * @param {number} index 索引
  * @param {boolean} showTimestamp 是否显示时间戳
- * @returns {HTMLElement} 媒体项元素
+ * @returns {HTMLElement}
  */
 export function displayStreamedMedia(type, mediaData, index, showTimestamp) {
 	const isVideo = type === 'video';
@@ -295,8 +376,8 @@ export function displayStreamedMedia(type, mediaData, index, showTimestamp) {
 		? mediaData.width / mediaData.height
 		: (isVideo ? UI.ASPECT_RATIO.VIDEO_DEFAULT : UI.ASPECT_RATIO.IMAGE_DEFAULT);
 	const timeText = showTimestamp ? formatTime(mediaData.mtime) : '';
-	
-	const placeholderClasses = ['image-placeholder','absolute','inset-0'];
+
+	const placeholderClasses = ['image-placeholder', 'absolute', 'inset-0'];
 	if (!mediaData.height || !mediaData.width) {
 		placeholderClasses.push(`min-h-[${UI.LAYOUT.UNKNOWN_ASPECT_RATIO_MIN_HEIGHT}]`);
 	}
@@ -307,8 +388,12 @@ export function displayStreamedMedia(type, mediaData, index, showTimestamp) {
 	progressHolder.appendChild(svg);
 	loadingOverlay.append(progressHolder);
 	kids.push(loadingOverlay);
+
 	if (isVideo) {
-		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': mediaData.thumbnailUrl, alt: '视频缩略图' } }));
+		kids.push(createElement('img', {
+			classes: ['w-full', 'h-full', 'object-cover', 'absolute', 'inset-0', 'lazy-image', 'transition-opacity', 'duration-300'],
+			attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': mediaData.thumbnailUrl, alt: '视频缩略图' }
+		}));
 		const overlay = createElement('div', { classes: ['video-thumbnail-overlay'] });
 		const playBtn = createElement('div', { classes: ['video-play-button'] });
 		const playSvg = createPlayButton();
@@ -316,42 +401,63 @@ export function displayStreamedMedia(type, mediaData, index, showTimestamp) {
 		overlay.append(playBtn);
 		kids.push(overlay);
 	} else {
-		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': mediaData.thumbnailUrl, alt: '图片缩略图' } }));
+		kids.push(createElement('img', {
+			classes: ['w-full', 'h-full', 'object-cover', 'absolute', 'inset-0', 'lazy-image', 'transition-opacity', 'duration-300'],
+			attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': mediaData.thumbnailUrl, alt: '图片缩略图' }
+		}));
 	}
-	if (timeText) kids.push(createElement('div', { classes: ['absolute','bottom-2','right-2','bg-black/50','text-white','text-sm','px-2','py-1','rounded','shadow-lg'], textContent: timeText }));
-	// ✅ 修复：移除min-height，让容器高度完全由aspect-ratio决定
-	// min-height会导致瀑布流布局计算错误，引发元素重叠
+	// 时间浮层
+	if (timeText) {
+		kids.push(createElement('div', {
+			classes: ['absolute', 'bottom-2', 'right-2', 'bg-black/50', 'text-white', 'text-sm', 'px-2', 'py-1', 'rounded', 'shadow-lg'],
+			textContent: timeText
+		}));
+	}
+	// 容器 aspect-ratio 保持原始比例
 	const containerStyle = `aspect-ratio: ${aspectRatio};`;
-	const relativeDiv = createElement('div', { 
-		classes: ['relative','w-full','h-full'], 
+	const relativeDiv = createElement('div', {
+		classes: ['relative', 'w-full', 'h-full'],
 		attributes: {
 			style: containerStyle,
 			'data-aspect-ratio': aspectRatio.toFixed(MATH.ASPECT_RATIO_PRECISION),
 			'data-original-width': mediaData.width || 0,
 			'data-original-height': mediaData.height || 0
-		}, 
-		children: kids 
+		},
+		children: kids
 	});
-	const photoItem = createElement('div', { classes: ['photo-item','group','block','bg-gray-800','rounded-lg','overflow-hidden','cursor-pointer'], children: [relativeDiv] });
-	return createElement('div', { classes: ['grid-item','photo-link'], attributes: { 'data-url': mediaData.originalUrl, 'data-index': index, 'data-width': mediaData.width, 'data-height': mediaData.height }, children: [photoItem] });
+	const photoItem = createElement('div', {
+		classes: ['photo-item', 'group', 'block', 'bg-white', 'border', 'border-gray-200', 'rounded-lg', 'overflow-hidden', 'cursor-pointer'],
+		children: [relativeDiv]
+	});
+	return createElement('div', {
+		classes: ['grid-item', 'photo-link'],
+		attributes: { 'data-url': mediaData.originalUrl, 'data-index': index, 'data-width': mediaData.width, 'data-height': mediaData.height },
+		children: [photoItem]
+	});
 }
 
 /**
- * 渲染搜索结果媒体项（安全 DOM 操作）
+ * 渲染搜索结果媒体项
  * @param {Object} result 搜索结果
  * @param {number} index 索引
- * @returns {HTMLElement} 媒体项元素
+ * @returns {HTMLElement}
  */
 export function displaySearchMedia(result, index) {
 	const isVideo = result.type === 'video';
 	const timeText = formatTime(result.mtime);
 	const aspectRatio = result.height ? result.width / result.height : 1;
 	const kids = [
-		createElement('div', { classes: ['image-placeholder','absolute','inset-0'] }),
-		createElement('div', { classes: ['loading-overlay'], children: [createElement('div', { classes: ['progress-circle'] })] })
+		createElement('div', { classes: ['image-placeholder', 'absolute', 'inset-0'] }),
+		createElement('div', {
+			classes: ['loading-overlay'],
+			children: [createElement('div', { classes: ['progress-circle'] })]
+		})
 	];
 	if (isVideo) {
-		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': result.thumbnailUrl, alt: `视频缩略图：${result.name}` } }));
+		kids.push(createElement('img', {
+			classes: ['w-full', 'h-full', 'object-cover', 'absolute', 'inset-0', 'lazy-image', 'transition-opacity', 'duration-300'],
+			attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': result.thumbnailUrl, alt: `视频缩略图：${result.name}` }
+		}));
 		const overlay = createElement('div', { classes: ['video-thumbnail-overlay'] });
 		const playBtn = createElement('div', { classes: ['video-play-button'] });
 		const playSvg = createPlayButton();
@@ -359,37 +465,56 @@ export function displaySearchMedia(result, index) {
 		overlay.append(playBtn);
 		kids.push(overlay);
 	} else {
-		kids.push(createElement('img', { classes: ['w-full','h-full','object-cover','absolute','inset-0','lazy-image','transition-opacity','duration-300'], attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': result.thumbnailUrl, alt: result.name } }));
+		kids.push(createElement('img', {
+			classes: ['w-full', 'h-full', 'object-cover', 'absolute', 'inset-0', 'lazy-image', 'transition-opacity', 'duration-300'],
+			attributes: { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E", 'data-src': result.thumbnailUrl, alt: result.name }
+		}));
 	}
-	// 为所有媒体添加时间戳（视频和图片）
-	if (timeText) kids.push(createElement('div', { classes: ['absolute','bottom-2','right-2','bg-black/50','text-white','text-sm','px-2','py-1','rounded','shadow-lg'], textContent: timeText }));
-	
-	// 使用动态aspect-ratio保持原始比例，确保播放按钮居中
+	// 时间浮层（视频和图片都显示）
+	if (timeText) {
+		kids.push(createElement('div', {
+			classes: ['absolute', 'bottom-2', 'right-2', 'bg-black/50', 'text-white', 'text-sm', 'px-2', 'py-1', 'rounded', 'shadow-lg'],
+			textContent: timeText
+		}));
+	}
+
 	const containerStyle = `aspect-ratio: ${aspectRatio};`;
-	const relativeDiv = createElement('div', { 
-		classes: ['relative','w-full','h-full'], 
+	const relativeDiv = createElement('div', {
+		classes: ['relative', 'w-full', 'h-full'],
 		attributes: {
 			style: containerStyle,
 			'data-aspect-ratio': aspectRatio.toFixed(2),
 			'data-original-width': result.width || 0,
 			'data-original-height': result.height || 0
-		}, 
-		children: kids 
+		},
+		children: kids
 	});
-	
-	// 视频和图片都使用photo-item类，保持一致性
-	const card = createElement('div', { classes: ['photo-item','group','block','bg-gray-800','rounded-lg','overflow-hidden','cursor-pointer'], children: [relativeDiv] });
-	
-	// 在卡片下方显示文件名（视频和图片都显示）
-	const nameDiv = createElement('div', { classes: ['mt-2'], children: [createElement('p', { classes: ['text-xs','text-gray-400','truncate'], textContent: result.name })] });
-	const attrs = { 'data-url': result.originalUrl, 'data-index': index, 'data-width': result.width || 1, 'data-height': result.height || 1 };
-	return createElement('div', { classes: ['grid-item','photo-link'], attributes: attrs, children: nameDiv ? [card, nameDiv] : [card] });
+
+	const card = createElement('div', {
+		classes: ['photo-item', 'group', 'block', 'bg-white', 'border', 'border-gray-200', 'rounded-lg', 'overflow-hidden', 'cursor-pointer'],
+		children: [relativeDiv]
+	});
+	const nameDiv = createElement('div', {
+		classes: ['mt-2'],
+		children: [createElement('p', { classes: ['text-xs', 'text-gray-400', 'truncate'], textContent: result.name })]
+	});
+	const attrs = {
+		'data-url': result.originalUrl,
+		'data-index': index,
+		'data-width': result.width || 1,
+		'data-height': result.height || 1
+	};
+	return createElement('div', {
+		classes: ['grid-item', 'photo-link'],
+		attributes: attrs,
+		children: nameDiv ? [card, nameDiv] : [card]
+	});
 }
 
 /**
- * 渲染浏览网格（批量优化，返回 DOM 元素数组）
+ * 渲染浏览网格（返回 DOM 元素集合）
  * @param {Array} items 项目数组
- * @param {number} currentPhotoCount 当前图片计数
+ * @param {number} currentPhotoCount 当前照片计数
  * @returns {Object} { contentElements, newMediaUrls, fragment }
  */
 export function renderBrowseGrid(items, currentPhotoCount) {
@@ -414,9 +539,9 @@ export function renderBrowseGrid(items, currentPhotoCount) {
 }
 
 /**
- * 渲染搜索网格（批量优化，返回 DOM 元素数组）
+ * 渲染搜索网格（返回 DOM 元素集合）
  * @param {Array} results 搜索结果数组
- * @param {number} currentPhotoCount 当前图片计数
+ * @param {number} currentPhotoCount 当前照片计数
  * @returns {Object} { contentElements, newMediaUrls, fragment }
  */
 export function renderSearchGrid(results, currentPhotoCount) {
@@ -447,222 +572,244 @@ export function renderSortDropdown() {
 	const sortContainer = elements.sortContainer;
 	if (!sortContainer) return;
 
-	// ✅ 不再创建布局切换按钮，由 renderLayoutToggleOnly() 统一管理
-	// 只检查按钮是否存在，如果不存在则警告
-	const toggleWrap = sortContainer.querySelector('#layout-toggle-wrap');
-	if (!toggleWrap) {
-		console.warn('[UI] 布局切换按钮不存在，应该先调用 renderLayoutToggleOnly()');
-	}
-	let sortWrapper = sortContainer.querySelector('#sort-wrapper');
-	if (!sortWrapper) {
-		sortWrapper = document.createElement('div');
-		sortWrapper.id = 'sort-wrapper';
-		safeSetStyle(sortWrapper, {
-			position: 'relative',
-			display: 'inline-block'
-		});
-		sortContainer.appendChild(sortWrapper);
-	}
+	const sortWrapper = ensureSortWrapperElement(sortContainer);
+	ensureLayoutDividerElement(sortContainer);
+
+	// 清空 sortWrapper
 	while (sortWrapper.firstChild) {
 		sortWrapper.removeChild(sortWrapper.firstChild);
 	}
-	const sortOptions = { smart: '🧠 智能', name: '📝 名称', mtime: '📅 日期', viewed_desc: '👁️ 访问' };
+
+	// 当前排序参数
 	const hash = window.location.hash;
 	const questionMarkIndex = hash.indexOf('?');
 	const urlParams = new URLSearchParams(questionMarkIndex !== -1 ? hash.substring(questionMarkIndex) : '');
-	const currentSort = urlParams.get('sort') || 'smart';
+	const currentSort = urlParams.get('sort') || 'mtime_desc';
 
-	function getCurrentOption(sortValue) {
-		if (sortValue === 'name_asc' || sortValue === 'name_desc') return 'name';
-		if (sortValue === 'mtime_asc' || sortValue === 'mtime_desc') return 'mtime';
-		return sortValue;
-	}
-
-	function getSortDisplayText(sortValue) {
-		switch (sortValue) {
-			case 'smart': return '智能';
-			case 'name_asc':
-			case 'name_desc': return '名称';
-			case 'mtime_desc':
-			case 'mtime_asc': return '日期';
-			case 'viewed_desc': return '访问';
-			default: return '智能';
+	// 排序选项定义
+	const sortOptions = {
+		'name_asc': {
+			label: '名称 (A-Z)',
+			icon: '<svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M18 15V5M18 5L22 9M18 5L14 9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 10L6 4L8 10M5.1 8H6.9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 14H8L4 20H8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+		},
+		'name_desc': {
+			label: '名称 (Z-A)',
+			icon: '<svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M18 9V19M18 19L22 15M18 19L14 15" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 20L6 14L8 20M5.1 18H6.9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 4H8L4 10H8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+		},
+		'mtime_desc': {
+			label: '日期 (最新)',
+			icon: '<svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>'
+		},
+		'mtime_asc': {
+			label: '日期 (最早)',
+			icon: '<svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>'
+		},
+		'viewed_desc': {
+			label: '最近浏览',
+			icon: '<svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>'
 		}
+	};
+
+	// 排序按钮
+	const sortButton = document.createElement('button');
+	sortButton.id = 'sort-btn';
+	sortButton.className = 'p-2 rounded-lg text-gray-600 hover:text-black hover:bg-gray-100 transition-all group relative';
+	sortButton.setAttribute('aria-expanded', 'false');
+
+	// 设置当前选中图标
+	const currentOption = sortOptions[currentSort] || sortOptions['mtime_desc'];
+	const isSortDisabled = currentSort === 'smart';
+	sortButton.innerHTML = `<svg id="current-sort-icon" class="w-5 h-5 transition-transform duration-300 group-hover:scale-110" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">${currentOption.icon.replace(/<svg[^>]*>|<\/svg>/g, '')}</svg>`;
+	if (isSortDisabled) {
+		sortButton.classList.add('opacity-40', 'cursor-not-allowed');
+		sortButton.title = '智能排序时无法切换';
 	}
 
-	const currentOption = getCurrentOption(currentSort);
+	// 排序下拉菜单
+	const sortMenu = document.createElement('div');
+	sortMenu.id = 'sort-menu';
+	sortMenu.className = 'hidden absolute right-0 mt-2 w-48 bg-white border border-gray-100 rounded-xl shadow-[0_10px_25px_-5px_rgba(0,0,0,0.1)] py-2 z-50 origin-top-right opacity-0 scale-95 transition-all';
 
-	const sortDisplay = createElement('span', { attributes: { id: 'sort-display' }, textContent: getSortDisplayText(currentSort) });
-    const iconContainer = createElement('div', { classes: ['w-3','h-3','sm:w-4','sm:h-4','text-gray-400', 'transition-transform', 'duration-200'] });
-    const isAscending = currentSort.endsWith('_asc');
-    const svg = createSortArrow(isAscending);
-    iconContainer.appendChild(svg);
+	// 菜单标题
+	const menuTitle = document.createElement('div');
+	menuTitle.className = 'px-4 py-2 text-[10px] font-bold text-gray-400 uppercase tracking-widest';
+	menuTitle.textContent = '排序方式';
+	sortMenu.appendChild(menuTitle);
 
-	const sortButton = createElement('button', { 
-        classes: ['bg-gray-800','border','border-gray-700','text-white','text-sm','rounded-lg','focus:ring-purple-500','focus:border-purple-500','block','w-20','p-1.5','sm:p-2.5','transition-colors','hover:border-purple-500','cursor-pointer','flex','items-center','justify-between'], 
-        attributes: { id: 'sort-button', 'aria-expanded': 'false' }, 
-        children: [sortDisplay, iconContainer] 
-    });
+	// 排序选项
+	Object.entries(sortOptions).forEach(([value, config]) => {
+		const option = document.createElement('button');
+		option.className = 'w-full text-left px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-50 hover:text-black transition-colors flex items-center gap-3';
+		option.setAttribute('data-sort', value);
+		if (value === currentSort) {
+			option.classList.add('bg-gray-100', 'text-black');
+		}
 
-	const dropdownOptions = Object.entries(sortOptions).map(([value, label]) => createElement('button', { classes: ['sort-option','w-full','text-left','px-3','py-2','text-sm','text-white','hover:bg-gray-700','transition-colors',...(currentOption === value ? ['bg-purple-600'] : [])], attributes: { 'data-value': value }, textContent: label }));
-	const sortDropdown = createElement('div', { classes: ['absolute','top-full','right-0','mt-1','bg-gray-800','border','border-gray-700','rounded-lg','shadow-lg','z-50','hidden','w-full'], attributes: { id: 'sort-dropdown' }, children: dropdownOptions });
-	const container = createElement('div', { classes: ['relative','inline-flex','items-center'], children: [sortButton, sortDropdown] });
-	sortWrapper.appendChild(container);
+		option.innerHTML = config.icon + `<span>${config.label}</span>`;
 
-	sortButton.addEventListener('click', (e) => { 
-        e.stopPropagation(); 
-        const isHidden = safeClassList(sortDropdown, 'toggle', 'hidden');
-        sortButton.setAttribute('aria-expanded', !isHidden);
-        safeClassList(iconContainer, 'toggle', 'rotate-180', !isHidden);
-    });
-
-	dropdownOptions.forEach(option => {
 		option.addEventListener('click', (e) => {
 			e.stopPropagation();
-			let newSort = option.dataset.value;
-			if (newSort === 'name') newSort = currentSort === 'name_asc' ? 'name_desc' : 'name_asc';
-			else if (newSort === 'mtime') newSort = currentSort === 'mtime_desc' ? 'mtime_asc' : 'mtime_desc';
-			
-            const newHash = `${window.location.hash.split('?')[0]}?sort=${newSort}`;
-			
-            sortDisplay.textContent = getSortDisplayText(newSort);
+			sortMenu.querySelectorAll('button[data-sort]').forEach(btn => {
+				btn.classList.remove('bg-gray-100', 'text-black');
+			});
+			option.classList.add('bg-gray-100', 'text-black');
 
-			dropdownOptions.forEach(opt => safeClassList(opt, 'remove', 'bg-purple-600'));
-			safeClassList(option, 'add', 'bg-purple-600');
-			safeClassList(sortDropdown, 'add', 'hidden');
-            sortButton.setAttribute('aria-expanded', 'false');
-            safeClassList(iconContainer, 'remove', 'rotate-180');
+			// 更新 URL 到新排序值
+			const currentHash = window.location.hash;
+			const newHash = `${currentHash.split('?')[0]}?sort=${value}`;
 
-			if (window.location.hash !== newHash) window.location.hash = newHash;
+			// 更新按钮的当前图标
+			const iconContainer = sortButton.querySelector('#current-sort-icon');
+			if (iconContainer) {
+				iconContainer.innerHTML = config.icon.replace(/<svg[^>]*>|<\/svg>/g, '');
+			}
+
+			// 关闭菜单
+			sortMenu.classList.add('hidden', 'opacity-0', 'scale-95');
+			sortMenu.classList.remove('opacity-100', 'scale-100');
+			sortButton.setAttribute('aria-expanded', 'false');
+
+			// 跳转到新 URL
+			if (window.location.hash !== newHash) {
+				window.location.hash = newHash;
+			}
 		});
+
+		sortMenu.appendChild(option);
+
+		// 日期类选项后补分隔线
+		if (value === 'mtime_asc') {
+			const divider = document.createElement('div');
+			divider.className = 'h-px bg-gray-100 my-1 mx-2';
+			sortMenu.appendChild(divider);
+		}
 	});
 
+	// 添加按钮与菜单至容器
+	sortWrapper.appendChild(sortButton);
+	sortWrapper.appendChild(sortMenu);
+
+	// 按钮点击展开菜单
+	sortButton.addEventListener('click', (e) => {
+		if (isSortDisabled) {
+			e.preventDefault();
+			return;
+		}
+		e.stopPropagation();
+		const isHidden = sortMenu.classList.contains('hidden');
+		if (isHidden) {
+			sortMenu.classList.remove('hidden');
+			requestAnimationFrame(() => {
+				sortMenu.classList.remove('opacity-0', 'scale-95');
+				sortMenu.classList.add('opacity-100', 'scale-100');
+			});
+		} else {
+			sortMenu.classList.remove('opacity-100', 'scale-100');
+			sortMenu.classList.add('opacity-0', 'scale-95');
+			setTimeout(() => sortMenu.classList.add('hidden'), 200);
+		}
+		sortButton.setAttribute('aria-expanded', isHidden ? 'true' : 'false');
+	});
+
+	// 全局点击关闭菜单
 	document.addEventListener('click', (e) => {
-		if (!sortButton.contains(e.target) && !sortDropdown.contains(e.target)) {
-            safeClassList(sortDropdown, 'add', 'hidden');
-            sortButton.setAttribute('aria-expanded', 'false');
-            safeClassList(iconContainer, 'remove', 'rotate-180');
-        }
+		if (!sortButton.contains(e.target) && !sortMenu.contains(e.target)) {
+			sortMenu.classList.remove('opacity-100', 'scale-100');
+			sortMenu.classList.add('opacity-0', 'scale-95', 'hidden');
+			sortButton.setAttribute('aria-expanded', 'false');
+		}
 	});
 }
 
 /**
- * 仅渲染布局切换按钮到 sort-container（搜索页专用）
- * 避免重复创建按钮导致事件绑定失效
- * @param {boolean} withAnimation - 是否使用动画（相册页为true，首页/目录页为false）
+ * 仅渲染布局切换按钮到 sort-container（仅适用于搜索页，避免绑定丢失）
+ * @param {boolean} withAnimation 是否带入场动画（目录/首页无动画，内容页有动画）
  */
 export function renderLayoutToggleOnly(withAnimation = false) {
-    const sortContainer = elements.sortContainer;
-    if (!sortContainer) {
-        console.log('[UI] sort-container 不存在');
-        return;
-    }
+	const layoutToggleWrap = document.getElementById('layout-toggle-wrap');
+	if (!layoutToggleWrap) {
+		console.log('[UI] layout-toggle-wrap 不存在');
+		return;
+	}
 
-    // ✅ 强制清理所有已存在的布局切换按钮（防止重复）
-    const existingToggles = document.querySelectorAll('#layout-toggle-wrap');
-    if (existingToggles.length > 0) {
-        console.log(`[UI] 检测到${existingToggles.length}个布局切换按钮，全部移除`);
-        existingToggles.forEach(toggle => toggle.remove());
-    }
-    
-    // 同时清理所有分割线
-    const existingDividers = sortContainer.querySelectorAll('.layout-divider');
-    existingDividers.forEach(divider => divider.remove());
-    
-    console.log('[UI] 创建新的布局切换按钮');
+	layoutToggleWrap.innerHTML = '';
+	console.log('[UI] 创建新的布局切换按钮');
 
-    requestAnimationFrame(() => {
-        try {
-            const toggle = createLayoutToggle();
-            if (!toggle || !toggle.container) {
-                uiLogger.warn('创建布局切换按钮失败');
-                return;
-            }
+	requestAnimationFrame(() => {
+		try {
+			const toggle = createLayoutToggle();
+			if (!toggle || !toggle.button) {
+				uiLogger.warn('创建布局切换按钮失败');
+				return;
+			}
 
-            // ✅ 使用 prepend 确保按钮在最前面
-            sortContainer.prepend(toggle.container);
+			// 插入按钮
+			layoutToggleWrap.appendChild(toggle.button);
 
-            // 分割线也插入到前面（但在按钮后面）
-            const divider = document.createElement('div');
-            divider.className = 'layout-divider';
-            // 插入到按钮后面
-            if (toggle.container.nextSibling) {
-                sortContainer.insertBefore(divider, toggle.container.nextSibling);
-            } else {
-                sortContainer.appendChild(divider);
-            }
-
-            // ✅ 根据参数决定是否使用动画
-            if (withAnimation) {
-                // 相册页：使用动画
-                sortContainer.offsetHeight; // 强制重绘
-                requestAnimationFrame(() => {
-                    safeClassList(toggle.container, 'add', 'visible');
-                });
-            } else {
-                // 首页/目录页：直接可见
-                safeClassList(toggle.container, 'add', 'visible');
-            }
-
-        } catch (error) {
-            uiLogger.error('渲染布局切换按钮出错', error);
-        }
-    });
+			// 判断动画
+			if (withAnimation) {
+				layoutToggleWrap.offsetHeight; // 强制重绘
+				requestAnimationFrame(() => {
+					safeClassList(layoutToggleWrap, 'add', 'visible');
+				});
+			} else {
+				safeClassList(layoutToggleWrap, 'add', 'visible');
+			}
+		} catch (error) {
+			uiLogger.error('渲染布局切换按钮出错', error);
+		}
+	});
 }
 
 /**
- * 确保布局切换按钮可见
- * 用于修复按钮显示状态
+ * 确保布局切换按钮显示可见
  */
 export function ensureLayoutToggleVisible() {
-    const sortContainer = elements.sortContainer;
-    if (!sortContainer) return;
+	const sortContainer = elements.sortContainer;
+	if (!sortContainer) return;
 
-    const toggleWrap = sortContainer.querySelector('#layout-toggle-wrap');
-    if (toggleWrap && !safeClassList(toggleWrap, 'contains', 'visible')) {
-        // ✅ 直接设置为可见，不使用动画
-        safeClassList(toggleWrap, 'add', 'visible');
-    }
+	const toggleWrap = sortContainer.querySelector('#layout-toggle-wrap');
+	if (toggleWrap && !safeClassList(toggleWrap, 'contains', 'visible')) {
+		// 直接强制可见
+		safeClassList(toggleWrap, 'add', 'visible');
+	}
 }
 
 /**
- * 根据内容长度动态调整滚动优化策略
- * @param {string} path 当前路径
+ * 根据内容长度动态更新页面滚动优化样式类
+ * @param {string} path 路径
  */
 export function adjustScrollOptimization(path) {
-    requestAnimationFrame(() => {
-        const contentGrid = elements.contentGrid;
-        if (!contentGrid) return;
+	requestAnimationFrame(() => {
+		const contentGrid = elements.contentGrid;
+		if (!contentGrid) return;
 
-        const gridItems = contentGrid.querySelectorAll('.grid-item');
-        const viewportHeight = window.innerHeight;
+		const gridItems = contentGrid.querySelectorAll('.grid-item');
+		const viewportHeight = window.innerHeight;
 
-        // 计算内容总高度
-        let totalContentHeight = 0;
-        gridItems.forEach(item => {
-            const rect = item.getBoundingClientRect();
-            totalContentHeight = Math.max(totalContentHeight, rect.bottom);
-        });
+		let totalContentHeight = 0;
+		gridItems.forEach(item => {
+			const rect = item.getBoundingClientRect();
+			totalContentHeight = Math.max(totalContentHeight, rect.bottom);
+		});
 
-        const body = document.body;
+		const body = document.body;
+		safeClassList(body, 'remove', 'has-short-content');
+		safeClassList(body, 'remove', 'has-long-content');
 
-        // 移除旧类
-        safeClassList(body, 'remove', 'has-short-content');
-        safeClassList(body, 'remove', 'has-long-content');
-
-        // 根据内容高度判断并添加相应类
-        if (totalContentHeight > viewportHeight * 1.2) {
-            safeClassList(body, 'add', 'has-long-content');
-        } else {
-            safeClassList(body, 'add', 'has-short-content');
-        }
-    });
+		// 高度判定
+		if (totalContentHeight > viewportHeight * 1.2) {
+			safeClassList(body, 'add', 'has-long-content');
+		} else {
+			safeClassList(body, 'add', 'has-short-content');
+		}
+	});
 }
 
 /**
- * 检查路径是否包含媒体文件
+ * 检查指定路径下是否存在媒体文件（图片或视频）
  * @param {string} path 路径
- * @returns {Promise<boolean>} 是否包含媒体文件
+ * @returns {Promise<boolean>} 是否含有媒体文件
  */
 export async function checkIfHasMediaFiles(path) {
 	try {
@@ -675,157 +822,157 @@ export async function checkIfHasMediaFiles(path) {
 }
 
 /**
- * 创建布局图标
- * @param {string} kind 布局类型（'grid' 或 'masonry'）
- * @returns {SVGElement} SVG 图标元素
+ * 创建布局图标 SVG 元素
+ * @param {string} kind 布局类型（'grid' | 'masonry'）
+ * @returns {SVGElement}
  */
 function createLayoutIcon(kind) {
 	return kind === 'grid' ? createGridIcon() : createMasonryIcon();
 }
 
 /**
- * 返回布局图标的 HTML 字符串（兼容旧用法）
- * @param {string} kind 布局类型（'grid' 或 'masonry'）
- * @returns {string} SVG 图标 HTML 字符串
+ * 返回布局图标的 HTML 字符串
+ * @param {string} kind 布局类型（'grid' | 'masonry'）
+ * @returns {string}
  */
 function iconHtml(kind) {
 	return createLayoutIcon(kind).outerHTML;
 }
 
 /**
- * 初始化 UI 相关的状态订阅
+ * 初始化 UI 状态订阅相关逻辑
  */
 export function initializeUI() {
-    stateManager.subscribe(['layoutMode'], (changedKeys, currentState) => {
-        uiLogger.debug('布局模式已更改', { changedKeys, currentState: currentState.layoutMode });
-        
-        applyLayoutMode();
+	stateManager.subscribe(['layoutMode'], (changedKeys, currentState) => {
+		uiLogger.debug('布局模式已更改', { changedKeys, currentState: currentState.layoutMode });
 
-        // 确保DOM元素是最新的
-        reinitializeElements();
-        const btn = elements.layoutToggleBtn;
-        if (btn) {
-            uiLogger.debug('更新布局切换按钮', { layoutMode: currentState.layoutMode });
-            updateLayoutToggleButton(btn);
-        } else {
-            uiLogger.warn('找不到布局切换按钮元素');
-        }
-    });
+		applyLayoutMode();
+
+		// 确保 elements 最新
+		reinitializeElements();
+		const btn = elements.layoutToggleBtn;
+		if (btn) {
+			uiLogger.debug('更新布局切换按钮', { layoutMode: currentState.layoutMode });
+			updateLayoutToggleButton(btn);
+		} else {
+			uiLogger.warn('找不到布局切换按钮元素');
+		}
+	});
 }
 
 /**
- * 更新布局切换按钮的显示状态
- * @param {HTMLElement} btn 按钮元素
+ * 动态更新布局切换按钮的显示状态
+ * @param {HTMLElement} btn
  */
 export function updateLayoutToggleButton(btn) {
-    try {
-        const isGrid = state.layoutMode === 'grid';
+	try {
+		const isGrid = state.layoutMode === 'grid';
+		while (btn.firstChild) btn.removeChild(btn.firstChild);
 
-        // XSS 安全：安全 DOM 操作替代 innerHTML
-        while (btn.firstChild) {
-            btn.removeChild(btn.firstChild);
-        }
+		const gridIcon = createGridIconNew();
+		const masonryIcon = createMasonryIconNew();
 
-        // 添加图标
-        const icon = createLayoutIcon(isGrid ? 'grid' : 'masonry');
-        btn.appendChild(icon);
+		if (isGrid) {
+			gridIcon.classList.remove('hidden');
+			gridIcon.classList.add('block');
+			masonryIcon.classList.add('hidden');
+			masonryIcon.classList.remove('block');
+		} else {
+			gridIcon.classList.add('hidden');
+			gridIcon.classList.remove('block');
+			masonryIcon.classList.remove('hidden');
+			masonryIcon.classList.add('block');
+		}
 
-        // 添加工具提示文本
-        const tooltipSpan = document.createElement('span');
-        tooltipSpan.className = 'layout-tooltip';
-        tooltipSpan.style.marginLeft = '4px';
-        tooltipSpan.textContent = isGrid ? '瀑布流布局' : '网格布局';
-        btn.appendChild(tooltipSpan);
-
-        btn.setAttribute('aria-pressed', isGrid ? 'true' : 'false');
-    } catch (error) {
-        uiLogger.error('更新布局切换按钮出错', error);
-    }
+		btn.appendChild(gridIcon);
+		btn.appendChild(masonryIcon);
+		btn.setAttribute('aria-pressed', isGrid ? 'true' : 'false');
+	} catch (error) {
+		uiLogger.error('更新布局切换按钮出错', error);
+	}
 }
 
 /**
  * 创建布局切换按钮（网格/瀑布流）
- * @returns {Object} { container, button }
+ * @returns {Object} { button: HTMLElement }
  */
 function createLayoutToggle() {
-	const wrap = createElement('div', { attributes: { id: 'layout-toggle-wrap' }, classes: ['relative','inline-flex','items-center','mr-2'] });
 	const btn = createElement('button', {
-		classes: ['bg-gray-800','border','border-gray-700','text-white','text-sm','rounded-lg','focus:ring-purple-500','focus:border-purple-500','px-2.5','py-1.5','transition-colors','hover:border-purple-500','cursor-pointer','flex','items-center','gap-1'],
+		classes: ['p-2', 'rounded-lg', 'text-gray-600', 'hover:text-black', 'hover:bg-gray-100', 'transition-all', 'relative', 'group'],
 		attributes: { id: 'layout-toggle-btn', type: 'button', 'aria-pressed': state.layoutMode === 'grid' ? 'true' : 'false' }
 	});
 	function updateLabel() {
 		const isGrid = state.layoutMode === 'grid';
 		safeSetInnerHTML(btn, '');
-		const icon = createLayoutIcon(isGrid ? 'grid' : 'masonry');
-		btn.appendChild(icon);
-		const tooltipSpan = document.createElement('span');
-		tooltipSpan.className = 'layout-tooltip';
-		tooltipSpan.style.marginLeft = '4px';
-		tooltipSpan.textContent = isGrid ? '瀑布流布局' : '网格布局';
-		btn.appendChild(tooltipSpan);
+		const gridIcon = createGridIconNew();
+		const masonryIcon = createMasonryIconNew();
+
+		if (isGrid) {
+			gridIcon.classList.remove('hidden');
+			gridIcon.classList.add('block');
+			masonryIcon.classList.add('hidden');
+			masonryIcon.classList.remove('block');
+		} else {
+			gridIcon.classList.add('hidden');
+			gridIcon.classList.remove('block');
+			masonryIcon.classList.remove('hidden');
+			masonryIcon.classList.add('block');
+		}
+
+		btn.appendChild(gridIcon);
+		btn.appendChild(masonryIcon);
 		btn.setAttribute('aria-pressed', isGrid ? 'true' : 'false');
 	}
-	// 不再直接绑定事件，改用事件委托（在 listeners.js 中处理）
-	// 这样可以避免按钮重新创建时事件丢失的问题
+	// 不直接绑定事件，采用委托监听（见 listeners.js）
 	updateLabel();
-	wrap.appendChild(btn);
-	return { container: wrap, button: btn };
+	return { button: btn };
 }
 
 /**
- * 应用当前布局模式到内容容器。
- * 
- * 此函数根据 `state.layoutMode` 的值，将内容容器（grid）切换为“网格”或“瀑布流”布局，并相应管理样式与布局逻辑。
+ * 应用当前布局模式到内容容器
+ * 根据 state.layoutMode，切换网格或瀑布流布局，并同步样式与布局流程
  */
 export function applyLayoutMode() {
 	const grid = elements.contentGrid;
 	if (!grid) return;
 	const mode = state.layoutMode;
 
-	if (mode === 'grid') {
-		// 切换至网格模式
+	// 空、加载、错误状态不应用任何布局类
+	const hasStandaloneState = grid.querySelector('.empty-state, .error-container, #minimal-loader');
+	if (hasStandaloneState) {
+		safeClassList(grid, 'remove', 'grid-mode');
+		safeClassList(grid, 'remove', 'masonry-mode');
+		grid.removeAttribute('style');
+		return;
+	}
 
-		// 1. 移除瀑布流模式的类
+	if (mode === 'grid') {
+		// 切换为网格模式
+
 		safeClassList(grid, 'remove', 'masonry-mode');
 
-		// 2. ✅ 重置子元素样式，但不移除position，避免"全屏闪过"
 		Array.from(grid.children).forEach(item => {
-			// 移除瀑布流的定位属性，但保持position以避免布局跳动
+			// 清除瀑布流定位属性但不移除 position，避免布局跳动
 			item.style.removeProperty('transform');
 			item.style.removeProperty('width');
 			item.style.removeProperty('height');
 			item.style.removeProperty('will-change');
 			item.style.removeProperty('left');
 			item.style.removeProperty('top');
-			// position会由CSS的grid-mode规则覆盖为static
+			// position 由 grid-mode CSS 规则覆盖
 		});
-
-		// 3. 移除容器自身的内联样式（如高度）
 		grid.removeAttribute('style');
-
-		// 4. 触发重排，确保样式变动生效
-		void grid.offsetHeight;
-
-		// 5. 添加网格模式的类
+		void grid.offsetHeight; // 触发重排
 		safeClassList(grid, 'add', 'grid-mode');
-
-		// 6. 设置网格的纵横比样式变量
 		safeSetStyle(grid, '--grid-aspect', '1/1');
 
 	} else {
-		// 切换至瀑布流模式
+		// 切换为瀑布流模式
 
-		// 1. 移除网格模式的类
 		safeClassList(grid, 'remove', 'grid-mode');
-
-		// 2. 移除容器自身的内联样式
 		grid.removeAttribute('style');
-
-		// 3. 添加瀑布流模式的类
 		safeClassList(grid, 'add', 'masonry-mode');
-
-		// 4. 立即执行瀑布流布局与刷新
-		//    不再延迟布局，防止内容闪烁，已移除 CSS 动画相关等待。
+		// 立即刷新瀑布流布局
 		applyMasonryLayout();
 		triggerMasonryUpdate();
 	}

@@ -122,6 +122,8 @@ const appStateStore = map({
     currentLayoutWidth: 0,
     pageCache: new Map(),
 
+    // 排序缓存
+
     // 预览布局模式
     layoutMode: (typeof localStorage !== 'undefined' && localStorage.getItem('sg_layout_mode')) || 'grid',
 
@@ -160,7 +162,7 @@ export const syncState = {
     setSilentMode(silent) {
         appStateStore.setKey('isSilent', Boolean(silent));
     },
-    
+
     /**
      * 开始监控
      * @param {string} type 监控类型
@@ -169,7 +171,7 @@ export const syncState = {
         appStateStore.setKey('isMonitoring', true);
         appStateStore.setKey('monitoringType', type);
     },
-    
+
     /**
      * 停止监控，清理定时器
      */
@@ -185,7 +187,7 @@ export const syncState = {
             monitoringTimeoutId: null,
         });
     },
-    
+
     /**
      * 设置监控定时器
      * @param {number} intervalId 间隔定时器ID
@@ -195,7 +197,7 @@ export const syncState = {
         appStateStore.setKey('monitoringIntervalId', intervalId);
         appStateStore.setKey('monitoringTimeoutId', timeoutId);
     },
-    
+
     /**
      * 重置同步状态
      */

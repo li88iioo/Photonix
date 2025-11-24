@@ -32,7 +32,6 @@ export {
 export {
     fetchSearchResults,
     fetchBrowseResults,
-    postViewed,
     fetchRandomThumbnail,
     deleteAlbum
 } from '../api/media.js';

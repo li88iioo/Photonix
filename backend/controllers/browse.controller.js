@@ -7,7 +7,6 @@ const { promises: fs } = require('fs');
 const logger = require('../config/logger');
 const { TraceManager } = require('../utils/trace');
 const { PHOTOS_DIR } = require('../config');
-const { historyWorker } = require('../services/worker.manager');
 const { getDirectoryContents } = require('../services/file.service');
 
 /**
@@ -45,40 +44,5 @@ exports.browseDirectory = async (req, res) => {
         } 
         // 对于其他未知错误，传递给全局错误处理器
         throw error;
-    }
-};
-
-/**
- * 更新文件访问时间
- * 记录用户访问特定文件或目录的时间，用于历史记录功能
- * @param {Object} req - Express请求对象，包含用户ID和文件路径
- * @param {Object} res - Express响应对象
- * @returns {Object} 204状态码表示成功，或错误信息
- */
-exports.updateViewTime = async (req, res) => {
-    // 仅信任认证中间件注入的用户ID
-    const userId = (req.user && req.user.id) ? String(req.user.id) : null;
-    if (!userId) {
-        return res.status(401).json({ code: 'UNAUTHORIZED', message: '未授权，请登录后重试', requestId: req.requestId });
-    }
-
-    // 从中间件获取已经过验证和清理的路径
-    const sanitizedPath = req.sanitizedPath;
-
-    try {
-        // 向历史记录工作线程发送更新访问时间的消息
-        const message = TraceManager.injectToWorkerMessage({ 
-            type: 'update_view_time', 
-            payload: { userId, path: sanitizedPath } 
-        });
-        historyWorker.postMessage(message);
-
-        // 返回204状态码表示成功（无内容）
-        res.status(204).send();
-    } catch (error) {
-        // 内网穿透环境下，即使历史记录更新失败，也不应该影响用户体验
-        logger.warn(`更新访问时间失败，但继续处理请求: ${error.message}`);
-        // 仍然返回成功，因为这是非关键操作
-        res.status(204).send();
     }
 };

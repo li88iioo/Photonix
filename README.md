@@ -233,7 +233,6 @@ Photonix/
 │   │   └── time.utils.js                # 时间处理工具
 │   └── workers/
 │       ├── ai-worker.js                 # 调用外部 AI 接口，写回结果
-│       ├── history-worker.js            # 浏览历史相关任务
 │       ├── indexing-worker.js           # 构建/增量更新搜索索引
 │       ├── settings-worker.js           # 设置持久化任务
 │       ├── thumbnail-worker.js          # Sharp/FFmpeg 生成缩略图

@@ -255,9 +255,6 @@ function spawnCoreWorker(name) {
         case 'settings':
             clearWorkerReference(name);
             return getSettingsWorker();
-        case 'history':
-            clearWorkerReference(name);
-            return getHistoryWorker();
         case 'video':
             clearWorkerReference(name);
             return getVideoWorker();
@@ -614,14 +611,7 @@ function getSettingsWorker() {
  * @returns {Worker}
  */
 function getHistoryWorker() {
-    if (!__historyWorker) {
-        __historyWorker = new Worker(path.resolve(__dirname, '..', 'workers', 'history-worker.js'), {
-            resourceLimits: { maxOldGenerationSizeMb: Number(process.env.WORKER_MEMORY_MB || 256) }
-        });
-        noteWorkerCreated('history', __historyWorker);
-        attachDefaultHandlers(__historyWorker, 'historyWorker');
-    }
-    return __historyWorker;
+    return null;
 }
 
 /**
@@ -945,9 +935,8 @@ function attachDefaultHandlers(worker, name) {
 function ensureCoreWorkers() {
     const w1 = getIndexingWorker(); attachDefaultHandlers(w1, 'indexingWorker');
     const w2 = getSettingsWorker(); attachDefaultHandlers(w2, 'settingsWorker');
-    const w3 = getHistoryWorker(); attachDefaultHandlers(w3, 'historyWorker');
     const w4 = getVideoWorker(); attachDefaultHandlers(w4, 'videoWorker');
-    return { w1, w2, w3, w4 };
+    return { w1, w2, w4 };
 }
 
 /**
@@ -961,7 +950,7 @@ function createDisposableWorker(kind, workerData = {}) {
     const map = {
         indexing: 'indexing-worker.js',
         settings: 'settings-worker.js',
-        history: 'history-worker.js',
+        history: null,
         video: 'video-processor.js',
         thumbnail: 'thumbnail-worker.js',
     };
@@ -983,7 +972,6 @@ module.exports = {
     // 核心单例worker（惰性getter）
     getIndexingWorker,
     getSettingsWorker,
-    getHistoryWorker,
     getVideoWorker,
     ensureCoreWorkers,
     createDisposableWorker,
@@ -1069,9 +1057,6 @@ function selectOptimalWorker(taskType) {
 
     case 'settings':
       return getSettingsWorker();
-
-    case 'history':
-      return getHistoryWorker();
 
     case 'video':
       return getVideoWorker();
@@ -1366,10 +1351,6 @@ Object.defineProperties(module.exports, {
   settingsWorker: {
     enumerable: true,
     get() { return getSettingsWorker(); }
-  },
-  historyWorker: {
-    enumerable: true,
-    get() { return getHistoryWorker(); }
   },
   videoWorker: {
     enumerable: true,

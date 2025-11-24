@@ -92,33 +92,30 @@ export function renderSearchHistory(searchInput, historyContainer) {
     if (history.length === 0) {
         safeSetInnerHTML(historyContainer, '');
         safeClassList(historyContainer, 'add', 'hidden');
+        safeClassList(historyContainer, 'remove', 'search-panel-active');
         return;
     }
 
     const historyHtml = history.map(query => `
-        <div class="search-history-item flex items-center justify-between px-3 py-2 hover:bg-gray-700 cursor-pointer group">
-            <div class="flex items-center flex-1">
-                <svg class="w-4 h-4 text-gray-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+        <li class="px-4 py-2 hover:bg-gray-50 cursor-pointer flex items-center justify-between group" data-query="${escapeHtml(query)}">
+            <span class="text-sm text-gray-600 group-hover:text-black flex gap-2 items-center transition-colors">
+                <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                 </svg>
-                <span class="text-white text-sm">${escapeHtml(query)}</span>
-            </div>
-            <button class="remove-history-btn opacity-30 hover:opacity-100 text-gray-400 hover:text-red-400 transition-all duration-200 p-1 rounded" data-query="${escapeHtml(query)}" title="删除">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                </svg>
-            </button>
-        </div>
+                ${escapeHtml(query)}
+            </span>
+            <button class="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 px-1 transition-all remove-history-btn" data-query="${escapeHtml(query)}" title="删除">×</button>
+        </li>
     `).join('');
 
     safeSetInnerHTML(historyContainer, `
-        <div class="search-history-header flex items-center justify-between px-3 py-2 border-b border-gray-600">
-            <span class="text-gray-400 text-xs">搜索历史</span>
-            <button class="clear-history-btn text-gray-400 hover:text-red-400 text-xs px-2 py-1 rounded hover:bg-gray-700 transition-colors" title="清空所有历史">
-                清空
-            </button>
+        <div class="flex items-center justify-between px-4 py-2 text-xs text-gray-400 border-b border-gray-50 mb-1">
+            <span class="font-bold uppercase tracking-wider">搜索历史</span>
+            <button class="clear-history-btn hover:text-red-500 transition-colors" title="清空所有历史">清空</button>
         </div>
-        ${historyHtml}
+        <ul id="history-list" class="max-h-60 overflow-y-auto">
+            ${historyHtml}
+        </ul>
     `);
 
     safeClassList(historyContainer, 'remove', 'hidden');
@@ -136,9 +133,9 @@ export function renderSearchHistory(searchInput, historyContainer) {
 function bindSearchHistoryEvents(searchInput, historyContainer) {
     // 选择历史项进行搜索
     historyContainer.addEventListener('click', (e) => {
-        const historyItem = e.target.closest('.search-history-item');
-        if (historyItem) {
-            const query = historyItem.querySelector('span').textContent;
+        const historyItem = e.target.closest('li[data-query]');
+        if (historyItem && !e.target.closest('.remove-history-btn')) {
+            const query = historyItem.dataset.query;
             searchInput.value = query;
             searchInput.focus();
             safeClassList(historyContainer, 'add', 'hidden');
@@ -178,7 +175,19 @@ function bindSearchHistoryEvents(searchInput, historyContainer) {
  * @returns {void}
  */
 export function showSearchHistory(searchInput, historyContainer) {
+    // 先渲染,renderSearchHistory会检查是否有历史记录
     renderSearchHistory(searchInput, historyContainer);
+
+    // 只有在容器不是hidden状态时才添加动画类
+    // (renderSearchHistory在没有历史记录时会添加hidden类)
+    if (!safeClassList(historyContainer, 'contains', 'hidden')) {
+        // 移除hidden类并添加动画类
+        safeClassList(historyContainer, 'remove', 'hidden');
+        // 触发重排以确保动画生效
+        requestAnimationFrame(() => {
+            safeClassList(historyContainer, 'add', 'search-panel-active');
+        });
+    }
 }
 
 /**
@@ -187,5 +196,9 @@ export function showSearchHistory(searchInput, historyContainer) {
  * @returns {void}
  */
 export function hideSearchHistory(historyContainer) {
-    safeClassList(historyContainer, 'add', 'hidden');
+    safeClassList(historyContainer, 'remove', 'search-panel-active');
+    // 等待动画完成后再隐藏
+    setTimeout(() => {
+        safeClassList(historyContainer, 'add', 'hidden');
+    }, 200);
 }

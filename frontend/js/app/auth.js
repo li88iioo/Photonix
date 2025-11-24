@@ -37,10 +37,10 @@ export function clearAuthToken() {
     try {
         localStorage.removeItem('photonix_auth_token');
         authLogger.debug('认证token已清除');
-        
+
         // 通知 Service Worker 清除token
-        notifyServiceWorker({ 
-            type: SW_MESSAGE.CLEAR_TOKEN 
+        notifyServiceWorker({
+            type: SW_MESSAGE.CLEAR_TOKEN
         });
     } catch (error) {
         authLogger.warn('清除token失败', { error: error && error.message });
@@ -84,15 +84,14 @@ export async function checkAuthStatus() {
             signal: controller.signal,
             headers
         });
-        
+
         clearTimeout(timeoutId);
-        
-        // ✅ 修复：检测到token无效时，自动清除并重试
+
         if (response.status === 401 && token) {
             authLogger.warn('Token无效或已过期，自动清除并重试');
             clearAuthToken();  // 清除无效token
             clearAuthHeadersCache();  // 清除API缓存
-            
+
             // 重新请求，不带token
             try {
                 const retryResponse = await fetch('/api/auth/status');
@@ -108,7 +107,7 @@ export async function checkAuthStatus() {
                 throw retryError;
             }
         }
-        
+
         if (!response.ok) {
             if (response.status === 404) {
                 return { passwordEnabled: false };
@@ -141,19 +140,45 @@ export function showLoginScreen() {
 
     // XSS安全修复：对静态HTML模板进行安全检查
     const loginTemplate = `
-    <div class="login-card">
-        <h2 class="auth-title">登录到 Photonix</h2>
-        <form id="login-form">
+    <div class="relative w-full max-w-[340px] p-6 transition-all duration-500 transform animate-fade-in-up">
+        <!-- Header -->
+        <div class="relative flex flex-col items-center justify-center mb-10 text-center z-10">
+             <h1 class="text-4xl text-white mb-2" style="font-family: 'ZCOOL KuaiLe', sans-serif; text-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+                登录到 Photonix
+             </h1>
+             <p class="text-xs text-white/50 font-light tracking-wider uppercase">Private Gallery Access</p>
+        </div>
+
+        <!-- Form -->
+        <form id="login-form" class="relative space-y-6 z-10">
             <input type="text" name="username" autocomplete="username" hidden aria-hidden="true">
-            <div class="password-wrapper mb-6">
-                <input type="password" id="password" class="form-input" placeholder="密码" required autocomplete="current-password">
-                <span class="password-toggle-icon">
-                    <svg class="eye-open" xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-                    <svg class="eye-closed" xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" style="display: none;"><path stroke-linecap="round" stroke-linejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" /></svg>
+            
+            <!-- Password Input -->
+            <div class="group relative">
+                <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none transition-colors duration-300">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-white/40 group-focus-within:text-white/90" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                </div>
+                <input type="password" id="password" 
+                    class="w-full py-3 pl-11 pr-11 bg-white/10 border-0 rounded-xl text-white placeholder-white/30 focus:ring-1 focus:ring-white/30 focus:bg-white/20 transition-all duration-300 backdrop-blur-md shadow-inner text-base" 
+                    placeholder="请输入访问密码" required autocomplete="current-password">
+                
+                <span class="password-toggle-icon absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white cursor-pointer transition-colors duration-200 p-2 rounded-full hover:bg-white/10">
+                    <svg class="eye-open w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                    <svg class="eye-closed w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="display: none;"><path stroke-linecap="round" stroke-linejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" /></svg>
                 </span>
             </div>
-            <button type="submit" class="btn btn-primary w-full">登录</button>
-            <p id="login-error" class="text-red-400 text-center text-sm mt-4 min-h-[1.25rem]"></p>
+
+            <!-- Button -->
+            <button type="submit" class="w-full py-3 bg-transparent text-white/80 font-medium rounded-xl hover:text-white transition-all duration-300 text-lg tracking-wide flex items-center justify-center gap-2 group">
+                <span>立即进入</span>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 transform group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                </svg>
+            </button>
+            
+            <p id="login-error" class="text-red-300 text-center text-xs min-h-[1.25rem] font-medium drop-shadow-md animate-pulse"></p>
         </form>
     </div>
     `;
@@ -190,7 +215,7 @@ async function handleLogin(e) {
     const loginButton = e.target.querySelector('button');
     const originalButtonText = loginButton.textContent;
     let reenableTimer = null;
-    
+
     // 重置错误信息并设置加载状态
     errorEl.textContent = '';
     loginButton.disabled = true;
@@ -203,7 +228,7 @@ async function handleLogin(e) {
             body: JSON.stringify({ password })
         });
         const data = await response.json();
-        
+
         if (!response.ok || !data.success) {
             // 登录失败时的抖动动画效果
             const loginCard = safeQuerySelector('.login-card');
@@ -220,7 +245,7 @@ async function handleLogin(e) {
             if (response.status === 401 && (data.code === 'INVALID_CREDENTIALS')) {
                 if (typeof data.remainingAttempts === 'number' && typeof data.nextLockSeconds === 'number') {
                     if (data.remainingAttempts > 0) {
-                        msg = `密码错误，还可再尝试 ${data.remainingAttempts} 次（再错将锁定 ${Math.max(1, Math.round(data.nextLockSeconds/60))} 分钟）`;
+                        msg = `密码错误，还可再尝试 ${data.remainingAttempts} 次（再错将锁定 ${Math.max(1, Math.round(data.nextLockSeconds / 60))} 分钟）`;
                     } else {
                         msg = '密码错误';
                     }
@@ -233,7 +258,7 @@ async function handleLogin(e) {
                     let remain = seconds;
                     const tick = () => {
                         const mins = Math.ceil(remain / 60);
-                        errorEl.textContent = `尝试过于频繁，请在 ${mins} 分钟后重试（${remain}s）`;
+                        errorEl.textContent = `尝试过于频繁，请在 ${mins} 分钟后重试（${remain} s）`;
                         if (remain <= 0) {
                             loginButton.disabled = false;
                             loginButton.textContent = originalButtonText;
@@ -261,23 +286,23 @@ async function handleLogin(e) {
             }
             return;
         }
-        
+
         // 登录成功，保存令牌并隐藏登录界面
         setAuthToken(data.token);
-        
+
         const authOverlay = safeGetElementById('auth-overlay');
         safeClassList(authOverlay, 'remove', 'opacity-100');
         safeClassList(authOverlay, 'add', 'opacity-0');
         safeClassList(authOverlay, 'add', 'pointer-events-none');
-        
+
         const appContainer = safeGetElementById('app-container');
         safeClassList(appContainer, 'add', 'opacity-100');
-        
+
         // 清除任何加载状态
         if (elements.contentGrid) {
             safeSetInnerHTML(elements.contentGrid, '');
         }
-        
+
         initializeRouter();
 
     } catch (error) {
@@ -285,7 +310,7 @@ async function handleLogin(e) {
         loginButton.disabled = false;
         loginButton.textContent = originalButtonText;
     }
-}   
+}
 
 // ================= 辅助函数 =================
 
@@ -295,29 +320,29 @@ async function handleLogin(e) {
 function setupPasswordToggle() {
     const wrapper = safeQuerySelector('.password-wrapper');
     if (!wrapper) return;
-    
+
     const icon = wrapper.querySelector('.password-toggle-icon');
     const input = wrapper.querySelector('input');
     const openEye = icon.querySelector('.eye-open');
     const closedEye = icon.querySelector('.eye-closed');
-    
+
     // 初始化眼睛图标状态
     safeSetStyle(openEye, 'display', 'block');
     safeSetStyle(closedEye, 'display', 'none');
-    
+
     icon.addEventListener('click', (e) => {
         e.stopPropagation();
-        
+
         const isPassword = input.type === 'password';
         input.type = isPassword ? 'text' : 'password';
-        
+
         safeSetStyle(openEye, 'display', isPassword ? 'none' : 'block');
         safeSetStyle(closedEye, 'display', isPassword ? 'block' : 'none');
-        
+
         // 点击时的视觉反馈
         const originalColor = icon.style.color;
         safeSetStyle(icon, 'color', 'white');
-        
+
         setTimeout(() => {
             safeSetStyle(icon, 'color', originalColor || '');
         }, 200);
@@ -331,10 +356,10 @@ export function setupSettingsToggles() {
     const aiEnabledToggle = safeGetElementById('ai-enabled');
     const passwordEnabledToggle = safeGetElementById('password-enabled');
 
-    if(aiEnabledToggle) {
+    if (aiEnabledToggle) {
         aiEnabledToggle.addEventListener('change', (e) => toggleAIFields(e.target.checked));
     }
-    if(passwordEnabledToggle) {
+    if (passwordEnabledToggle) {
         passwordEnabledToggle.addEventListener('change', (e) => togglePasswordFields(e.target.checked));
     }
 }
@@ -406,15 +431,15 @@ function getCachedCovers() {
     try {
         const cached = localStorage.getItem('cached_covers');
         if (!cached) return null;
-        
+
         const data = JSON.parse(cached);
         const now = Date.now();
-        
+
         // 检查缓存是否过期（24小时）
         if (data.timestamp && (now - data.timestamp) < 24 * 60 * 60 * 1000) {
             return data.covers;
         }
-        
+
         // 缓存过期，清除
         localStorage.removeItem('cached_covers');
         return null;
@@ -448,10 +473,10 @@ function cacheCovers(covers) {
 async function loadBackgroundWithRetry(authBackground) {
     const maxRetries = 2; // 最大重试次数
     const retryDelay = 500; // 重试延迟(ms)
-    
+
     // 立即显示备用背景，不等待图片加载
     useFallbackBackground(authBackground);
-    
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
             const backgroundUrl = await getRandomCoverUrl();
@@ -472,13 +497,13 @@ async function loadBackgroundWithRetry(authBackground) {
             // 静默处理加载错误，但记录日志
             authLogger.debug('背景图片加载失败', { error: error.message });
         }
-        
+
         // 如果不是最后一次尝试，等待后重试
         if (attempt < maxRetries) {
             await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
         }
     }
-    
+
     // 所有尝试都失败，保持备用背景
     authLogger.debug('背景图片加载失败，使用备用背景');
 }
@@ -492,7 +517,7 @@ function preloadImage(url) {
     return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => resolve();
-        img.onerror = () => reject(new Error(`图片加载失败: ${url}`));
+        img.onerror = () => reject(new Error(`图片加载失败: ${url} `));
         img.src = url;
     });
 }

@@ -5,17 +5,18 @@
  */
 
 import { apiLogger, getAuthHeaders, requestJSONWithDedup, refreshAuthToken, triggerAuthRequired } from './shared.js';
+import { state } from '../core/state.js';
 import { getAuthToken } from '../app/auth.js';
 
 /**
- * 从 URL hash 中解析排序参数（默认 smart）
+ * 从 URL hash 中解析排序参数（默认 mtime_desc）
  * @returns {string} 排序参数
  */
 function getSortParamFromHash() {
     const hash = window.location.hash;
     const questionMarkIndex = hash.indexOf('?');
     const params = new URLSearchParams(questionMarkIndex !== -1 ? hash.substring(questionMarkIndex) : '');
-    return params.get('sort') || 'smart';
+    return params.get('sort') || 'mtime_desc';
 }
 
 /**
@@ -53,7 +54,7 @@ export async function fetchSearchResults(query, page, signal) {
                 apiLogger.debug('搜索请求被中止', { query, page });
                 throw error;
             }
-            
+
             if (error.status === 503 || error.status === 504) {
                 // 503/504 重试机制
                 const delays = [5000, 10000, 20000];
@@ -89,6 +90,13 @@ export async function fetchSearchResults(query, page, signal) {
     }
 }
 
+const SERVER_SUPPORTED_SORTS = new Set(['smart', 'name_asc', 'name_desc', 'mtime_asc', 'mtime_desc']);
+
+function normalizeServerSort(sort) {
+    if (SERVER_SUPPORTED_SORTS.has(sort)) return sort;
+    return 'mtime_desc';
+}
+
 /**
  * 浏览接口
  * - 根目录允许无 token 访问
@@ -97,10 +105,12 @@ export async function fetchSearchResults(query, page, signal) {
  * @param {string} path 浏览路径
  * @param {number} page 页码
  * @param {AbortSignal} signal 中止信号
+ * @param {object} [options]
+ * @param {string} [options.sortOverride] 指定服务端排序
  * @returns {Promise<object|null>} 浏览结果对象，失败时返回 null
  * @throws {Error} 网络或认证等错误
  */
-export async function fetchBrowseResults(path, page, signal) {
+export async function fetchBrowseResults(path, page, signal, options = {}) {
     try {
         const encodedPath = path.split('/').map(encodeURIComponent).join('/');
         const headers = getAuthHeaders();
@@ -108,7 +118,12 @@ export async function fetchBrowseResults(path, page, signal) {
             delete headers.Authorization;
         }
 
-        const sort = getSortParamFromHash();
+        const requestedSort = options.sortOverride || state.currentSort || 'mtime_desc';
+        const sort = normalizeServerSort(requestedSort);
+        if (requestedSort !== sort) {
+            apiLogger.debug('排序值不受后端支持，自动回退', { requestedSort, fallback: sort });
+        }
+
         const url = `/api/browse/${encodedPath}?page=${page}&limit=50&sort=${sort}`;
         const performRequest = () => requestJSONWithDedup(url, {
             method: 'GET',
@@ -120,6 +135,13 @@ export async function fetchBrowseResults(path, page, signal) {
             return await performRequest();
         } catch (error) {
             if (signal?.aborted) return null;
+            if (error.status === 404) {
+                const notFoundError = new Error('ALBUM_NOT_FOUND');
+                notFoundError.code = 'ALBUM_NOT_FOUND';
+                notFoundError.status = 404;
+                notFoundError.path = path;
+                throw notFoundError;
+            }
             if (error.status === 503 || error.status === 504) {
                 // 503/504 重试机制
                 const delays = [5000, 10000, 20000];
@@ -162,53 +184,8 @@ export async function fetchBrowseResults(path, page, signal) {
  * @param {string} path 浏览路径
  * @returns {void}
  */
-export function postViewed(path) {
-    if (!path) return;
-
-    const token = getAuthToken();
-    if (!token) return;
-
-    /**
-     * 内部重试请求
-     * @param {number} retries 重试次数
-     * @returns {Promise<void>}
-     */
-    const makeRobustRequest = async (retries = 1) => {
-        for (let attempt = 0; attempt <= retries; attempt++) {
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 3000);
-
-                const response = await fetch('/api/browse/viewed', {
-                    method: 'POST',
-                    headers: getAuthHeaders(),
-                    body: JSON.stringify({ path }),
-                    keepalive: true,
-                    signal: controller.signal
-                });
-
-                clearTimeout(timeoutId);
-
-                if (response.ok || response.status === 204) {
-                    return;
-                }
-
-                if (response.status !== 503 && response.status !== 0) {
-                    return;
-                }
-            } catch (error) {
-                if (attempt < retries) {
-                    await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
-                } else {
-                    apiLogger.debug('更新浏览时间失败', { error: error.message });
-                }
-            }
-        }
-    };
-
-    makeRobustRequest().catch(error => {
-        apiLogger.warn('更新浏览时间失败', error);
-    });
+export function postViewed() {
+    apiLogger.debug('viewed 埋点 API 已禁用');
 }
 
 /**
@@ -218,7 +195,7 @@ export function postViewed(path) {
  */
 export async function fetchRandomThumbnail() {
     try {
-        const data = await fetchBrowseResults('', 1, new AbortController().signal);
+        const data = await fetchBrowseResults('', 1, new AbortController().signal, { sortOverride: 'mtime_desc' });
         const media = data?.items?.find(item => item.type === 'photo' || item.type === 'video');
         return media ? media.data.thumbnailUrl : null;
     } catch (error) {

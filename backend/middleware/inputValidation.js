@@ -167,7 +167,7 @@ function validateSearchQuery(query) {
     if (query.sort !== undefined) {
         const allowedSorts = [
             'smart', 'name_asc', 'name_desc',
-            'mtime_asc', 'mtime_desc', 'viewed_desc'
+            'mtime_asc', 'mtime_desc'
         ];
         if (!allowedSorts.includes(query.sort)) {
             result.isValid = false;

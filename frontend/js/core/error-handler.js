@@ -88,15 +88,15 @@ class ErrorHandler {
         // 🔧 辅助函数：检查是否来自浏览器扩展
         const isExtensionError = (error, filename) => {
             if (!error) return false;
-            
+
             // 检查错误消息
             const message = error.message || String(error);
-            if (message.includes('chrome-extension://') || 
+            if (message.includes('chrome-extension://') ||
                 message.includes('moz-extension://') ||
                 message.includes('safari-extension://')) {
                 return true;
             }
-            
+
             // 检查文件名
             if (filename && (
                 filename.includes('chrome-extension://') ||
@@ -105,24 +105,24 @@ class ErrorHandler {
             )) {
                 return true;
             }
-            
+
             return false;
         };
-        
+
         // 捕获未处理的 Promise 拒绝
         window.addEventListener('unhandledrejection', (event) => {
             // 过滤浏览器扩展错误
             if (isExtensionError(event.reason)) {
                 // 开发模式下记录日志，方便调试
                 if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                    errorLogger.debug('忽略浏览器扩展错误 (unhandledrejection)', { 
-                        reason: event.reason?.message || String(event.reason) 
+                    errorLogger.debug('忽略浏览器扩展错误 (unhandledrejection)', {
+                        reason: event.reason?.message || String(event.reason)
                     });
                 }
                 event.preventDefault(); // 阻止在控制台显示红色错误
                 return;
             }
-            
+
             // 过滤 AbortError，避免在控制台显示过多的中止错误
             if (event.reason && event.reason.name === 'AbortError') {
                 errorLogger.debug('忽略 AbortError (unhandledrejection)', {
@@ -131,7 +131,7 @@ class ErrorHandler {
                 event.preventDefault();
                 return;
             }
-            
+
             this.handleError(event.reason, {
                 type: ErrorTypes.UNKNOWN,
                 severity: ErrorSeverity.MEDIUM,
@@ -145,15 +145,15 @@ class ErrorHandler {
             if (isExtensionError(event.error || event.message, event.filename)) {
                 // 开发模式下记录日志，方便调试
                 if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                    errorLogger.debug('忽略浏览器扩展错误 (error)', { 
+                    errorLogger.debug('忽略浏览器扩展错误 (error)', {
                         error: event.error?.message || String(event.error),
-                        filename: event.filename 
+                        filename: event.filename
                     });
                 }
                 event.preventDefault(); // 阻止在控制台显示红色错误
                 return;
             }
-            
+
             this.handleError(event.error || event.message, {
                 type: ErrorTypes.UNKNOWN,
                 severity: ErrorSeverity.HIGH,
@@ -797,6 +797,10 @@ export class AsyncErrorBoundary {
             } catch (error) {
                 lastError = error;
 
+                if (error.name === 'AbortError') {
+                    throw error;
+                }
+
                 // 调用错误回调
                 if (this.onError) {
                     this.onError(error, { ...context, attempt: attempt + 1 });
@@ -886,6 +890,17 @@ export async function executeAsync(operation, options = {}) {
     try {
         return await boundary.execute(operation, context);
     } catch (error) {
+        // 静默退出，不触发错误处理器
+        // 这是最后一道防线，确保即使前两层失效也不会误报
+        if (error.name === 'AbortError') {
+            errorLogger.debug('操作被中止', {
+                operation: operation.name || 'anonymous',
+                reason: error.message,
+                context
+            });
+            throw error;
+        }
+
         // 使用统一错误处理器处理最终失败
         const handledError = errorHandler.handleError(error, {
             type: errorType,

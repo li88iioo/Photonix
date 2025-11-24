@@ -385,30 +385,71 @@ async function getIndexStatus() {
   try {
     // 获取索引状态行数据
     const row = await idxRepo.getIndexStatusRow();
-    
+
     // 获取各类型文件统计（带缓存，使用索引优化）
-    const itemsStats = await dbAllWithCache('main', "SELECT type, COUNT(1) as count FROM items INDEXED BY idx_items_type_id GROUP BY type", [], {
+    const rawItemsStats = await dbAllWithCache('main', "SELECT type, COUNT(1) as count FROM items INDEXED BY idx_items_type_id GROUP BY type", [], {
       useCache: true,
       ttl: 30,
       tags: ['items-stats']
-    });
-    
+    }) || [];
+
+    const itemsStats = rawItemsStats.map(stat => ({
+      ...stat,
+      count: Number(stat.count) || 0
+    }));
+    const itemsTotal = itemsStats.reduce((sum, stat) => sum + stat.count, 0);
+
     // 获取全文搜索索引统计（带缓存）
     const ftsStats = await dbAllWithCache('main', "SELECT COUNT(1) as count FROM items_fts", [], {
       useCache: true,
       ttl: 30,
       tags: ['fts-stats']
     });
-    
+    const ftsCount = Number(ftsStats?.[0]?.count) || 0;
+
     const currentTime = new Date().toISOString();
+    const lastUpdated = row?.last_updated || currentTime;
+
+    let totalFiles = Number(row?.total_files);
+    if (!Number.isFinite(totalFiles) || totalFiles <= 0) {
+      totalFiles = itemsTotal || ftsCount || Number(row?.processed_files) || 0;
+    }
+
+    let processedFiles = Number(row?.processed_files);
+    if (!Number.isFinite(processedFiles) || processedFiles < 0) {
+      processedFiles = 0;
+    }
+    if (processedFiles === 0) {
+      if (row?.status === 'complete' && totalFiles > 0) {
+        processedFiles = totalFiles;
+      } else if (ftsCount > 0) {
+        processedFiles = totalFiles > 0 ? Math.min(ftsCount, totalFiles) : ftsCount;
+      }
+    }
+    if (totalFiles > 0 && processedFiles > totalFiles) {
+      processedFiles = totalFiles;
+    }
+
+    let status = row?.status && row.status.trim() ? row.status.trim() : null;
+    if (!status || status === 'unknown') {
+      if (totalFiles === 0 && processedFiles === 0) {
+        status = 'idle';
+      } else if (processedFiles >= totalFiles && totalFiles > 0) {
+        status = 'complete';
+      } else if (processedFiles > 0) {
+        status = 'building';
+      } else {
+        status = 'pending';
+      }
+    }
 
     return {
-      status: row?.status || 'unknown',
-      processedFiles: row?.processed_files || 0,
-      totalFiles: row?.total_files || 0,
-      lastUpdated: currentTime,
-      itemsStats: itemsStats || [],
-      ftsCount: ftsStats?.[0]?.count || 0
+      status,
+      processedFiles,
+      totalFiles,
+      lastUpdated,
+      itemsStats,
+      ftsCount
     };
   } catch (error) {
     logger.warn('获取索引状态失败:', error);

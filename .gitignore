@@ -50,3 +50,8 @@ redis_data/
 frontend/技术债务**.md
 frontend/债务修复**.md
 
+
+# Temporary files
+bug.txt
+codeprompt.md
+Changelog/

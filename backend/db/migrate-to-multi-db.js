@@ -181,13 +181,21 @@ async function migrateIndexData(sourceDB) {
 }
 
 /**
- * 备份原数据库文件，名称中包含时间戳
+ * 备份原数据库文件，只保留一个最新备份
  * @returns {Promise<string>} 备份文件的路径
  */
 async function backupOriginalDB() {
     try {
-        const backupPath =
-            DB_FILE.replace('.db', '_backup_' + new Date().toISOString().replace(/[:.]/g, '-') + '.db');
+        // 使用固定的备份文件名，只保留一个最新备份
+        const backupPath = DB_FILE.replace('.db', '_backup.db');
+
+        // 如果旧备份存在，先删除
+        if (fs.existsSync(backupPath)) {
+            await fs.promises.unlink(backupPath);
+            logger.info(`已删除旧备份: ${backupPath}`);
+        }
+
+        // 创建新备份
         await fs.promises.copyFile(DB_FILE, backupPath);
         logger.info(`原数据库已备份到: ${backupPath}`);
         return backupPath;

@@ -18,6 +18,8 @@ import { createPageGroup, createComponentGroup, cleanupPage } from '../../core/e
 import { createModuleLogger } from '../../core/logger.js';
 import { safeGetElementById, safeClassList, safeSetStyle } from '../../shared/dom-utils.js';
 import { showNotification } from '../../shared/utils.js';
+import { showMissingAlbumState } from './loading-states.js';
+import { recordHierarchyView } from '../history/history-service.js';
 
 const listenersLogger = createModuleLogger('Listeners');
 
@@ -26,13 +28,7 @@ let deleteLongPressTimer = null;
 let deleteLongPressTarget = null;
 let activeAlbumDeleteOverlay = null;
 
-/**
- * 动态安全导入 minimal-loader 模块并显示加载器
- * @deprecated 已改为由 router.js 统一控制加载状态
- */
-function safeLoadMinimalLoader() {
-    // 已废弃：加载状态由 router 统一管理
-}
+
 
 /**
  * 切换所有媒体元素的模糊状态（图片、视频等）
@@ -58,13 +54,13 @@ function handleDocumentClick(e) {
             const current = state.layoutMode;
             const next = current === 'grid' ? 'masonry' : 'grid';
             state.update('layoutMode', next);
-            try { localStorage.setItem('sg_layout_mode', next); } catch {}
-            
+            try { localStorage.setItem('sg_layout_mode', next); } catch { }
+
             // 修复：使用直接导入的函数更新UI
             setTimeout(() => {
                 // 应用布局模式
                 applyLayoutMode();
-                
+
                 // 更新按钮图标
                 if (elements.layoutToggleBtn) {
                     updateLayoutToggleButton(elements.layoutToggleBtn);
@@ -76,7 +72,7 @@ function handleDocumentClick(e) {
         }
         return;
     }
-    
+
     // 1. 关闭移动端搜索层
     const topbar = safeGetElementById('topbar');
     if (topbar && safeClassList(topbar, 'contains', 'topbar--search-open')) {
@@ -246,14 +242,7 @@ function cancelDeleteOverlayTimer() {
     deleteLongPressTarget = null;
 }
 
-/**
- * 移除滚动监听器（已废弃，事件管理器自动处理）
- * @deprecated
- */
-export function removeScrollListeners() {
-    // 向后兼容：事件管理器会自动清理
-    // 不再需要手动移除监听器
-}
+
 
 /**
  * 浏览页面滚动处理，触发无限滚动加载
@@ -292,7 +281,7 @@ async function handleScroll(type) {
  * 滚动处理核心逻辑
  * @param {string} type - 滚动类型
  */
-// ✅ 预加载缓存：避免重复请求
+// 预加载缓存：避免重复请求
 const prefetchCache = {
     browse: new Map(), // key: `${path}_${page}`, value: Promise<data>
     search: new Map()  // key: `${query}_${page}`, value: Promise<data>
@@ -320,29 +309,29 @@ if (typeof window !== 'undefined') {
 async function prefetchNextPage(type) {
     const currentPage = type === 'browse' ? state.currentBrowsePage : state.currentSearchPage;
     const totalPages = type === 'browse' ? state.totalBrowsePages : state.totalSearchPages;
-    
+
     // 已到最后一页，无需预加载
     if (currentPage > totalPages) return;
-    
+
     const nextPage = currentPage;
-    const cacheKey = type === 'browse' 
+    const cacheKey = type === 'browse'
         ? `${state.currentBrowsePath}_${nextPage}`
         : `${state.currentSearchQuery}_${nextPage}`;
-    
+
     const cache = prefetchCache[type];
-    
+
     // 已经在预加载或已缓存，跳过
     if (cache.has(cacheKey)) return;
-    
+
     // 创建预加载请求（使用顶部已导入的 fetchBrowseResults 和 fetchSearchResults）
     const signal = AbortBus.next('prefetch');
     const fetchPromise = type === 'browse'
         ? fetchBrowseResults(state.currentBrowsePath, nextPage, signal)
         : fetchSearchResults(state.currentSearchQuery, nextPage, signal);
-    
+
     // 缓存Promise
     cache.set(cacheKey, fetchPromise);
-    
+
     try {
         await fetchPromise;
         listenersLogger.debug(`预加载成功: ${type} page ${nextPage}`);
@@ -382,11 +371,11 @@ async function handleScrollCore(type) {
     // 正在加载或已到最后一页则跳过
     if (isLoading || currentPage > totalPages) return;
 
-    // ✅ 预加载优化：滚动到80%时触发预加载
+    // 预加载优化：滚动到80%时触发预加载
     const scrollPercentage = (window.scrollY + window.innerHeight) / document.documentElement.scrollHeight;
     if (scrollPercentage >= 0.8 && scrollPercentage < 0.95) {
         // 静默预加载下一页，不阻塞当前滚动
-        prefetchNextPage(type).catch(() => {});
+        prefetchNextPage(type).catch(() => { });
     }
 
     // 优化：滚动位置检查，距离底部 500px 时触发渲染
@@ -397,17 +386,17 @@ async function handleScrollCore(type) {
 
         // 优化：使用新容器控制可见性，避免重排抖动
         if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'add', 'visible');
-        
+
         try {
             let data;
-            
-            // ✅ 尝试从预加载缓存获取数据
+
+            // 尝试从预加载缓存获取数据
             const cacheKey = type === 'browse'
                 ? `${state.currentBrowsePath}_${currentPage}`
                 : `${state.currentSearchQuery}_${currentPage}`;
-            
+
             const cache = prefetchCache[type];
-            
+
             if (cache.has(cacheKey)) {
                 // 使用预加载的数据，无需重新请求
                 listenersLogger.debug(`使用预加载缓存: ${type} page ${currentPage}`);
@@ -421,7 +410,7 @@ async function handleScrollCore(type) {
                     data = null;
                 }
             }
-            
+
             // 缓存未命中或失效，发起正常请求
             if (!data) {
                 const signal = AbortBus.next('scroll');
@@ -431,36 +420,36 @@ async function handleScrollCore(type) {
                     data = await fetchSearchResults(state.currentSearchQuery, currentPage, signal);
                 }
             }
-            
+
             if (!data) return;
 
             const items = type === 'browse' ? data.items : data.results;
             if (items.length === 0) {
-                 if (type === 'browse') state.isBrowseLoading = false; else state.isSearchLoading = false;
-                 // 优化：使用新容器控制可见性，避免重排抖动
-                 if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'remove', 'visible');
-                 return;
+                if (type === 'browse') state.isBrowseLoading = false; else state.isSearchLoading = false;
+                // 优化：使用新容器控制可见性，避免重排抖动
+                if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'remove', 'visible');
+                return;
             }
 
             // 更新总页数
             if (type === 'browse') state.totalBrowsePages = data.totalPages;
             else state.totalSearchPages = data.totalPages;
 
-            // ✅ 渐进式渲染优化：无限滚动也应用分批加载策略
+            // 渐进式渲染优化：无限滚动也应用分批加载策略
             const SCROLL_BATCH_SIZE = 12; // 滚动加载每批12张
             const firstBatch = items.slice(0, SCROLL_BATCH_SIZE);
             const remainingBatch = items.slice(SCROLL_BATCH_SIZE);
-            
+
             const prevCount = elements.contentGrid.children.length;
-            
+
             // 立即渲染第一批
-            const renderResult = type === 'browse' 
+            const renderResult = type === 'browse'
                 ? renderBrowseGrid(firstBatch, state.currentPhotos.length)
                 : renderSearchGrid(firstBatch, state.currentPhotos.length);
-            
+
             const { contentElements: firstElements, newMediaUrls: firstUrls, fragment } = renderResult;
-            
-            // ✅ 在瀑布流模式下，先隐藏新元素，避免"闪过"
+
+            // 在瀑布流模式下，先隐藏新元素，避免"闪过"
             const isMasonryMode = safeClassList(elements.contentGrid, 'contains', 'masonry-mode');
             if (isMasonryMode) {
                 if (fragment && fragment.children.length > 0) {
@@ -475,7 +464,7 @@ async function handleScrollCore(type) {
                     });
                 }
             }
-            
+
             // 批量插入第一批 DOM 元素
             if (fragment && fragment.children.length > 0) {
                 elements.contentGrid.appendChild(fragment);
@@ -483,27 +472,27 @@ async function handleScrollCore(type) {
                 elements.contentGrid.append(...firstElements);
             }
             state.currentPhotos = state.currentPhotos.concat(firstUrls);
-            
+
             // 后续内容在下一帧渲染，避免阻塞
             if (remainingBatch.length > 0) {
                 requestAnimationFrame(() => {
                     const remainingResult = type === 'browse'
                         ? renderBrowseGrid(remainingBatch, state.currentPhotos.length)
                         : renderSearchGrid(remainingBatch, state.currentPhotos.length);
-                    
+
                     const { contentElements: remainingElements, newMediaUrls: remainingUrls } = remainingResult;
-                    
-                    // ✅ 同样先隐藏延迟批次的元素
+
+                    // 同样先隐藏延迟批次的元素
                     if (isMasonryMode) {
                         remainingElements.forEach(el => {
                             el.style.opacity = '0';
                             el.style.pointerEvents = 'none';
                         });
                     }
-                    
+
                     elements.contentGrid.append(...remainingElements);
                     state.currentPhotos = state.currentPhotos.concat(remainingUrls);
-                    
+
                     // 延迟批次也需要懒加载和布局
                     setupLazyLoading();
                     const newRemainingItems = Array.from(elements.contentGrid.children).slice(prevCount + firstBatch.length);
@@ -514,18 +503,24 @@ async function handleScrollCore(type) {
             // 更新页码
             if (type === 'browse') state.currentBrowsePage++;
             else state.currentSearchPage++;
-            
+
             // 设置懒加载和瀑布流布局
             setupLazyLoading();
             const newItems = Array.from(elements.contentGrid.children).slice(prevCount);
             applyMasonryLayoutIncremental(newItems);
         } catch (error) {
-            if (error.name !== 'AbortError') {
+            if (error?.code === 'ALBUM_NOT_FOUND' || error?.status === 404) {
+                if (type === 'browse') {
+                    state.totalBrowsePages = Math.min(state.totalBrowsePages, state.currentBrowsePage - 1);
+                    showMissingAlbumState();
+                }
+                showNotification('相册不存在或已被移除', 'warning');
+            } else if (error.name !== 'AbortError') {
                 listenersLogger.error('获取更多项目失败', error);
             }
         } finally {
-             if (type === 'browse') state.isBrowseLoading = false;
-             else state.isSearchLoading = false;
+            if (type === 'browse') state.isBrowseLoading = false;
+            else state.isSearchLoading = false;
             // 优化：使用新容器控制可见性，避免重排抖动
             if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'remove', 'visible');
         }
@@ -646,7 +641,7 @@ function registerKeyboardShortcuts(group) {
                     const current = state.layoutMode;
                     const next = current === 'grid' ? 'masonry' : 'grid';
                     state.update('layoutMode', next);
-                    try { localStorage.setItem('sg_layout_mode', next); } catch {}
+                    try { localStorage.setItem('sg_layout_mode', next); } catch { }
                     listenersLogger.debug(`布局模式切换: ${current} → ${next}`);
                 } catch (error) {
                     listenersLogger.error('切换布局模式出错', error);
@@ -777,16 +772,16 @@ export function setupEventListeners() {
         let lastWidth = 0;
         const ro = new ResizeObserver((entries) => {
             if (ticking) return;
-            
+
             // 只在宽度真正变化时才触发重排
             const currentWidth = entries[0]?.contentRect?.width || 0;
             if (Math.abs(currentWidth - lastWidth) < 1) return;
-            
+
             lastWidth = currentWidth;
             ticking = true;
-            requestAnimationFrame(() => { 
-                reflowIfNeeded(); 
-                ticking = false; 
+            requestAnimationFrame(() => {
+                reflowIfNeeded();
+                ticking = false;
             });
         });
         const grid = safeGetElementById('content-grid');
@@ -809,7 +804,7 @@ export function setupEventListeners() {
 
     // 设置按钮 - 动态导入实现按需加载
     const settingsBtn = safeGetElementById('settings-btn');
-    if(settingsBtn) {
+    if (settingsBtn) {
         uiGroup.add(settingsBtn, 'click', async () => {
             try {
                 showSettingsModal();
@@ -859,20 +854,20 @@ function setupTopbarInteractions() {
     function onScroll() {
         const currentY = window.scrollY;
         const delta = currentY - lastScrollY;
-        
-        // ✅ 增加滚动阈值，避免滚动到底部时的微小波动导致topbar抽搐
-        const SCROLL_DELTA_THRESHOLD = 5; // 忽略小于5px的滚动
-        
+
+        // 增加滚动阈值，避免滚动到底部时的微小波动导致topbar抽搐
+        const SCROLL_DELTA_THRESHOLD = 4; // 降低阈值，提高响应速度
+
         // 检测是否在页面底部（允许10px误差）
         const isAtBottom = (window.innerHeight + window.scrollY) >= (document.documentElement.scrollHeight - 10);
-        
+
         if (currentY < 50) {
             // 顶部50px内：完全显示
             safeClassList(topbar, 'remove', 'topbar--hidden');
             safeClassList(topbar, 'remove', 'topbar--condensed');
             lastScrollY = currentY;
         } else if (isAtBottom) {
-            // ✅ 在底部时：保持当前状态不变，避免抽搐
+            // 在底部时：保持当前状态不变，避免抽搐
             // 不更新lastScrollY，不改变topbar状态
             return;
         } else if (delta > SCROLL_DELTA_THRESHOLD && currentY > UI.SCROLL_THRESHOLD_DOWN) {
@@ -921,7 +916,7 @@ function setupTopbarInteractions() {
     }
 
     const contextEl = safeGetElementById('topbar-context');
-    // ✅ 移除多次延迟重试，改由router.js在路由切换前预计算
+    // 移除多次延迟重试，改由router.js在路由切换前预计算
     // 仅保留初始化调用和响应式更新
     updateTopbarOffset();
     topbarGroup.add(window, 'resize', () => { updateTopbarOffset(); });
@@ -1079,6 +1074,19 @@ function setupContentInteractions() {
             }
             e.preventDefault();
             const path = albumLink.dataset.path;
+            if (state.currentSort === 'viewed_desc' && path) {
+                const img = albumLink.querySelector('img[data-src]');
+                const titleEl = albumLink.querySelector('.album-title');
+                const coverUrl = img?.dataset?.src || '';
+                recordHierarchyView(path, {
+                    entryType: 'album',
+                    name: titleEl?.textContent?.trim() || path.split('/').pop() || '',
+                    coverUrl,
+                    thumbnailUrl: coverUrl,
+                    width: Number(albumLink.dataset.width) || 0,
+                    height: Number(albumLink.dataset.height) || 0
+                }).catch(() => {});
+            }
             _navigateToAlbum(e, path);
         } else if (photoLink) {
             e.preventDefault();

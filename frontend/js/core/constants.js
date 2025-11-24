@@ -70,7 +70,7 @@ export const UI = {
     NOTIFICATION_DURATION_WARNING: 5000, // 警告通知持续时间（毫秒）
     NOTIFICATION_DURATION_SUCCESS: 3000, // 成功通知持续时间（毫秒）
     SCROLL_THRESHOLD: 8,                 // 滚动阈值
-    SCROLL_THRESHOLD_DOWN: 100,          // 向下滚动触发阈值
+    SCROLL_THRESHOLD_DOWN: 60,           // 向下滚动触发阈值
     LAYOUT_UPDATE_DELAY: 50,             // 布局更新延迟（毫秒）
     INITIAL_LAYOUT_DELAY: 120,           // 初始布局延迟（毫秒）
     EXTENDED_LAYOUT_DELAY: 360,          // 扩展布局延迟（毫秒）
@@ -267,7 +267,7 @@ export function getTunableConfig(category, key, fallback) {
         if (globalConfig && Object.prototype.hasOwnProperty.call(globalConfig, key)) {
             return globalConfig[key];
         }
-    } catch {}
+    } catch { }
     return fallback;
 }
 

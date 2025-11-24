@@ -22,7 +22,12 @@ const groupToController = new Map();
 function abort(group) {
   const controller = groupToController.get(group);
   if (controller) {
-    try { controller.abort(); } catch {}
+    try {
+      controller.abort(new DOMException(
+        `Aborted by group: ${group}`,
+        'AbortError'
+      ));
+    } catch { }
     groupToController.delete(group);
   }
 }
