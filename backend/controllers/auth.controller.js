@@ -299,57 +299,67 @@ exports.login = async (req, res) => {
     const { password } = req.body;
     const { PASSWORD_ENABLED, PASSWORD_HASH } = await getAllSettings();
 
-    // 检查是否启用密码
-    if (PASSWORD_ENABLED !== 'true') {
-        return res.status(400).json({
-            code: 'PASSWORD_DISABLED',
-            message: '密码访问未开启',
-            requestId: req.requestId
-        });
-    }
+    // 1. 优先检查是否匹配管理员密钥 (ADMIN_SECRET)
+    // 这允许管理员使用 ADMIN_SECRET 直接登录，解决 RSS 下载等场景的认证问题
+    const isAdminSecretMatch = process.env.ADMIN_SECRET && password === process.env.ADMIN_SECRET;
 
-    // 验证请求体和后端存储密码
-    if (!password || !PASSWORD_HASH) {
-        let failureStats = { fails: 0, lockSec: 0 };
-        try {
-            failureStats = await guard.recordFailure(base, '登录失败计数(无密码)');
-        } catch (e) {
-            logger.debug('记录登录失败（无密码）时出错（已忽略）:', e && e.message);
-        }
+    if (isAdminSecretMatch) {
+        logger.info(`[${req.requestId || '-'}] 使用管理员密钥 (ADMIN_SECRET) 登录成功`);
+    } else {
+        // 2. 常规用户密码登录流程
 
-        const failsNow = Number(failureStats && failureStats.fails) || 0;
-        let lockSec = Number(failureStats && failureStats.lockSec) || 0;
-        if (!lockSec) {
-            try {
-                lockSec = await guard.getLockSeconds(base);
-            } catch (e) {
-                logger.debug('检查登录锁定状态失败（已忽略）:', e && e.message);
-            }
-        }
-
-        if (lockSec > 0) {
-            res.setHeader('Retry-After', String(lockSec));
-            return res.status(429).json({
-                code: 'LOGIN_LOCKED',
-                message: `尝试过于频繁，请在 ${lockSec} 秒后重试`,
-                retryAfterSeconds: lockSec,
+        // 检查是否启用密码
+        if (PASSWORD_ENABLED !== 'true') {
+            return res.status(400).json({
+                code: 'PASSWORD_DISABLED',
+                message: '密码访问未开启',
                 requestId: req.requestId
             });
         }
 
-        const remaining = Math.max(0, 5 - failsNow);
-        const nextLock = computeLoginLockSeconds(failsNow + 1) || 0;
-        return res.status(401).json({
-            code: 'INVALID_CREDENTIALS',
-            message: '密码错误',
-            remainingAttempts: remaining,
-            nextLockSeconds: nextLock,
-            requestId: req.requestId
-        });
+        // 验证请求体和后端存储密码
+        if (!password || !PASSWORD_HASH) {
+            let failureStats = { fails: 0, lockSec: 0 };
+            try {
+                failureStats = await guard.recordFailure(base, '登录失败计数(无密码)');
+            } catch (e) {
+                logger.debug('记录登录失败（无密码）时出错（已忽略）:', e && e.message);
+            }
+
+            const failsNow = Number(failureStats && failureStats.fails) || 0;
+            let lockSec = Number(failureStats && failureStats.lockSec) || 0;
+            if (!lockSec) {
+                try {
+                    lockSec = await guard.getLockSeconds(base);
+                } catch (e) {
+                    logger.debug('检查登录锁定状态失败（已忽略）:', e && e.message);
+                }
+            }
+
+            if (lockSec > 0) {
+                res.setHeader('Retry-After', String(lockSec));
+                return res.status(429).json({
+                    code: 'LOGIN_LOCKED',
+                    message: `尝试过于频繁，请在 ${lockSec} 秒后重试`,
+                    retryAfterSeconds: lockSec,
+                    requestId: req.requestId
+                });
+            }
+
+            const remaining = Math.max(0, 5 - failsNow);
+            const nextLock = computeLoginLockSeconds(failsNow + 1) || 0;
+            return res.status(401).json({
+                code: 'INVALID_CREDENTIALS',
+                message: '密码错误',
+                remainingAttempts: remaining,
+                nextLockSeconds: nextLock,
+                requestId: req.requestId
+            });
+        }
     }
 
-    // 校验密码
-    const isMatch = await bcrypt.compare(password, PASSWORD_HASH);
+    // 校验密码 (如果不是管理员密钥，则进行哈希比对)
+    const isMatch = isAdminSecretMatch || await bcrypt.compare(password, PASSWORD_HASH);
 
     if (!isMatch) {
         let failureStats = { fails: 0, lockSec: 0 };
@@ -400,7 +410,7 @@ exports.login = async (req, res) => {
     }
 
     // 成功登录，签发 Token
-    const token = jwt.sign({ 
+    const token = jwt.sign({
         sub: 'gallery_user',
         userId: 'download_admin',  // 添加用户标识
         type: 'download'
@@ -470,7 +480,7 @@ exports.refresh = async (req, res) => {
     // 保留原Token的信息
     const subject = decoded?.sub || 'gallery_user';
     const userId = decoded?.userId || 'download_admin';
-    const newToken = jwt.sign({ 
+    const newToken = jwt.sign({
         sub: subject,
         userId: userId,
         type: 'download'

@@ -24,8 +24,12 @@ const DEFAULT_RETRY_CONFIG = {
  * @returns {boolean} 是否为可重试的忙碌错误
  */
 function isSQLiteBusyError(error) {
-    if (!error || !error.message) return false;
-    const msg = String(error.message);
+    if (!error) return false;
+    // better-sqlite3 throws errors with a code property
+    if (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED') return true;
+
+    // Fallback for message matching (just in case)
+    const msg = String(error.message || '');
     return /SQLITE_BUSY|database is locked|database is busy/i.test(msg);
 }
 
@@ -86,7 +90,7 @@ async function withSQLiteRetry(operation, options = {}) {
             if (attempt === 0 && redis) {
                 const indexing = await isIndexingInProgress(redis);
                 if (indexing) {
-                    const indexingDelay = config.indexingCheckDelay + 
+                    const indexingDelay = config.indexingCheckDelay +
                         Math.floor(Math.random() * config.indexingJitter);
                     await sleep(indexingDelay);
                 }
@@ -94,7 +98,7 @@ async function withSQLiteRetry(operation, options = {}) {
 
             // 执行数据库操作
             const result = await operation();
-            
+
             // 成功时记录重试信息（如果有重试）
             if (attempt > 0) {
                 logger.info(`${operationName} 重试成功`, {
@@ -102,7 +106,7 @@ async function withSQLiteRetry(operation, options = {}) {
                     context
                 });
             }
-            
+
             return result;
 
         } catch (error) {
@@ -119,7 +123,7 @@ async function withSQLiteRetry(operation, options = {}) {
 
             // 计算退避延迟
             const backoffDelay = calculateBackoffDelay(attempt, config);
-            
+
             // 记录重试日志
             logger.debug(`${operationName} 遇到忙碌错误，将在 ${backoffDelay}ms 后重试`, {
                 attempt: attempt + 1,
@@ -151,15 +155,15 @@ async function writeThumbStatusWithRetry(dbRun, { path: relPath, mtime, status }
         const { ValidationError } = require('../utils/errors');
         throw new ValidationError(`无效的文件路径: ${relPath}`, { path: relPath, type: typeof relPath });
     }
-    
+
     // 清理路径中的特殊字符，统一使用正斜杠
     const cleanPath = relPath.replace(/\\/g, '/').trim();
     const safeMtime = Number(mtime) || Date.now();
     const safeStatus = String(status || 'pending');
-    
+
     return withSQLiteRetry(
         async () => {
-            await dbRun('main', 
+            await dbRun('main',
                 `INSERT INTO thumb_status(path, mtime, status, last_checked)
                  VALUES(?, ?, ?, strftime('%s','now')*1000)
                  ON CONFLICT(path) DO UPDATE SET 
@@ -172,8 +176,8 @@ async function writeThumbStatusWithRetry(dbRun, { path: relPath, mtime, status }
         {
             redis,
             operationName: '缩略图状态写入',
-            context: { 
-                path: cleanPath.length > 50 ? cleanPath.substring(0, 50) + '...' : cleanPath, 
+            context: {
+                path: cleanPath.length > 50 ? cleanPath.substring(0, 50) + '...' : cleanPath,
                 status: safeStatus,
                 mtime: safeMtime
             }

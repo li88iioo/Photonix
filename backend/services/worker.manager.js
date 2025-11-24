@@ -714,6 +714,8 @@ class WorkerPoolManager {
         try {
             thumbnailWorkers.forEach((w) => {
                 try {
+                    // 标记为预期终止，避免 exit 事件误报为异常退出
+                    w.__expectedTermination = true;
                     w.terminate();
                 } catch (error) {
                     logWorkerIgnore('终止缩略图线程', error);
@@ -725,7 +727,7 @@ class WorkerPoolManager {
         thumbnailWorkers.length = 0;
         idleThumbnailWorkers.length = 0;
         this.lastUseTs = 0;
-        logger.info(`已销毁缩略图工作线程池（空闲回收，超时: ${this.idleShutdownMs}ms）`);
+        logger.debug(`已销毁缩略图工作线程池（空闲回收，超时: ${this.idleShutdownMs}ms）`);
     }
 
     /**
@@ -864,7 +866,7 @@ function scaleThumbnailWorkerPool(targetSize) {
             } catch (error) {
                 logWorkerIgnore('安装缩略图线程监听器', error);
             }
-            logger.info(`[ThumbPool] 扩容: ${current} -> ${thumbnailWorkers.length}`);
+            logger.debug(`[ThumbPool] 扩容: ${current} -> ${thumbnailWorkers.length}`);
             return thumbnailWorkers.length;
         } else {
             // 优先回收空闲线程；忙的下次再回收

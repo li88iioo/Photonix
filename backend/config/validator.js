@@ -160,7 +160,7 @@ async function validateCriticalConfig() {
         const { getAllSettings } = require('../services/settings.service');
         settings = await getAllSettings({ preferFreshSensitive: true });
     } catch (error) {
-        logger.warn('[ConfigValidation] 获取设置时出错，使用默认配置继续校验。', error && error.message ? { error: error.message } : undefined);
+        logger.warn('[配置校验] 获取设置时出错，使用默认配置继续校验。', error && error.message ? { error: error.message } : undefined);
     }
 
     // 收集配置问题及警告
@@ -168,20 +168,20 @@ async function validateCriticalConfig() {
 
     // 输出所有警告
     warnings.forEach((msg) => {
-        logger.warn(`[ConfigValidation] ${msg}`);
+        logger.warn(`[配置校验] ${msg}`);
     });
 
     // 若存在阻断性问题，输出错误并抛出异常
     if (issues.length > 0) {
         issues.forEach((msg) => {
-            logger.error(`[ConfigValidation] ${msg}`);
+            logger.error(`[配置校验] ${msg}`);
         });
         const error = new ConfigurationError('关键配置缺失或不安全', { issues });
         error.code = 'CONFIG_VALIDATION_FAILED';
         throw error;
     }
 
-    logger.info('[ConfigValidation] 关键配置校验完成。');
+    logger.info('[配置校验] 关键配置校验完成。');
     return { issues, warnings };
 }
 

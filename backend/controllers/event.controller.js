@@ -19,17 +19,17 @@ exports.streamEvents = (req, res) => {
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
     });
-    
+
     // 尝试设置socket keepalive（性能优化）
-    try { 
-        req.socket && req.socket.setKeepAlive && req.socket.setKeepAlive(true); 
+    try {
+        req.socket && req.socket.setKeepAlive && req.socket.setKeepAlive(true);
     } catch (error) {
         logger.debug('[SSE] 设置socket keepAlive失败:', error.message);
     }
-    
+
     // 尝试立即刷新headers
-    try { 
-        res.flushHeaders && res.flushHeaders(); 
+    try {
+        res.flushHeaders && res.flushHeaders();
     } catch (error) {
         logger.debug('[SSE] 刷新headers失败:', error.message);
     }
@@ -48,26 +48,26 @@ exports.streamEvents = (req, res) => {
         if (forwardedFor) {
             return normalizeIP(forwardedFor.split(',')[0].trim());
         }
-        
+
         const realIP = req.headers['x-real-ip'];
         if (realIP) {
             return normalizeIP(realIP);
         }
-        
+
         // 回退到连接 IP
-        const raw = req.connection?.remoteAddress || 
-                    req.socket?.remoteAddress || 
-                    req.ip || 
-                    'unknown';
+        const raw = req.connection?.remoteAddress ||
+            req.socket?.remoteAddress ||
+            req.ip ||
+            'unknown';
         return normalizeIP(raw);
     };
 
     const clientIP = getClientIP(req);
-    
+
     // 为这个客户端创建一个唯一的ID
     const clientId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
     clients.add(clientId);
-    logger.debug(`[SSE] 新客户端连接: ${clientId} (IP: ${clientIP}, 当前共 ${clients.size} 个连接)`);
+    logger.debug(`[SSE] 新客户端连接 | IP: ${clientIP} | 连接数: ${clients.size}`);
 
     let cleanedUp = false;
 
@@ -125,7 +125,7 @@ exports.streamEvents = (req, res) => {
                 cleanup('connection-destroyed');
                 return;
             }
-            
+
             // 发送keep-alive并检查是否成功
             const success = res.write(': keep-alive\n\n');
             if (!success) {
@@ -164,7 +164,7 @@ exports.streamEvents = (req, res) => {
 
         const logLevel = reason === 'aborted' ? 'silly' : 'debug';
         const errorSuffix = error && error.message ? ` - ${error.message}` : '';
-        logger[logLevel](`[SSE] 客户端连接已清理: ${clientId} (IP: ${clientIP}, 剩余 ${clients.size} 个连接, 原因=${reason})${errorSuffix}`);
+        logger[logLevel](`[SSE] 客户端断开 | IP: ${clientIP} | 连接数: ${clients.size} | 原因: ${reason}${errorSuffix}`);
 
         if (error && reason !== 'aborted') {
             logger.silly(`[SSE] 客户端连接异常堆栈 ${clientId} (${reason}):`, error);

@@ -15,7 +15,7 @@ const logger = require('../../config/logger');
 const { TraceManager } = require('../../utils/trace');
 const settingsService = require('../settings.service');
 const { settingsWorker } = require('../worker.manager');
-const { settingsUpdateQueue, redis, bullConnection } = require('../../config/redis');
+const { redis } = require('../../config/redis');
 
 /**
  * 创建认证错误对象
@@ -59,15 +59,15 @@ function generateUniqueId() {
  */
 function validateAndFilterSettings(reqBody = {}) {
   const { newPassword, adminSecret, ...rawSettings } = reqBody;
-  
+
   // 禁止直接更新的敏感字段
   const forbiddenKeys = ['AI_KEY', 'AI_API_KEY', 'OPENAI_API_KEY'];
-  
+
   // 过滤掉敏感字段
   const settingsToUpdate = Object.fromEntries(
     Object.entries(rawSettings).filter(([key]) => !forbiddenKeys.includes(key))
   );
-  
+
   return { newPassword, adminSecret, settingsToUpdate };
 }
 
@@ -88,10 +88,10 @@ function validateAndFilterSettings(reqBody = {}) {
 async function handlePasswordOperations(settingsToUpdate, newPassword, allSettings) {
   // 检查当前是否已设置密码
   const passwordIsCurrentlySet = Boolean(allSettings.PASSWORD_HASH && allSettings.PASSWORD_HASH !== '');
-  
+
   // 检查是否尝试设置或修改密码
   const isTryingToSetOrChangePassword = Boolean(newPassword && newPassword.trim() !== '');
-  
+
   // 检查是否尝试禁用密码
   const isTryingToDisablePassword = Object.prototype.hasOwnProperty.call(settingsToUpdate, 'PASSWORD_ENABLED')
     && settingsToUpdate.PASSWORD_ENABLED === 'false';
@@ -221,8 +221,8 @@ async function verifySensitiveOperations(isSensitiveOperation, adminSecret, audi
 async function dispatchUpdateTask(settingsToUpdate, updateId, hasAuthChanges, buildAuditContext) {
   try {
     // 判断是否使用同步路径（无Redis或Redis不可用）
-    const useSyncPath = !bullConnection || (redis && redis.isNoRedis === true);
-    
+    const useSyncPath = (redis && redis.isNoRedis === true);
+
     // 如果有认证更改且使用同步路径，直接同步更新
     if (hasAuthChanges && useSyncPath) {
       await settingsService.updateSettings(settingsToUpdate);
@@ -233,31 +233,20 @@ async function dispatchUpdateTask(settingsToUpdate, updateId, hasAuthChanges, bu
   }
 
   try {
-    // 尝试投递到队列
-    await settingsUpdateQueue.add('update_settings', { settingsToUpdate, updateId });
-
-    // 如果队列不可用，使用工作线程
-    if (!bullConnection || (redis && redis.isNoRedis === true)) {
-      try {
-        const message = TraceManager.injectToWorkerMessage({ type: 'update_settings', payload: { settingsToUpdate, updateId } });
-        settingsWorker.postMessage(message);
-      } catch (e) {
-        logger.debug('线程消息发送失败（忽略）:', e && e.message);
-      }
-    }
-
-    logger.info('设置更新任务已投递到队列');
-    return { type: 'async_success', updateId };
-  } catch (e) {
-    logger.warn('投递到设置队列失败，降级使用线程消息：', e && e.message);
+    // 直接使用工作线程处理
     try {
-      // 降级使用工作线程
       const message = TraceManager.injectToWorkerMessage({ type: 'update_settings', payload: { settingsToUpdate, updateId } });
       settingsWorker.postMessage(message);
-    } catch (workerError) {
-      logger.debug('线程消息降级也失败（忽略）:', workerError && workerError.message);
+      logger.info('设置更新任务已发送至工作线程');
+    } catch (e) {
+      logger.error('线程消息发送失败:', e && e.message);
+      throw e; // 重新抛出以便上层处理
     }
+
     return { type: 'async_success', updateId };
+  } catch (e) {
+    logger.error('分发设置更新任务失败:', e && e.message);
+    throw e;
   }
 }
 

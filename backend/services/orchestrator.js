@@ -141,7 +141,7 @@ async function acquireFileLock(key, ttlMs) {
     const dir = await ensureLockDir();
     const safeKey = normalizeLockKey(key);
     const filePath = path.join(dir, `${safeKey}.lock`);
-    
+
     // 写入锁信息（包含PID和时间戳）
     const lockInfo = JSON.stringify({
       pid: process.pid,
@@ -149,10 +149,10 @@ async function acquireFileLock(key, ttlMs) {
       instance: INSTANCE_TOKEN,
       key: key
     });
-    
+
     const handle = await fsp.open(filePath, 'wx');
     await handle.writeFile(lockInfo, 'utf8');
-    
+
     const timer = setTimeout(() => {
       releaseFileLock(key).catch((err) => {
         if (err) {
@@ -170,7 +170,7 @@ async function acquireFileLock(key, ttlMs) {
       const dir = lockDirPath;
       const safeKey = normalizeLockKey(key);
       const filePath = path.join(dir, `${safeKey}.lock`);
-      
+
       try {
         const content = await fsp.readFile(filePath, 'utf8');
         const lockInfo = JSON.parse(content);
@@ -217,7 +217,7 @@ async function acquireFileLock(key, ttlMs) {
         }
         logger.debug(`[Orchestrator] 无法解析锁文件，保持锁存在状态: ${parseError.message}`);
       }
-      
+
       return { ok: false, reason: 'exists' };
     }
     return { ok: false, reason: 'error', error };
@@ -586,7 +586,7 @@ function start() {
 async function performDbMaintenance() {
   const { dbRun } = require('../db/multi-db');
   const startAll = Date.now();
-  const dbs = ['main', 'index', 'settings', 'history'];
+  const dbs = ['main', 'index', 'settings'];
 
   for (let i = 0; i < dbs.length; i++) {
     const db = dbs[i];
@@ -618,11 +618,11 @@ function scheduleDbMaintenance() {
     const timeoutMs = Number(process.env.DB_MAINT_TIMEOUT_MS || (10 * 60 * 1000));
 
     setTimeout(() => {
-      runWhenIdle('db-maintenance', performDbMaintenance, { startDelayMs: 0, retryIntervalMs: retryMs, timeoutMs, lockTtlSec: Math.ceil(timeoutMs/1000), category: 'index-maintenance' });
+      runWhenIdle('db-maintenance', performDbMaintenance, { startDelayMs: 0, retryIntervalMs: retryMs, timeoutMs, lockTtlSec: Math.ceil(timeoutMs / 1000), category: 'index-maintenance' });
     }, 30000);
 
     setInterval(() => {
-      runWhenIdle('db-maintenance', performDbMaintenance, { startDelayMs: 0, retryIntervalMs: retryMs, timeoutMs, lockTtlSec: Math.ceil(timeoutMs/1000), category: 'index-maintenance' });
+      runWhenIdle('db-maintenance', performDbMaintenance, { startDelayMs: 0, retryIntervalMs: retryMs, timeoutMs, lockTtlSec: Math.ceil(timeoutMs / 1000), category: 'index-maintenance' });
     }, intervalMs);
   } catch (error) {
     logSoftIgnore('注册数据库维护定时器', error);

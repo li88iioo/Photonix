@@ -254,7 +254,7 @@ async function queueThumbStatusUpdate(relPath, mtime, status) {
             if (!prev || (mtime || 0) >= (prev.mtime || 0)) {
                 thumbStatusPending.set(relPath, { mtime: mtime || Date.now(), status });
             }
-            
+
             // 在锁内检查和设置调度标志，确保原子性
             if (!thumbStatusFlushScheduled) {
                 thumbStatusFlushScheduled = true;
@@ -522,7 +522,7 @@ function setupThumbnailWorkerListeners() {
                             }
                             if (corruptCount >= 10) {
                                 try {
-                                    await fs.unlink(task.filePath).catch(() => {});
+                                    await fs.unlink(task.filePath).catch(() => { });
                                     logger.error(`${workerLogId} [CORRUPTED_IMAGE_DELETED] 已因出现 ${corruptCount} 次"${CORRUPT_PARSE_SNIPPET}"而删除源文件: ${task.filePath} (relative=${relativePath})`);
                                     activeTasks.delete(relativePath);
                                     failureCounts.delete(relativePath);
@@ -618,17 +618,24 @@ function setupThumbnailWorkerListeners() {
         // 监听工作线程错误和退出事件
         worker.on('error', (err) => logger.error(`缩略图工人 ${index + 1} 遇到错误:`, err));
         worker.on('exit', (code) => {
-            if (code !== 0) logger.warn(`缩略图工人 ${index + 1} 退出，代码: ${code}`);
+            // 检查是否为预期终止（空闲回收或手动销毁）
+            const isExpectedTermination = worker.__expectedTermination || false;
+
+            if (code !== 0 && !isExpectedTermination) {
+                logger.warn(`缩略图工人 ${index + 1} 意外退出，代码: ${code}`);
+            } else if (code !== 0 && isExpectedTermination) {
+                logger.debug(`缩略图工人 ${index + 1} 已按预期终止，代码: ${code}`);
+            }
         });
     });
-    
+
     logger.debug(`缩略图工作线程监听器已设置完成，共 ${thumbnailWorkers.length} 个工作线程`);
     logger.debug(`当前空闲工作线程数量: ${idleThumbnailWorkers.length}`);
     // 绑定按需队列的空闲触发（幂等）
     if (!__drainBound) {
-        try { 
-            eventBus.on('thumb-worker-idle', drainOndemand); 
-            __drainBound = true; 
+        try {
+            eventBus.on('thumb-worker-idle', drainOndemand);
+            __drainBound = true;
         } catch (error) {
             logger.debug('[缩略图] 绑定事件监听器失败:', error.message);
         }
@@ -706,20 +713,20 @@ function dispatchThumbnailTask(task, context = 'ondemand') {
         ondemandQueue.push(safeTask);
         queuedSet.add(safeTask.relativePath);
         updateQueueMetric();
-        
+
         // 异步触发队列处理
-        try { 
-            setImmediate(() => { 
-                try { 
-                    drainOndemand(); 
+        try {
+            setImmediate(() => {
+                try {
+                    drainOndemand();
                 } catch (error) {
                     logger.debug('[按需生成] 队列处理失败:', error.message);
                 }
-            }); 
+            });
         } catch (error) {
             logger.debug('[按需生成] 触发setImmediate失败:', error.message);
         }
-        
+
         logger.debug(`[按需生成] 已入队等待空闲: ${safeTask.relativePath} (队列=${ondemandQueue.length})`);
         return true;
     }
@@ -866,11 +873,11 @@ async function batchGenerateMissingThumbnails(limit = 1000) {
         } catch (error) {
             logThumbIgnore('批量缩略图任务等待空闲窗口', error);
         }
-        
+
         // 使用Repository优先查询明确需要补全的状态
         const ThumbStatusRepository = require('../repositories/thumbStatus.repo');
         const thumbStatusRepo = new ThumbStatusRepository();
-        
+
         let missingThumbs = await thumbStatusRepo.getByStatus(['missing', 'failed', 'pending'], limit);
 
         logger.debug(`[批量补全] 明确缺失状态查询结果: ${missingThumbs?.length || 0} 个`);
@@ -1091,19 +1098,19 @@ async function batchGenerateMissingThumbnails(limit = 1000) {
             const dispatched = dispatchThumbnailTask(task, 'batch');
             if (dispatched) {
                 queued++;
-                
+
                 // 立即更新数据库状态为processing，避免下一轮重复查询
                 // 注意：不更新last_checked，保持原有的排序逻辑
                 try {
                     const { runAsync } = require('../db/multi-db');
-                    await runAsync('main', 
+                    await runAsync('main',
                         'UPDATE thumb_status SET status = ? WHERE path = ?',
                         ['processing', sanitizedRelativePath]
                     );
                 } catch (e) {
                     logger.debug(`[批量补全] 更新任务状态失败: ${sanitizedRelativePath}, ${e.message}`);
                 }
-                
+
                 i++;
 
                 // 智能延迟控制：根据负载状态添加延迟，避免系统过载
@@ -1144,7 +1151,7 @@ async function batchGenerateMissingThumbnails(limit = 1000) {
                 queuedLength: ondemandQueue.length
             });
         }
-        
+
         try {
             state.thumbnail.setBatchActive(false);
         } catch (error) {

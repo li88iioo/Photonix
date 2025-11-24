@@ -14,8 +14,7 @@
         "axios": "^1.6.0",
         "axios-retry": "^3.9.1",
         "bcryptjs": "^3.0.2",
-        "better-sqlite3": "^9.4.0",
-        "bullmq": "^5.56.1",
+        "better-sqlite3": "^9.6.0",
         "cheerio": "^1.1.2",
         "chokidar": "^3.5.3",
         "compression": "^1.7.4",
@@ -32,7 +31,6 @@
         "rate-limit-redis": "^3.1.0",
         "rss-parser": "^3.13.0",
         "sharp": "^0.33.4",
-        "sqlite3": "^5.1.7",
         "uuid": "^9.0.1",
         "winston": "^3.11.0",
         "yaml": "^2.4.2"

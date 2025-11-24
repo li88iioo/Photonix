@@ -10,12 +10,12 @@ const sharp = require('sharp');
 const logger = require('../config/logger');
 // 限制 file.service 中偶发 metadata 读取的缓存影响
 try {
-  const memMb = Number(process.env.SHARP_CACHE_MEMORY_MB || 16);
-  const items = Number(process.env.SHARP_CACHE_ITEMS || 50);
-  const files = Number(process.env.SHARP_CACHE_FILES || 0);
-  sharp.cache({ memory: memMb, items, files });
+    const memMb = Number(process.env.SHARP_CACHE_MEMORY_MB || 16);
+    const items = Number(process.env.SHARP_CACHE_ITEMS || 50);
+    const files = Number(process.env.SHARP_CACHE_FILES || 0);
+    sharp.cache({ memory: memMb, items, files });
 } catch (error) {
-  logger.silly(`[FileService] Sharp 缓存配置失败，使用默认值: ${error && error.message}`);
+    logger.silly(`[FileService] Sharp 缓存配置失败，使用默认值: ${error && error.message}`);
 }
 const { redis } = require('../config/redis');
 const { safeRedisSet, safeRedisDel } = require('../utils/helpers');
@@ -57,14 +57,14 @@ class BatchLogStats {
         this.flushInterval = Number(process.env.BATCH_LOG_FLUSH_INTERVAL || 5000); // 5秒刷新一次统计
         this.lastFlush = Date.now();
     }
-    
+
     reset() {
         this.dbHitCount = 0;
         this.dbMissCount = 0;
         this.currentDir = '';
         this.processedDirs = new Set();
     }
-    
+
     recordDbHit(filePath) {
         this.dbHitCount++;
         const dir = path.dirname(filePath);
@@ -74,7 +74,7 @@ class BatchLogStats {
         }
         this.checkFlush();
     }
-    
+
     recordDbMiss(filePath) {
         this.dbMissCount++;
         const dir = path.dirname(filePath);
@@ -84,26 +84,26 @@ class BatchLogStats {
         }
         this.checkFlush();
     }
-    
+
     checkFlush() {
         const now = Date.now();
         if (now - this.lastFlush > this.flushInterval && (this.dbHitCount > 0 || this.dbMissCount > 0)) {
             this.flush();
         }
     }
-    
+
     flush() {
         if (this.dbHitCount > 0 || this.dbMissCount > 0) {
             const dirCount = this.processedDirs.size;
             const totalFiles = this.dbHitCount + this.dbMissCount;
-            
+
             if (this.dbHitCount > 0) {
                 logger.debug(`批量使用数据库预存储尺寸: ${this.dbHitCount} 个文件 (${dirCount} 个目录)`);
             }
             if (this.dbMissCount > 0) {
                 logger.debug(`动态获取尺寸: ${this.dbMissCount} 个文件 (${dirCount} 个目录)`);
             }
-            
+
             this.reset();
             this.lastFlush = Date.now();
         }
@@ -293,8 +293,6 @@ async function getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, 
     const mediaExclusionCondition = `NOT EXISTS (SELECT 1 FROM thumb_status ts WHERE ts.path = i.path AND ts.status = 'permanent_failed')`;
 
     // 构建排序表达式
-    const now = Date.now();
-    const dayAgo = Math.floor(now - Number(process.env.CACHE_CLEANUP_DAYS || 1) * 24 * 60 * 60 * 1000);
     let orderBy = '';
 
     switch (sort) {
@@ -314,17 +312,8 @@ async function getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, 
             // 不跨库 JOIN，先按名称排序，稍后在页面内做二次排序
             orderBy = `ORDER BY is_dir DESC, name COLLATE NOCASE ASC`;
             break;
-        default: // smart
-            if (!prefix) {
-                orderBy = `ORDER BY is_dir DESC,
-                                   CASE WHEN is_dir=1 THEN CASE WHEN mtime > ${dayAgo} THEN 0 ELSE 1 END END ASC,
-                                   CASE WHEN is_dir=1 AND mtime > ${dayAgo} THEN mtime END DESC,
-                                   CASE WHEN is_dir=1 AND mtime <= ${dayAgo} THEN name END COLLATE NOCASE ASC,
-                                   CASE WHEN is_dir=0 THEN name END COLLATE NOCASE ASC`;
-            } else {
-                // 子目录 smart：历史优先改为名称排序，稍后在页面内做二次排序
-                orderBy = `ORDER BY is_dir DESC, name COLLATE NOCASE ASC`;
-            }
+        default: // smart 或其他未知值 -> 默认为 mtime_desc
+            orderBy = `ORDER BY is_dir DESC, mtime DESC`;
     }
 
     // albums 子查询（不跨库 JOIN）
@@ -415,17 +404,15 @@ async function getDirectoryContents(relativePathPrefix, page, limit, userId, sor
         return { items: [], totalPages: 1, totalResults: 0 };
     }
 
-    // 处理排序
-    const rowsEffective = await processSorting(rows, sort, relativePathPrefix, userId);
-
+    // 4. 构造返回结果
     // 处理视频HLS状态
-    const hlsReadySet = await processHlsStatus(rowsEffective);
+    const hlsReadySet = await processHlsStatus(rows);
 
     // 处理相册封面
-    const coversMap = await processAlbumCovers(rowsEffective);
+    const coversMap = await processAlbumCovers(rows);
 
     // 构建最终结果
-    const items = await buildItems(rowsEffective, hlsReadySet, coversMap);
+    const items = await buildItems(rows, hlsReadySet, coversMap);
 
     return {
         items,
@@ -453,47 +440,7 @@ async function validateDirectory(relativePathPrefix) {
     return { exists: true, directory };
 }
 
-/**
- * 处理排序逻辑
- * ✅ 长期优化1: 使用Redis缓存浏览记录，减少history DB查询10-20ms
- */
-async function processSorting(rows, sort, relativePathPrefix, userId) {
-    const isSubdirSmart = sort === 'smart' && (relativePathPrefix || '').length > 0;
-    const needViewedSort = sort === 'viewed_desc' || isSubdirSmart;
 
-    if (!needViewedSort || !userId) {
-        return rows;
-    }
-
-    const albumRows = rows.filter(r => r.is_dir === 1);
-    if (albumRows.length === 0) {
-        return rows;
-    }
-
-    try {
-        const albumPaths = albumRows.map(r => r.path);
-        
-        // ✅ 优化：使用Redis缓存代替直接查询history DB
-        const { getViewedAlbumsCache } = require('./viewedCache.service');
-        const lastViewedMap = await getViewedAlbumsCache(userId, albumPaths);
-        
-        const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
-
-        const albumsSorted = albumRows.slice().sort((a, b) =>
-            (lastViewedMap.get(b.path) || 0) - (lastViewedMap.get(a.path) || 0) ||
-            collator.compare(a.name, b.name)
-        );
-
-        const mediaRows = rows.filter(r => r.is_dir === 0).slice().sort((a, b) =>
-            collator.compare(a.name, b.name)
-        );
-
-        return [...albumsSorted, ...mediaRows];
-    } catch (e) {
-        logger.debug('读取最近浏览排序信息失败，回退为名称排序', e);
-        return rows;
-    }
-}
 
 /**
  * 处理视频HLS状态
@@ -650,10 +597,10 @@ class MediaDimensionsManager {
      */
     isValidDbDimensions(dimensions) {
         return dimensions &&
-               typeof dimensions.width === 'number' &&
-               typeof dimensions.height === 'number' &&
-               dimensions.width > 0 &&
-               dimensions.height > 0;
+            typeof dimensions.width === 'number' &&
+            typeof dimensions.height === 'number' &&
+            dimensions.width > 0 &&
+            dimensions.height > 0;
     }
 
     /**
@@ -784,7 +731,7 @@ async function invalidateCoverCache(changedPath) {
         // 获取所有受影响的目录路径
         const affectedPaths = getAllParentPaths(changedPath);
         const cacheKeys = affectedPaths.map(p => `cover_info:${p.replace(PHOTOS_DIR, '').replace(/\\/g, '/')}`);
-        
+
         if (cacheKeys.length > 0) {
             await safeRedisDel(redis, cacheKeys, '封面缓存清理');
             logger.debug(`已清除 ${cacheKeys.length} 个封面缓存: ${changedPath}`);
@@ -803,12 +750,12 @@ async function invalidateCoverCache(changedPath) {
 function getAllParentPaths(filePath) {
     const paths = [];
     let currentPath = path.dirname(filePath);
-    
+
     while (currentPath !== PHOTOS_DIR && currentPath.startsWith(PHOTOS_DIR)) {
         paths.push(currentPath);
         currentPath = path.dirname(currentPath);
     }
-    
+
     return paths;
 }
 

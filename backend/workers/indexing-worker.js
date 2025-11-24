@@ -8,14 +8,14 @@ const sharp = require('sharp');
 const { TraceManager } = require('../utils/trace');
 // 控制 sharp 缓存与并行，避免首扫堆积内存
 try {
-  const memMb = Number(process.env.SHARP_CACHE_MEMORY_MB || 32);
-  const items = Number(process.env.SHARP_CACHE_ITEMS || 100);
-  const files = Number(process.env.SHARP_CACHE_FILES || 0);
-  sharp.cache({ memory: memMb, items, files });
-  const { SHARP_CONCURRENCY } = require('../config');
-  if (Number(SHARP_CONCURRENCY) > 0) sharp.concurrency(Number(SHARP_CONCURRENCY));
+    const memMb = Number(process.env.SHARP_CACHE_MEMORY_MB || 32);
+    const items = Number(process.env.SHARP_CACHE_ITEMS || 100);
+    const files = Number(process.env.SHARP_CACHE_FILES || 0);
+    sharp.cache({ memory: memMb, items, files });
+    const { SHARP_CONCURRENCY } = require('../config');
+    if (Number(SHARP_CONCURRENCY) > 0) sharp.concurrency(Number(SHARP_CONCURRENCY));
 } catch (sharpConfigError) {
-  baseLogger.debug('[索引线程] 初始化 Sharp 配置失败，已使用默认设置', sharpConfigError && sharpConfigError.message ? { error: sharpConfigError.message } : sharpConfigError);
+    baseLogger.debug('[索引线程] 初始化 Sharp 配置失败，已使用默认设置', sharpConfigError && sharpConfigError.message ? { error: sharpConfigError.message } : sharpConfigError);
 }
 const { initializeConnections, getDB, dbRun, dbGet, runPreparedBatch, adaptDbTimeouts } = require('../db/multi-db');
 const { tempFileManager } = require('../utils/tempFileManager');
@@ -44,8 +44,8 @@ class DbTimeoutManager {
                 winston.format.printf(info => {
                     const date = new Date(info.timestamp);
                     const time = date.toTimeString().split(' ')[0];
-                const normalized = normalizeMessagePrefix(info.message);
-                return `[${time}] ${info.level}: ${LOG_PREFIXES.DB_TIMEOUT_MANAGER || '数据库超时'} ${normalized}`;
+                    const normalized = normalizeMessagePrefix(info.message);
+                    return `[${time}] ${info.level}: ${LOG_PREFIXES.DB_TIMEOUT_MANAGER || '数据库超时'} ${normalized}`;
                 })
             ),
             transports: [new winston.transports.Console()],
@@ -130,7 +130,7 @@ const dbTimeoutManager = new DbTimeoutManager();
     });
     const { dbAll } = require('../db/multi-db');
     const { promises: fs } = require('fs');
-    
+
     const CONCURRENT_LIMIT = require('../config').INDEX_CONCURRENCY;
 
     // 内存优化：限制缓存大小，避免内存无限增长
@@ -392,7 +392,7 @@ const dbTimeoutManager = new DbTimeoutManager();
             logger.error('[INDEXING-WORKER] 重建 album_covers 失败:', e);
         }
     }
-    
+
     // 内存优化：本地缓存清理（每2分钟一次）
     const cacheCleanupInterval = setInterval(() => {
         // 清理本地缓存大小（externalCache会自动管理）
@@ -465,18 +465,18 @@ const dbTimeoutManager = new DbTimeoutManager();
             for (const entry of entries) {
                 // 跳过系统目录、隐藏目录和临时目录
                 if (entry.name === '@eaDir' || entry.name === '.tmp' || entry.name.startsWith('.')) continue;
-                
+
                 const fullPath = path.join(dir, entry.name);
                 const entryRelativePath = path.join(relativePath, entry.name);
                 const stats = await fs.stat(fullPath).catch(() => ({ mtimeMs: 0 }));
-                
+
                 if (entry.isDirectory()) {
                     yield { type: 'album', path: entryRelativePath, name: entry.name, mtime: stats.mtimeMs };
                     yield* walkDirStream(fullPath, entryRelativePath);
                 } else if (entry.isFile() && /\.(jpe?g|png|webp|gif|mp4|webm|mov)$/i.test(entry.name)) {
                     // 跳过临时文件
                     if (tempFileManager.isTempFile(entry.name)) continue;
-                    
+
                     const type = /\.(jpe?g|png|webp|gif)$/i.test(entry.name) ? 'photo' : 'video';
                     yield { type, path: entryRelativePath, name: entry.name, mtime: stats.mtimeMs };
                 }
@@ -516,7 +516,7 @@ const dbTimeoutManager = new DbTimeoutManager();
                     logger.debug('[INDEXING-WORKER] 未发现索引断点，将从头开始');
                     await idxRepo.setIndexStatus('building');
                     await idxRepo.setProcessedFiles(0);
-                    
+
                     // 使用事务确保items和items_fts的删除是原子的
                     await withTransaction('main', async () => {
                         await dbRun('main', "DELETE FROM items");
@@ -528,12 +528,12 @@ const dbTimeoutManager = new DbTimeoutManager();
                 // 统一从运行参数派生（支持 env 覆盖）
                 const { INDEX_BATCH_SIZE } = require('../config');
                 const batchSize = INDEX_BATCH_SIZE;
-                
+
                 // 使用 OR IGNORE 避免断点续跑时重复插入 items；FTS 使用 OR REPLACE 确保令牌更新
                 const itemsStmt = getDB('main').prepare("INSERT OR IGNORE INTO items (name, path, type, mtime, width, height) VALUES (?, ?, ?, ?, ?, ?)");
                 const thumbUpsertStmt = getDB('main').prepare("INSERT INTO thumb_status(path, mtime, status, last_checked) VALUES(?, ?, 'pending', 0) ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, status='pending'");
                 const ftsStmt = getDB('main').prepare("INSERT OR REPLACE INTO items_fts (rowid, name) VALUES (?, ?)");
-                
+
                 let batch = [];
                 let shouldProcess = !lastProcessedPath;
 
@@ -580,11 +580,13 @@ const dbTimeoutManager = new DbTimeoutManager();
                     count += batch.length;
                     await idxRepo.setProcessedFiles(count);
                 }
-                
-                await new Promise((resolve, reject) => itemsStmt.finalize(err => err ? reject(err) : resolve()));
-                await new Promise((resolve, reject) => ftsStmt.finalize(err => err ? reject(err) : resolve()));
-                await new Promise((resolve, reject) => thumbUpsertStmt.finalize(err => err ? reject(err) : resolve()));
-                
+
+                // better-sqlite3 doesn't require manual finalize, but we can call it if we want to be explicit.
+                // It does NOT take a callback.
+                try { itemsStmt.finalize(); } catch (e) { }
+                try { ftsStmt.finalize(); } catch (e) { }
+                try { thumbUpsertStmt.finalize(); } catch (e) { }
+
                 await idxRepo.deleteResumeKey('last_processed_path');
                 await idxRepo.setIndexStatus('complete');
                 await idxRepo.setProcessedFiles(count);
@@ -623,20 +625,20 @@ const dbTimeoutManager = new DbTimeoutManager();
                 }));
             }
         },
-        
+
         async processBatchInTransactionOptimized(processedBatch, itemsStmt, ftsStmt, thumbUpsertStmt) {
             for (const item of processedBatch) {
                 // 1) 尝试插入 items（OR IGNORE）
-                const insertRes = await new Promise((resolve, reject) => {
-                    itemsStmt.run(item.name, item.path, item.type, item.mtime, item.width, item.height, function(err) {
-                        if (err) return reject(err);
-                        resolve({ lastID: this.lastID, changes: this.changes });
-                    });
-                });
+                let rowId;
+                try {
+                    const info = itemsStmt.run(item.name, item.path, item.type, item.mtime, item.width, item.height);
+                    rowId = info.lastInsertRowid;
+                } catch (err) {
+                    throw err;
+                }
 
                 // 2) 获取 rowid：若忽略（已存在），查询现有 id
-                let rowId = insertRes.lastID;
-                if (!rowId) {
+                if (!rowId || rowId.toString() === '0') { // lastInsertRowid is 0 if no row inserted (OR IGNORE)
                     const ItemsRepository = require('../repositories/items.repo');
                     const itemsRepo = new ItemsRepository();
                     const existingId = await itemsRepo.getIdByPath(item.path);
@@ -652,18 +654,11 @@ const dbTimeoutManager = new DbTimeoutManager();
                 const typeLabel = item.type === 'video' ? ' video' : ' photo';
                 const searchableText = baseText + typeLabel;
                 const tokenizedName = createNgrams(searchableText, 1, 2);
-                await new Promise((resolve, reject) => {
-                    ftsStmt.run(rowId, tokenizedName, (err) => {
-                         if (err) return reject(err);
-                         resolve();
-                    });
-                });
+                ftsStmt.run(rowId, tokenizedName);
 
                 // 4) 标记缩略图状态（只在 photo/video 上更新）
                 if (item.type === 'photo' || item.type === 'video') {
-                    await new Promise((resolve, reject) => {
-                        thumbUpsertStmt.run(item.path, item.mtime, (err) => err ? reject(err) : resolve());
-                    });
+                    thumbUpsertStmt.run(item.path, item.mtime);
                 }
             }
         },
@@ -681,147 +676,145 @@ const dbTimeoutManager = new DbTimeoutManager();
                 await safeRedisSet(redis, 'indexing_in_progress', '1', 'EX', 60, '索引进行中标记');
 
                 await withTransaction('main', async () => {
-                
-                const addOperations = [];
-                const deletePaths = [];
 
-                for (const change of changes) {
-                    if (!change || typeof change.filePath !== 'string' || change.filePath.length === 0) {
-                        continue;
-                    }
-                    const relativePath = path.relative(photosDir, change.filePath).replace(/\\/g, '/');
-                    if (!relativePath || relativePath === '..' || relativePath.startsWith('..')) {
-                        // 不在照片目录下，忽略
-                        continue;
-                    }
-                    // 统一忽略数据库相关文件（避免误入索引管道）
-                    if (/\.(db|db3|sqlite|sqlite3|wal|shm)$/i.test(relativePath)) {
-                        continue;
-                    }
-                    // 增加对 HLS 文件的忽略，防止索引器自我循环
-                    if (/\.(m3u8|ts)$/i.test(relativePath)) {
-                        continue;
-                    }
-                    tagsToInvalidate.add(`item:${relativePath}`);
-                    let parentDir = path.dirname(relativePath);
-                    while (parentDir !== '.') {
-                        tagsToInvalidate.add(`album:/${parentDir}`);
-                        affectedAlbums.add(parentDir);
-                        parentDir = path.dirname(parentDir);
-                    }
-                    tagsToInvalidate.add('album:/');
+                    const addOperations = [];
+                    const deletePaths = [];
 
-                    if (change.type === 'add' || change.type === 'addDir') {
-                        const stats = await fs.stat(change.filePath).catch(() => ({ mtimeMs: Date.now() }));
-                        const name = path.basename(relativePath);
-                        const type = change.type === 'addDir' ? 'album' : (/\.(jpe?g|png|webp|gif)$/i.test(name) ? 'photo' : 'video');
-                        addOperations.push({ name, path: relativePath, type, mtime: stats.mtimeMs });
-                        if (type === 'video') {
-                            videoAdds.push(relativePath);
+                    for (const change of changes) {
+                        if (!change || typeof change.filePath !== 'string' || change.filePath.length === 0) {
+                            continue;
                         }
-                    } else if (change.type === 'unlink' || change.type === 'unlinkDir') {
-                        deletePaths.push(relativePath);
-                    }
-                }
-                
-                if (deletePaths.length > 0) {
-                    const ItemsRepository = require('../repositories/items.repo');
-                    const ThumbStatusRepository = require('../repositories/thumbStatus.repo');
-                    
-                    const itemsRepo = new ItemsRepository();
-                    const thumbStatusRepo = new ThumbStatusRepository();
-                    
-                    const CHUNK = 500;
-                    for (let i = 0; i < deletePaths.length; i += CHUNK) {
-                        const slice = deletePaths.slice(i, i + CHUNK);
-                        
-                        // 使用Repository层进行事务保护的批量删除
-                        await withTransaction('main', async () => {
-                            await itemsRepo.deleteBatch(slice, true); // includeSubpaths=true
-                            await thumbStatusRepo.deleteBatch(slice, false);
-                        });
-                    }
-                }
-                
-                if (addOperations.length > 0) {
-                    const itemsStmt = getDB('main').prepare("INSERT OR IGNORE INTO items (name, path, type, mtime, width, height) VALUES (?, ?, ?, ?, ?, ?)");
-                    const ftsStmt = getDB('main').prepare("INSERT INTO items_fts (rowid, name) VALUES (?, ?)");
-                    const thumbUpsertStmt = getDB('main').prepare("INSERT INTO thumb_status(path, mtime, status, last_checked) VALUES(?, ?, 'pending', 0) ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, status='pending'");
-                    const processedAdds = await processDimensionsInParallel(addOperations, photosDir);
-                    await tasks.processBatchInTransactionOptimized(processedAdds, itemsStmt, ftsStmt, thumbUpsertStmt);
-
-                    // 通用finalize处理函数
-                    const finalizeWithErrorHandling = async (stmt, stmtName) => {
-                        try {
-                            await new Promise((resolve, reject) => stmt.finalize(err => err ? reject(err) : resolve()));
-                        } catch (e) {
-                            logger.debug(`Finalizing ${stmtName} failed (ignored):`, e.message);
+                        const relativePath = path.relative(photosDir, change.filePath).replace(/\\/g, '/');
+                        if (!relativePath || relativePath === '..' || relativePath.startsWith('..')) {
+                            // 不在照片目录下，忽略
+                            continue;
                         }
-                    };
+                        // 统一忽略数据库相关文件（避免误入索引管道）
+                        if (/\.(db|db3|sqlite|sqlite3|wal|shm)$/i.test(relativePath)) {
+                            continue;
+                        }
+                        // 增加对 HLS 文件的忽略，防止索引器自我循环
+                        if (/\.(m3u8|ts)$/i.test(relativePath)) {
+                            continue;
+                        }
+                        tagsToInvalidate.add(`item:${relativePath}`);
+                        let parentDir = path.dirname(relativePath);
+                        while (parentDir !== '.') {
+                            tagsToInvalidate.add(`album:/${parentDir}`);
+                            affectedAlbums.add(parentDir);
+                            parentDir = path.dirname(parentDir);
+                        }
+                        tagsToInvalidate.add('album:/');
 
-                    // 并行finalize所有语句
-                    await Promise.allSettled([
-                        finalizeWithErrorHandling(itemsStmt, 'itemsStmt'),
-                        finalizeWithErrorHandling(ftsStmt, 'ftsStmt'),
-                        finalizeWithErrorHandling(thumbUpsertStmt, 'thumbUpsertStmt')
-                    ]);
-                }
+                        if (change.type === 'add' || change.type === 'addDir') {
+                            const stats = await fs.stat(change.filePath).catch(() => ({ mtimeMs: Date.now() }));
+                            const name = path.basename(relativePath);
+                            const type = change.type === 'addDir' ? 'album' : (/\.(jpe?g|png|webp|gif)$/i.test(name) ? 'photo' : 'video');
+                            addOperations.push({ name, path: relativePath, type, mtime: stats.mtimeMs });
+                            if (type === 'video') {
+                                videoAdds.push(relativePath);
+                            }
+                        } else if (change.type === 'unlink' || change.type === 'unlinkDir') {
+                            deletePaths.push(relativePath);
+                        }
+                    }
 
-                // 基于变更的相册集，增量维护 album_covers（UPSERT）
-                await ensureAlbumCoversTable();
-                const upsertSql = `INSERT INTO album_covers (album_path, cover_path, width, height, mtime)
+                    if (deletePaths.length > 0) {
+                        const ItemsRepository = require('../repositories/items.repo');
+                        const ThumbStatusRepository = require('../repositories/thumbStatus.repo');
+
+                        const itemsRepo = new ItemsRepository();
+                        const thumbStatusRepo = new ThumbStatusRepository();
+
+                        const CHUNK = 500;
+                        for (let i = 0; i < deletePaths.length; i += CHUNK) {
+                            const slice = deletePaths.slice(i, i + CHUNK);
+
+                            // 使用Repository层进行事务保护的批量删除
+                            await withTransaction('main', async () => {
+                                await itemsRepo.deleteBatch(slice, true); // includeSubpaths=true
+                                await thumbStatusRepo.deleteBatch(slice, false);
+                            });
+                        }
+                    }
+
+                    if (addOperations.length > 0) {
+                        const itemsStmt = getDB('main').prepare("INSERT OR IGNORE INTO items (name, path, type, mtime, width, height) VALUES (?, ?, ?, ?, ?, ?)");
+                        const ftsStmt = getDB('main').prepare("INSERT INTO items_fts (rowid, name) VALUES (?, ?)");
+                        const thumbUpsertStmt = getDB('main').prepare("INSERT INTO thumb_status(path, mtime, status, last_checked) VALUES(?, ?, 'pending', 0) ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, status='pending'");
+                        const processedAdds = await processDimensionsInParallel(addOperations, photosDir);
+                        await tasks.processBatchInTransactionOptimized(processedAdds, itemsStmt, ftsStmt, thumbUpsertStmt);
+
+                        // 通用finalize处理函数
+                        const finalizeWithErrorHandling = (stmt, stmtName) => {
+                            try {
+                                stmt.finalize();
+                            } catch (e) {
+                                logger.debug(`Finalizing ${stmtName} failed (ignored):`, e.message);
+                            }
+                        };
+
+                        // 并行finalize所有语句
+                        finalizeWithErrorHandling(itemsStmt, 'itemsStmt');
+                        finalizeWithErrorHandling(ftsStmt, 'ftsStmt');
+                        finalizeWithErrorHandling(thumbUpsertStmt, 'thumbUpsertStmt');
+                    }
+
+                    // 基于变更的相册集，增量维护 album_covers（UPSERT）
+                    await ensureAlbumCoversTable();
+                    const upsertSql = `INSERT INTO album_covers (album_path, cover_path, width, height, mtime)
                                    VALUES (?, ?, ?, ?, ?)
                                    ON CONFLICT(album_path) DO UPDATE SET
                                      cover_path=excluded.cover_path,
                                      width=excluded.width,
                                      height=excluded.height,
                                      mtime=excluded.mtime`;
-                const upsertRows = [];
-                const deleteAlbumPaths = [];
-                for (const albumPath of affectedAlbums) {
-                    // 重新计算该相册的封面（取最新媒体）
-                    const row = await dbGet('main',
-                        `SELECT path, width, height, mtime
+                    const upsertRows = [];
+                    const deleteAlbumPaths = [];
+                    for (const albumPath of affectedAlbums) {
+                        // 重新计算该相册的封面（取最新媒体）
+                        const row = await dbGet('main',
+                            `SELECT path, width, height, mtime
                          FROM items
                          WHERE type IN ('photo','video') AND path LIKE ? || '/%'
                          ORDER BY mtime DESC
                          LIMIT 1`,
-                        [albumPath]
-                    );
-                    if (row && row.path) {
-                        upsertRows.push([albumPath, row.path, row.width || 1, row.height || 1, row.mtime || 0]);
-                    } else {
-                        deleteAlbumPaths.push(albumPath);
+                            [albumPath]
+                        );
+                        if (row && row.path) {
+                            upsertRows.push([albumPath, row.path, row.width || 1, row.height || 1, row.mtime || 0]);
+                        } else {
+                            deleteAlbumPaths.push(albumPath);
+                        }
                     }
-                }
-                if (upsertRows.length > 0) {
-                    try {
-                        const orchestrator = require('../services/orchestrator');
-                        await orchestrator.withAdmission('album-covers-upsert', async () => {
-                            await runPreparedBatchWithRetry(runPreparedBatch, 'main', upsertSql, upsertRows, { manageTransaction: false, chunkSize: 800 }, redis);
-                        });
-                    } catch (err) {
-                        if (/no such table: .*album_covers/i.test(err && err.message)) {
-                            await ensureAlbumCoversTable();
+                    if (upsertRows.length > 0) {
+                        try {
                             const orchestrator = require('../services/orchestrator');
                             await orchestrator.withAdmission('album-covers-upsert', async () => {
                                 await runPreparedBatchWithRetry(runPreparedBatch, 'main', upsertSql, upsertRows, { manageTransaction: false, chunkSize: 800 }, redis);
                             });
-                        } else {
-                            throw err;
+                        } catch (err) {
+                            if (/no such table: .*album_covers/i.test(err && err.message)) {
+                                await ensureAlbumCoversTable();
+                                const orchestrator = require('../services/orchestrator');
+                                await orchestrator.withAdmission('album-covers-upsert', async () => {
+                                    await runPreparedBatchWithRetry(runPreparedBatch, 'main', upsertSql, upsertRows, { manageTransaction: false, chunkSize: 800 }, redis);
+                                });
+                            } else {
+                                throw err;
+                            }
                         }
                     }
-                }
-                if (deleteAlbumPaths.length > 0) {
-                    const placeholders = deleteAlbumPaths.map(() => '?').join(',');
-                    await dbRun('main', `DELETE FROM album_covers WHERE album_path IN (${placeholders})`, deleteAlbumPaths).catch(async (err) => {
-                        if (/no such table: .*album_covers/i.test(err && err.message)) {
-                            await ensureAlbumCoversTable();
-                            await dbRun('main', `DELETE FROM album_covers WHERE album_path IN (${placeholders})`, deleteAlbumPaths).catch(()=>{});
-                        }
-                    });
-                }
-                
+                    if (deleteAlbumPaths.length > 0) {
+                        const placeholders = deleteAlbumPaths.map(() => '?').join(',');
+                        await dbRun('main', `DELETE FROM album_covers WHERE album_path IN (${placeholders})`, deleteAlbumPaths).catch(async (err) => {
+                            if (/no such table: .*album_covers/i.test(err && err.message)) {
+                                await ensureAlbumCoversTable();
+                                await dbRun('main', `DELETE FROM album_covers WHERE album_path IN (${placeholders})`, deleteAlbumPaths).catch(() => { });
+                            }
+                        });
+                    }
+
                 }, { mode: 'IMMEDIATE' });
 
                 if (tagsToInvalidate.size > 0) {
@@ -898,7 +891,7 @@ const dbTimeoutManager = new DbTimeoutManager();
                 }));
             }
         },
-        
+
         // 后台回填缺失或无效的 mtime，避免运行时频繁 fs.stat
         async backfill_missing_mtime(payload) {
             try {
@@ -980,17 +973,17 @@ const dbTimeoutManager = new DbTimeoutManager();
     parentPort.on('message', async (message) => {
         // 提取追踪上下文
         const traceContext = TraceManager.fromWorkerMessage(message);
-        
+
         // 获取实际任务数据
         // 修复消息处理逻辑，确保能正确提取任务类型
-        const task = message && message.type ? 
-            message : 
-            (message && message.payload && message.payload.type) ? 
-            message.payload : 
-            (message && message.task && message.task.type) ? 
-            message.task : 
-            message;
-        
+        const task = message && message.type ?
+            message :
+            (message && message.payload && message.payload.type) ?
+                message.payload :
+                (message && message.task && message.task.type) ?
+                    message.task :
+                    message;
+
         // 定义处理函数
         const processTask = async () => {
             if (isCriticalTaskRunning) {
@@ -1012,7 +1005,7 @@ const dbTimeoutManager = new DbTimeoutManager();
                 logger.warn(`[INDEXING-WORKER] 收到未知任务类型: ${task.type}`);
             }
         };
-        
+
         // 在追踪上下文中运行
         if (traceContext) {
             await TraceManager.run(traceContext, processTask);
@@ -1029,7 +1022,7 @@ const dbTimeoutManager = new DbTimeoutManager();
             if (count === 0) {
                 // 非阻塞后台构建，避免影响主索引任务
                 setTimeout(() => {
-                    rebuildAlbumCoversFromItems().catch(()=>{});
+                    rebuildAlbumCoversFromItems().catch(() => { });
                 }, 1000);
             }
         } catch (e) {

@@ -121,55 +121,40 @@ async function getAllSettings(options = {}) {
  * @returns {Promise<{success: boolean}>} 更新操作的结果
  */
 async function updateSettings(settingsToUpdate) {
-    // 使用事务确保原子性
-    await dbRun('settings', 'BEGIN TRANSACTION');
     try {
         // 使用 prepare 可以提高批量操作的性能
         const db = getDB('settings');
         const updateStmt = db.prepare('INSERT OR REPLACE INTO settings (value, key) VALUES (?, ?)');
-        
+
         // 批量更新设置项
-        for (const [key, value] of Object.entries(settingsToUpdate)) {
-            // 使用 Promise 包装回调式的 run 方法
-            await new Promise((resolve, reject) => {
-                updateStmt.run(value, key, (err) => {
-                    if (err) return reject(err);
-                    resolve();
-                });
-            });
-        }
-        
-        // 完成所有 run 操作后，finalize a prepared statement
-        await new Promise((resolve, reject) => {
-            updateStmt.finalize((err) => {
-                if(err) return reject(err);
-                resolve();
-            });
+        // better-sqlite3 的 transaction() 会自动处理 BEGIN/COMMIT/ROLLBACK
+        const executeBatch = db.transaction((items) => {
+            for (const [key, value] of Object.entries(items)) {
+                updateStmt.run(value, key);
+            }
         });
 
-        // 提交事务
-        await dbRun('settings', 'COMMIT');
-        
+        executeBatch(settingsToUpdate);
+        // better-sqlite3 statements are automatically finalized when garbage collected, or reused. No explicit finalize needed here for this flow.
+
         // 更新成功后立即清除缓存
         clearCache();
         // 删除 Redis 兜底缓存
         if (SETTINGS_REDIS_CACHE) {
             await safeRedisDel(redis, REDIS_CACHE_KEY, 'Settings缓存删除');
         }
-        
+
         // 检查是否包含认证相关设置，如果是则强制清除缓存
         const authRelatedKeys = ['PASSWORD_ENABLED', 'PASSWORD_HASH', 'AI_ENABLED'];
         const hasAuthChanges = Object.keys(settingsToUpdate).some(key => authRelatedKeys.includes(key));
         if (hasAuthChanges) {
             logger.info('检测到认证相关设置变更，已强制清除缓存');
         }
-        
+
         logger.info('成功更新设置:', Object.keys(settingsToUpdate).join(', '));
         return { success: true };
     } catch (error) {
-        // 如果出错，回滚事务
-        await dbRun('settings', 'ROLLBACK');
-        logger.error('更新设置时发生错误，事务已回滚:', error);
+        logger.error('更新设置时发生错误:', error);
         throw error;
     }
 }

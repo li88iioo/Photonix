@@ -1,8 +1,8 @@
-const { 
-    runAsync, 
-    dbAll, 
-    hasColumn, 
-    hasTable 
+const {
+    runAsync,
+    dbAll,
+    hasColumn,
+    hasTable
 } = require('./multi-db');
 const logger = require('../config/logger');
 
@@ -320,7 +320,7 @@ const initializeAllDBs = async () => {
         // 顺序初始化以避免原生库在高并发下的潜在竞态
         await initializeMainDB();
         await initializeSettingsDB();
-        await initializeHistoryDB();
+
         await initializeIndexDB();
         logger.info('所有数据库初始化完成');
     } catch (error) {

@@ -16,14 +16,16 @@ mkdir -p /app/data/thumbnails
 echo "📁 正在配置数据目录权限..."
 chown -R node:node /app/data
 
-# 先确保后端依赖就绪（自愈：若缺失则自动安装）
-if [ ! -f "/app/backend/node_modules/express/package.json" ] || [ ! -f "/app/backend/node_modules/sqlite3/package.json" ] || [ ! -f "/app/backend/node_modules/bullmq/package.json" ]; then
-  echo "📦 检测到依赖缺失，正在安装后端依赖（使用国内镜像）..."
+# 检查后端依赖是否已安装（Docker 构建时已安装）
+if [ ! -d "/app/backend/node_modules" ] || [ ! -f "/app/backend/node_modules/.package-lock.json" ]; then
+  echo "📦 检测到依赖缺失，正在安装后端依赖..."
   cd /app/backend
   npm config set registry https://registry.npmmirror.com
   # 优先使用预编译二进制，避免在运行镜像内编译（缺少 build-base）
   npm ci --omit=dev || npm install --omit=dev
   cd /app
+else
+  echo "✅ 后端依赖已就绪，跳过安装"
 fi
 
 echo "🗄️ 正在检查数据库迁移..."

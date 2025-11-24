@@ -189,16 +189,16 @@ function buildCronPartMatcher(part, range) {
  */
 async function runManualSync(trigger, raw) {
   if (state.running) {
-    logger.debug(`[ManualSyncScheduler] 已有任务在运行，跳过 (${trigger})`);
+    logger.debug(`[自动同步] 已有任务在运行，跳过 (${trigger})`);
     return;
   }
 
   state.running = true;
   try {
-    logger.info(`[ManualSyncScheduler] 触发手动同步: trigger=${trigger}, schedule=${raw}`);
+    logger.info(`[自动同步] 触发手动同步: trigger=${trigger}, schedule=${raw}`);
     const result = await albumManagementService.syncAlbumsAndMedia();
     state.lastRunAt = new Date();
-    logger.info(`[ManualSyncScheduler] 手动同步完成: changes=${result?.summary?.totalChanges || 0}`);
+    logger.info(`[自动同步] 手动同步完成: changes=${result?.summary?.totalChanges || 0}`);
 
     // 获取增量变化
     const diff = result?.diff || {};
@@ -224,7 +224,7 @@ async function runManualSync(trigger, raw) {
 
       if (incrementalPromise && typeof incrementalPromise.then === 'function') {
         incrementalPromise.catch((error) => {
-          logger.warn('[ManualSyncScheduler] 缩略图增量更新失败，尝试降级全量重建：', error && error.message ? error.message : error);
+          logger.warn('[自动同步] 缩略图增量更新失败，尝试降级全量重建：', error && error.message ? error.message : error);
           // 降级尝试全量同步
           const fallback = thumbnailSyncService.resyncThumbnailStatus({
             trigger: 'manual-sync-scheduler-fallback',
@@ -235,14 +235,14 @@ async function runManualSync(trigger, raw) {
             : fallback?.promise;
           if (fallbackPromise && typeof fallbackPromise.then === 'function') {
             fallbackPromise.catch((fallbackError) => {
-              logger.error('[ManualSyncScheduler] 缩略图全量重建失败（降级阶段）：', fallbackError && fallbackError.message ? fallbackError.message : fallbackError);
+              logger.error('[自动同步] 缩略图全量重建失败（降级阶段）：', fallbackError && fallbackError.message ? fallbackError.message : fallbackError);
             });
           }
         });
       }
     }
   } catch (error) {
-    logger.error('[ManualSyncScheduler] 手动同步失败:', error);
+    logger.error('[自动同步] 手动同步失败:', error);
   } finally {
     state.running = false;
     scheduleNextRun();
@@ -275,7 +275,7 @@ function computeNextRun() {
     }
   }
 
-  logger.warn('[ManualSyncScheduler] 未能在 1 年内找到下次运行时间，停止调度。');
+  logger.warn('[自动同步] 未能在 1 年内找到下次运行时间，停止调度。');
   return null;
 }
 
@@ -332,7 +332,7 @@ function scheduleNextRun() {
 
   if (state.current.type === 'off') {
     state.nextRunAt = null;
-    logger.info('[ManualSyncScheduler] 自动维护已关闭');
+    logger.info('[自动同步] 自动维护已关闭');
     return;
   }
 
@@ -344,7 +344,16 @@ function scheduleNextRun() {
 
   state.nextRunAt = nextRun;
   const delay = Math.max(nextRun.getTime() - Date.now(), 1000);
-  logger.info(`[ManualSyncScheduler] 下次手动同步时间: ${nextRun.toISOString()}`);
+  const localTime = nextRun.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+  logger.info(`[自动同步] 下次手动同步时间: ${localTime}`);
   state.timer = setTimeout(() => runManualSync('schedule', state.current.raw), delay);
 }
 
@@ -357,7 +366,7 @@ async function initialize() {
     const configured = settings?.MANUAL_SYNC_SCHEDULE || DEFAULT_SCHEDULE;
     applySchedule(configured, false);
   } catch (error) {
-    logger.error('[ManualSyncScheduler] 初始化失败:', error);
+    logger.error('[自动同步] 初始化失败:', error);
   }
 }
 
@@ -372,7 +381,7 @@ function applySchedule(value, logChange = true) {
 
   state.current = normalized;
   if (logChange) {
-    logger.info(`[ManualSyncScheduler] 更新自动维护计划: ${normalized.raw}`);
+    logger.info(`[自动同步] 更新自动维护计划: ${normalized.raw}`);
   }
   scheduleNextRun();
 
