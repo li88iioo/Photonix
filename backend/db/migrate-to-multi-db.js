@@ -31,10 +31,7 @@ async function migrateToMultiDB() {
         // 步骤3：迁移设置数据
         await migrateSettings(sourceDB);
 
-        // 步骤4：迁移历史记录数据
-        await migrateHistory(sourceDB);
-
-        // 步骤5：迁移索引状态数据（如有需要）
+        // 步骤4：迁移索引状态数据（如有需要）
         await migrateIndexData(sourceDB);
 
         // 步骤6：关闭源数据库连接
@@ -108,52 +105,7 @@ async function migrateSettings(sourceDB) {
     }
 }
 
-/**
- * 迁移历史记录表(view_history)的数据
- * @param {Database} sourceDB - 源数据库连接（better-sqlite3）
- */
-async function migrateHistory(sourceDB) {
-    logger.info('开始迁移历史记录数据...');
 
-    try {
-        // 使用 better-sqlite3 同步读取
-        const rows = sourceDB.prepare("SELECT user_id, item_path, viewed_at FROM view_history").all();
-
-        if (rows.length === 0) {
-            logger.info('没有历史记录数据需要迁移');
-            return;
-        }
-
-        const { dbRun } = require('./multi-db');
-
-        // 启动事务进行批量插入
-        await dbRun('history', 'BEGIN TRANSACTION');
-
-        try {
-            for (const row of rows) {
-                await dbRun(
-                    'history',
-                    'INSERT OR REPLACE INTO view_history (user_id, item_path, viewed_at) VALUES (?, ?, ?)',
-                    [row.user_id, row.item_path, row.viewed_at]
-                );
-            }
-
-            await dbRun('history', 'COMMIT');
-            logger.info(`成功迁移 ${rows.length} 条历史记录数据`);
-        } catch (error) {
-            await dbRun('history', 'ROLLBACK').catch(() => { });
-            logger.error('迁移历史记录数据失败:', error.message);
-            throw error;
-        }
-    } catch (error) {
-        // 如果表不存在，记录警告但不中断迁移
-        if (error.message.includes('no such table')) {
-            logger.warn('源数据库中没有 view_history 表，跳过历史记录迁移');
-            return;
-        }
-        throw error;
-    }
-}
 
 /**
  * 迁移索引相关表的数据（如有）（当前实现仅检测，无数据复制）

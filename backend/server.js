@@ -32,8 +32,7 @@ const { migrateToMultiDB } = require('./db/migrate-to-multi-db');
 const { createThumbnailWorkerPool, ensureCoreWorkers, getVideoWorker } = require('./services/worker.manager');
 const { startAdaptiveScheduler } = require('./services/adaptive.service');
 const { setupThumbnailWorkerListeners, startIdleThumbnailGeneration } = require('./services/thumbnail.service');
-const { setupWorkerListeners, buildSearchIndex, watchPhotosDir, ensureWatcherRunning } = require('./services/indexer.service');
-const { setWatcherRestartFunction } = require('./middleware/watcherRestart');
+const { setupWorkerListeners, buildSearchIndex } = require('./services/indexer.service');
 const { withTimeout, dbAllOnPath } = require('./db/multi-db');
 const { timeUtils, TIME_CONSTANTS } = require('./utils/time.utils');
 const { getCount, getThumbProcessingStats, getDataIntegrityStats } = require('./repositories/stats.repo');
@@ -578,12 +577,6 @@ async function setupIndexingAndMonitoring() {
             logger.info(`索引已存在，跳过全量构建。当前索引包含 ${itemCount} 个条目。`);
         }
 
-        // 启动目录监听
-        watchPhotosDir();
-
-        // 提供监听重启接口（供 API/中间件调用）
-        setWatcherRestartFunction(ensureWatcherRunning);
-
         // 启动期自动回填任务（runWhenIdle触发）
         try {
             const { runWhenIdle } = require('./services/orchestrator');
@@ -703,7 +696,6 @@ async function setupIndexingAndMonitoring() {
         logger.debug('检查索引状态失败（降噪）：', dbError && dbError.message);
         logger.info('由于检查失败，开始构建搜索索引...');
         scheduleIndexRebuild();
-        watchPhotosDir();
     }
 }
 

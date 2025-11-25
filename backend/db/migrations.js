@@ -211,35 +211,7 @@ const initializeSettingsDB = async () => {
     }
 };
 
-// 历史记录数据库迁移
-const initializeHistoryDB = async () => {
-    try {
-        logger.debug('[HISTORY MIGRATION] 开始历史记录数据库迁移...');
 
-        await runAsync('history', `CREATE TABLE IF NOT EXISTS migrations (key TEXT PRIMARY KEY, applied_at DATETIME NOT NULL)`);
-
-        const historyMigrations = [
-            {
-                key: 'create_view_history_table',
-                sql: `CREATE TABLE IF NOT EXISTS view_history (user_id TEXT NOT NULL, item_path TEXT NOT NULL, viewed_at DATETIME NOT NULL, PRIMARY KEY (user_id, item_path))`
-            },
-            {
-                key: 'create_idx_view_history_user_id',
-                sql: `CREATE INDEX IF NOT EXISTS idx_view_history_user_id ON view_history(user_id)`
-            },
-            {
-                key: 'create_idx_view_history_viewed_at',
-                sql: `CREATE INDEX IF NOT EXISTS idx_view_history_viewed_at ON view_history(viewed_at)`
-            }
-        ];
-
-        await executeMigrations('history', historyMigrations);
-        logger.info('历史记录数据库迁移完成');
-    } catch (error) {
-        logger.error('历史记录数据库迁移失败:', error.message);
-        throw error;
-    }
-};
 
 // 索引数据库迁移
 const initializeIndexDB = async () => {
@@ -333,7 +305,6 @@ module.exports = {
     initializeAllDBs,
     initializeMainDB,
     initializeSettingsDB,
-    initializeHistoryDB,
     initializeIndexDB,
     // 额外导出：核心表兜底确保（可在服务启动序列中调用，幂等）
     ensureCoreTables: async () => {

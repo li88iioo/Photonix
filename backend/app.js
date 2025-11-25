@@ -23,7 +23,6 @@ const mainRouter = require('./routes');
 const logger = require('./config/logger');
 const authMiddleware = require('./middleware/auth');
 const authRouter = require('./routes/auth.routes');
-const { watcherRestartMiddleware } = require('./middleware/watcherRestart');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 
 /**
@@ -131,11 +130,6 @@ try {
 }
 
 // ========== API 路由配置 ==========
-
-/**
- * 监听器自动重启中间件（保护诸如数据变更后自动重启服务的机制）
- */
-app.use(watcherRestartMiddleware);
 
 /**
  * 认证相关路由（无需认证）

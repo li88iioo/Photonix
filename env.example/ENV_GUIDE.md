@@ -332,19 +332,6 @@
 - 代码引用：backend/services/adaptive.service.js
 - 示例：THUMB_POOL_MAX=8
 
-6) DISABLE_WATCH / WATCH_USE_POLLING / WATCH_POLL_INTERVAL / WATCH_POLL_BINARY_INTERVAL
-- 作用：文件监听策略（网络盘/NFS 可使用轮询）
-- 默认值：true / false / 2000 / 3000（若未配置 WATCH_*，仅禁用实时监听）
-- 取值/格式：布尔 / 毫秒整数
-- 推荐修改场景：希望恢复实时监听时将 DISABLE_WATCH 设为 false；NFS/SMB/网络盘监听不稳时保留禁用并按需启用轮询
-- 风险：轮询增加 IO；禁用 watch 依赖手动/计划同步
-- 代码引用：backend/services/indexer.service.js、config/index.js
-- 示例：
-  - DISABLE_WATCH=true
-  - WATCH_USE_POLLING=true
-  - WATCH_POLL_INTERVAL=2000
-  - WATCH_POLL_BINARY_INTERVAL=3000
-
 2) USE_FILE_SYSTEM_HLS_CHECK / HLS_*（TTL/批次/间隔/延迟）
 - 作用：基于文件系统检查 HLS 就绪与缓存
 - 默认值：true / 300000 / 10 / 1000 / 100
@@ -948,11 +935,6 @@ AI_PER_IMAGE_COOLDOWN_SEC=120
 THUMB_ONDEMAND_RESERVE=1
 THUMB_POOL_MAX=1
 
-# NFS/网络盘建议（如果使用）
-# DISABLE_WATCH=true
-# WATCH_USE_POLLING=true
-# WATCH_POLL_INTERVAL=3000
-# WATCH_POLL_BINARY_INTERVAL=5000
 ```
 
 小型家庭（2C/4G，NAS/本地盘）
@@ -973,11 +955,6 @@ SQLITE_BUSY_TIMEOUT=20000
 SQLITE_QUERY_TIMEOUT=30000
 SETTINGS_REDIS_CACHE=true
 
-# NFS/网络盘建议
-# DISABLE_WATCH=true
-# WATCH_USE_POLLING=true
-# WATCH_POLL_INTERVAL=2000
-# WATCH_POLL_BINARY_INTERVAL=3000
 ```
 
 中型生产（4C/8G）
@@ -1004,18 +981,6 @@ RATE_LIMIT_WINDOW_MINUTES=15
 RATE_LIMIT_MAX_REQUESTS=100
 SETTINGS_REDIS_CACHE=true
 ```
-
-NFS/网络存储（稳定优先）
-```
-DISABLE_WATCH=true
-WATCH_USE_POLLING=true
-WATCH_POLL_INTERVAL=2000
-WATCH_POLL_BINARY_INTERVAL=3000
-SQLITE_BUSY_TIMEOUT=30000
-SQLITE_QUERY_TIMEOUT=60000
-```
-
----
 
 ## 4) 部署与注入方式
 
@@ -1061,7 +1026,6 @@ $env:PORT="13001"; $env:NODE_ENV="production"; node backend/server.js
 - [ ] Worker内存根据图片分辨率配置（THUMB_WORKER_MEMORY_MB，处理8K图建议≥512MB）
 - [ ] Sharp像素限制符合业务需求（SHARP_MAX_PIXELS，默认50M像素支持8K）
 - [ ] 限流策略符合预期（RATE_LIMIT_* / REFRESH_RATE_*）
-- [ ] NFS/网络盘保持 DISABLE_WATCH=true，按需启用 WATCH_* 轮询参数
 - [ ] 首日观察 CPU/内存/IO，按需微调 SHARP_CONCURRENCY / FFMPEG_THREADS / UV_THREADPOOL_SIZE
 - [ ] （可选）SETTINGS_REDIS_CACHE=true 降低 DB 压力
 - [ ] （可选）根据反代策略评估 ENABLE_APP_CSP
@@ -1075,10 +1039,6 @@ $env:PORT="13001"; $env:NODE_ENV="production"; node backend/server.js
 - 401/无法登录：检查 JWT_SECRET/ADMIN_SECRET 注入
 - Redis 连接失败：确认 REDIS_URL 与容器网络/密码
 - 访问慢/超时：增大 SQLITE_* 超时，降低 SHARP_CONCURRENCY/FFMPEG_THREADS
-- NFS 丢事件：启用 WATCH_USE_POLLING 并提高轮询间隔
-
----
-
 ## 7) 性能调优配置表
 
 基于50万张图片处理目标的推荐配置：

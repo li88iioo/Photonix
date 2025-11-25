@@ -815,6 +815,22 @@ const dbTimeoutManager = new DbTimeoutManager();
                         });
                     }
 
+                    // 当子文件变化时，递归更新所有父级目录的 mtime 为当前时间
+                    const parentUpdateRows = [];
+                    const now = Date.now();
+                    for (const albumPath of affectedAlbums) {
+                        // 根目录通常不作为 item 存储，或者有特殊处理，这里只更新非根路径
+                        if (albumPath && albumPath !== '.' && albumPath !== '/') {
+                            parentUpdateRows.push([now, albumPath]);
+                        }
+                    }
+
+                    if (parentUpdateRows.length > 0) {
+                        const updateParentsSql = `UPDATE items SET mtime = ? WHERE path = ?`;
+                        // 使用 runPreparedBatchWithRetry 确保在高并发下也能成功更新
+                        await runPreparedBatchWithRetry(runPreparedBatch, 'main', updateParentsSql, parentUpdateRows, { manageTransaction: false, chunkSize: 800 }, redis);
+                    }
+
                 }, { mode: 'IMMEDIATE' });
 
                 if (tagsToInvalidate.size > 0) {

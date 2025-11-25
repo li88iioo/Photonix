@@ -171,9 +171,6 @@ const { HLS_CACHE_TTL_MS, HLS_MIN_CHECK_INTERVAL_MS, HLS_BATCH_DELAY_MS } = getA
 // HLS批次大小配置（相对固定，不需要动态调整）
 const HLS_CHECK_BATCH_SIZE = parseInt(process.env.HLS_CHECK_BATCH_SIZE) || 10; // HLS检查批次大小
 
-// --- 文件监听配置 ---
-const DISABLE_WATCH = (process.env.DISABLE_WATCH || 'true').toLowerCase() === 'true'; // 关闭实时文件监听
-
 module.exports = {
     // 基础配置
     PORT,
@@ -251,9 +248,6 @@ module.exports = {
     HLS_CHECK_BATCH_SIZE,
     HLS_MIN_CHECK_INTERVAL_MS,
     HLS_BATCH_DELAY_MS,
-
-    // 文件监听配置
-    DISABLE_WATCH,
 
     // 硬件检测函数
     detectHardwareConfig,
