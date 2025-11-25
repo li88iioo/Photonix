@@ -28,9 +28,6 @@ class VirtualScroller {
     constructor(container, options = {}) {
         this.container = container;
 
-        // 获取默认配置
-        const vsConfig = getVirtualScrollConfig('');
-
         this.buffer = options.buffer || getVirtualScrollConfig('DEFAULT_BUFFER_SIZE'); // 缓冲区大小
         this.maxPoolSize = options.maxPoolSize || getVirtualScrollConfig('DEFAULT_MAX_POOL_SIZE'); // 复用池最大容量
         this.items = [];
@@ -50,16 +47,6 @@ class VirtualScroller {
         this.isMeasuring = false;
         this.estimatedItemHeight = options.estimatedItemHeight || getVirtualScrollConfig('DEFAULT_ESTIMATED_HEIGHT');
         this.renderCallback = options.renderCallback || this.defaultRenderCallback;
-
-        // UI优化相关
-        this.performanceMetrics = {
-            renderTime: 0,
-            frameRate: 0,
-            lastFrameTime: 0
-        };
-        this.fpsSamples = [];
-        this.performanceWindow = getVirtualScrollConfig('PERFORMANCE_WINDOW');
-        this.lastBufferAdjust = 0;
 
         // 可视化选项配置
         const defaultVisualOptions = getVirtualScrollConfig('VISUAL_OPTIONS');
@@ -500,8 +487,6 @@ class VirtualScroller {
      * @private
      */
     render() {
-        const startTime = performance.now();
-        
         const { startIndex, endIndex } = this.calculateVisibleRange();
 
         // 检查是否需要测量新项目（先计算，后决定是否显示加载动画）
@@ -588,11 +573,6 @@ class VirtualScroller {
         // 更新进度条
         this.updateProgressBar();
         
-        // 性能监控
-        const endTime = performance.now();
-        this.updatePerformanceMetrics(endTime - startTime);
-        this.adjustBufferByFps();
-        
         // 隐藏加载动画
         if (this.loadingIndicator) {
             this.hideLoadingAnimation();
@@ -661,42 +641,6 @@ class VirtualScroller {
             if (this.progressBarInner) {
                 safeSetStyle(this.progressBarInner, 'width', `${Math.min(100, Math.max(0, progress))}%`);
             }
-        }
-    }
-    
-    /**
-     * 更新性能指标
-     * @private
-     * @param {number} renderTime - 渲染时间
-     */
-    updatePerformanceMetrics(renderTime) {
-        this.performanceMetrics.renderTime = renderTime;
-        
-        const now = performance.now();
-        const frameTime = now - this.performanceMetrics.lastFrameTime;
-        this.performanceMetrics.frameRate = frameTime > 0 ? 1000 / frameTime : 0;
-        this.performanceMetrics.lastFrameTime = now;
-        if (this.performanceMetrics.frameRate > 0 && this.performanceMetrics.frameRate < 120) {
-            this.fpsSamples.push(this.performanceMetrics.frameRate);
-            if (this.fpsSamples.length > this.performanceWindow) this.fpsSamples.shift();
-        }
-    }
-
-    /**
-     * 根据 FPS 平均值自适应调整缓冲区大小
-     * @private
-     */
-    adjustBufferByFps() {
-        if (this.fpsSamples.length < 5) return;
-        const now = performance.now();
-        if (now - this.lastBufferAdjust < 1000) return; // 每秒最多调整一次
-        const avg = this.fpsSamples.reduce((a, b) => a + b, 0) / this.fpsSamples.length;
-        let newBuffer = this.buffer;
-        if (avg < 45) newBuffer = Math.max(6, this.buffer - 2);
-        else if (avg > 58) newBuffer = Math.min(30, this.buffer + 2);
-        if (newBuffer !== this.buffer) {
-            this.buffer = newBuffer;
-            this.lastBufferAdjust = now;
         }
     }
     

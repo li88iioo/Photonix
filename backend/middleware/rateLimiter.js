@@ -31,20 +31,23 @@ function buildLimiter(store) {
     return rateLimit({
         store,
         windowMs: Number(process.env.RATE_LIMIT_WINDOW_MINUTES || 1) * 60 * 1000,
-        max: Number(process.env.RATE_LIMIT_MAX_REQUESTS || 800),
+        max: Number(process.env.RATE_LIMIT_MAX_REQUESTS || 3000),
         message: { error: '请求过于频繁，请稍后再试。' },
         standardHeaders: true,
         legacyHeaders: false,
         /**
-         * 跳过缩略图直链认证请求的限流（允许带 Authorization 的 GET /thumbnail 放行）
+         * 跳过带认证头的缩略图请求（GET /api/.../thumbnail?xxx）
+         * 只要 URL 中包含 /thumbnail 且请求已认证则放行
          * @param {import('express').Request} req 
          * @returns {boolean}
          */
         skip: (req) => {
             try {
-                const isThumb = req.method === 'GET' && req.path === '/thumbnail';
-                if (!isThumb) return false;
-                return !!req.header('Authorization');
+                if (req.method !== 'GET') return false;
+                const rawUrl = (req.originalUrl || req.url || '').toLowerCase();
+                const isThumbnailRequest = typeof rawUrl === 'string' && rawUrl.includes('/thumbnail');
+                if (!isThumbnailRequest) return false;
+                return Boolean(req.header('Authorization'));
             } catch (skipErr) {
                 logger.debug('[RateLimiter] 判断缩略图限流跳过条件失败（忽略）:', skipErr && skipErr.message);
                 return false;

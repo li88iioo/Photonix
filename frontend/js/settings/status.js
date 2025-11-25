@@ -127,9 +127,6 @@ export async function triggerSync(type, options = {}) {
  */
 export async function triggerCleanup(type) {
   try {
-    showPodLoading(type, true);
-    showProgressUpdate(type, true);
-
     const token = getAuthToken();
     const headers = { 'Content-Type': 'application/json' };
     if (token) {
@@ -159,9 +156,6 @@ export async function triggerCleanup(type) {
     return data;
   } catch (error) {
     throw error;
-  } finally {
-    showPodLoading(type, false);
-    setTimeout(() => showProgressUpdate(type, false), UI.PROGRESS_UPDATE_DELAY);
   }
 }
 

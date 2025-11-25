@@ -145,7 +145,6 @@ const blobUrlManager = {
 };
 
 let globalImageObserver = null;
-let globalScrollHandler = null;
 
 /** @type {number} 定期清理过期 blob URLs 的定时器（每 30 秒） */
 const blobCleanupInterval = setInterval(() => {
@@ -212,18 +211,6 @@ const resourceCleanupManager = {
 };
 
 /**
- * 滚动监听器资源对象，用于清理全局滚动事件
- */
-const scrollListenerResource = {
-    cleanup() {
-        if (globalScrollHandler) {
-            window.removeEventListener('scroll', globalScrollHandler);
-            globalScrollHandler = null;
-        }
-    }
-};
-
-/**
  * 图片观察器资源对象，用于清理全局 IntersectionObserver
  */
 const imageObserverResource = {
@@ -239,16 +226,13 @@ const imageObserverResource = {
 
 // 注册现有的清理资源
 resourceCleanupManager.register(blobUrlManager);
-resourceCleanupManager.register(thumbnailRetryManager);
-resourceCleanupManager.register(thumbnailRequestThrottler);
-resourceCleanupManager.register(scrollListenerResource);
 resourceCleanupManager.register(imageObserverResource);
 
 // 注册定时器到资源清理管理器
 resourceCleanupManager.registerTimer(blobCleanupInterval);
 
 /** 导出资源清理相关对象 */
-export { blobUrlManager, thumbnailRetryManager, resourceCleanupManager };
+export { blobUrlManager, resourceCleanupManager };
 
 // 将 blob URL 管理器暴露到全局 window 对象，供 SSE 等其他模块使用
 if (typeof window !== 'undefined') {
@@ -435,350 +419,11 @@ function handleImageError(event) {
 }
 
 /**
- * 智能请求节流器
- * 基于滚动速度动态调整并发和延迟
- */
-const thumbnailRequestThrottler = {
-    /** @type {Map<string, number>} 活跃请求映射 */
-    activeRequests: new Map(),
-    /** @type {number} 基础最大并发请求数 */
-    baseMaxConcurrentRequests: 3,
-    /** @type {number} 基础请求间最小延迟（毫秒） */
-    baseRequestDelay: 50,
-
-    // 智能调度相关状态
-    /** @type {number} 当前滚动速度 */
-    scrollVelocity: 0,
-    lastScrollTime: 0,
-    lastScrollTop: 0,
-    /** @type {number[]} 速度采样 */
-    velocitySamples: [],
-    /** @type {number} 最大速度采样数 */
-    maxVelocitySamples: 10,
-
-    /**
-     * 动态最大并发请求数
-     * @returns {number}
-     */
-    get maxConcurrentRequests() {
-        const velocity = Math.abs(this.scrollVelocity);
-        if (velocity > 100) return this.baseMaxConcurrentRequests + 4;
-        if (velocity > 50) return this.baseMaxConcurrentRequests + 2;
-        return this.baseMaxConcurrentRequests;
-    },
-
-    /**
-     * 动态请求延迟
-     * @returns {number}
-     */
-    get requestDelay() {
-        const velocity = Math.abs(this.scrollVelocity);
-        if (velocity > 100) return Math.max(10, this.baseRequestDelay - 20);
-        if (velocity > 50) return Math.max(25, this.baseRequestDelay - 10);
-        return this.baseRequestDelay;
-    },
-
-    /**
-     * 更新滚动速度
-     * @param {number} scrollTop 当前滚动位置
-     */
-    updateScrollVelocity(scrollTop) {
-        const now = Date.now();
-        const timeDelta = now - this.lastScrollTime;
-        if (timeDelta > 0 && timeDelta < 1000) {
-            const distance = scrollTop - this.lastScrollTop;
-            const velocity = distance / timeDelta * 1000;
-            this.velocitySamples.push(velocity);
-            if (this.velocitySamples.length > this.maxVelocitySamples) {
-                this.velocitySamples.shift();
-            }
-            // 计算平均速度（过滤异常值）
-            const validSamples = this.velocitySamples.filter(v => Math.abs(v) < 5000);
-            this.scrollVelocity = validSamples.length > 0
-                ? validSamples.reduce((a, b) => a + b, 0) / validSamples.length
-                : 0;
-        }
-        this.lastScrollTime = now;
-        this.lastScrollTop = scrollTop;
-    },
-
-    /**
-     * 检查是否可以发送请求
-     * @param {string} url 请求 URL
-     * @returns {boolean}
-     */
-    canSendRequest(url) {
-        if (this.activeRequests.size >= this.maxConcurrentRequests) return false;
-        if (this.activeRequests.has(url)) return false;
-        return true;
-    },
-
-    /**
-     * 标记请求开始
-     * @param {string} url 请求 URL
-     */
-    markRequestStart(url) {
-        this.activeRequests.set(url, Date.now());
-    },
-
-    /**
-     * 标记请求结束
-     * @param {string} url 请求 URL
-     */
-    markRequestEnd(url) {
-        this.activeRequests.delete(url);
-    },
-
-    /**
-     * 清理超时的请求记录
-     */
-    cleanup() {
-        const now = Date.now();
-        const timeout = 30000;
-        for (const [url, startTime] of this.activeRequests) {
-            if (now - startTime > timeout) {
-                this.activeRequests.delete(url);
-            }
-        }
-    }
-};
-
-/** @type {number} 定期清理超时请求的定时器（每 15 秒） */
-const requestCleanupInterval = setInterval(() => {
-    thumbnailRequestThrottler.cleanup();
-}, 15000);
-
-resourceCleanupManager.registerTimer(requestCleanupInterval);
-
-/**
- * 缩略图重试管理器
- * 为正在处理的缩略图添加定期重试机制
- */
-const thumbnailRetryManager = {
-    /** @type {Map<string, Object>} 正在重试的图片映射 */
-    retryingImages: new Map(),
-    /** @type {Map<string, number>} 活跃的超时器映射 */
-    activeTimeouts: new Map(),
-
-    /**
-     * 为图片添加重试机制
-     * @param {HTMLImageElement} img
-     * @param {string} thumbnailUrl
-     */
-    addRetry(img, thumbnailUrl) {
-        this.removeRetry(img);
-        const retryKey = thumbnailUrl;
-        const retryState = {
-            img: img,
-            url: thumbnailUrl,
-            retryCount: 0,
-            maxRetries: 8,
-            nextRetryTime: Date.now() + 8000
-        };
-        this.retryingImages.set(retryKey, retryState);
-        this.scheduleNextRetry(retryKey);
-    },
-
-    /**
-     * 调度下一次重试
-     * @param {string} retryKey
-     */
-    scheduleNextRetry(retryKey) {
-        const retryState = this.retryingImages.get(retryKey);
-        if (!retryState) return;
-        const { img, url, retryCount, maxRetries, nextRetryTime } = retryState;
-        const now = Date.now();
-        const delay = Math.max(0, nextRetryTime - now);
-        this.clearTimeout(retryKey);
-        const timeoutId = setTimeout(async () => {
-            if (!img.isConnected || safeClassList(img, 'contains', 'loaded') || img.dataset.thumbStatus !== 'processing') {
-                this.removeRetry(img);
-                return;
-            }
-            if (retryCount >= maxRetries) {
-                lazyloadLogger.warn('缩略图重试次数过多，停止重试', { url });
-                this.removeRetry(img);
-                return;
-            }
-            try {
-                const token = getAuthToken();
-                const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-                const signal = AbortBus.get('thumb');
-                const response = await fetch(url, { headers, signal });
-                if (response.status === 200) {
-                    const imageBlob = await response.blob();
-                    img.dataset.thumbStatus = '';
-                    blobUrlManager.setBlobUrl(img, imageBlob);
-                    if (img.dataset.processingBySSE) {
-                        delete img.dataset.processingBySSE;
-                    }
-                    this.removeRetry(img);
-                } else if (response.status === 202) {
-                    retryState.retryCount++;
-                    retryState.nextRetryTime = Date.now() + (retryCount + 1) * 15000;
-                    this.scheduleNextRetry(retryKey);
-                } else if (response.status === 500 && (response.headers.get('X-Thumb-Status') === 'failed')) {
-                    const imageBlob = await response.blob();
-                    img.dataset.thumbStatus = 'failed';
-                    blobUrlManager.setBlobUrl(img, imageBlob);
-                    if (img.dataset.processingBySSE) {
-                        delete img.dataset.processingBySSE;
-                    }
-                    this.removeRetry(img);
-                } else {
-                    this.removeRetry(img);
-                }
-            } catch (error) {
-                if (error.name !== 'AbortError') {
-                    lazyloadLogger.warn('缩略图重试失败', { url, error });
-                    this.removeRetry(img);
-                }
-            }
-        }, delay);
-        this.activeTimeouts.set(retryKey, timeoutId);
-    },
-
-    /**
-     * 清理指定键的超时器
-     * @param {string} retryKey
-     */
-    clearTimeout(retryKey) {
-        const timeoutId = this.activeTimeouts.get(retryKey);
-        if (timeoutId) {
-            clearTimeout(timeoutId);
-            this.activeTimeouts.delete(retryKey);
-        }
-    },
-
-    /**
-     * 移除图片的重试机制
-     * @param {HTMLImageElement} img
-     */
-    removeRetry(img) {
-        const thumbnailUrl = img.dataset.src;
-        if (!thumbnailUrl) return;
-        const retryKey = thumbnailUrl;
-        this.clearTimeout(retryKey);
-        this.retryingImages.delete(retryKey);
-    },
-
-    /**
-     * 清理所有重试机制（页面卸载时使用）
-     */
-    cleanup() {
-        for (const retryKey of this.activeTimeouts.keys()) {
-            this.clearTimeout(retryKey);
-        }
-        this.retryingImages.clear();
-        this.activeTimeouts.clear();
-    }
-};
-
-/** @type {Array<Object>} 懒加载请求队列 */
-const lazyRequestQueue = [];
-/** @type {Map<HTMLImageElement, Object>} 已排队图片映射 */
-const queuedImages = new Map();
-let queueProcessingScheduled = false;
-
-/**
- * 计算图片优先级
+ * 将图片加入懒加载流程（兼容旧接口）
  * @param {HTMLImageElement} img
- * @param {DOMRect} rect
- * @returns {number}
  */
-function computeImagePriority(img, rect) {
-    try {
-        const targetRect = rect || (typeof img.getBoundingClientRect === 'function' ? img.getBoundingClientRect() : null);
-        if (targetRect && Number.isFinite(targetRect.top)) {
-            const viewportHeight = window.innerHeight || document.documentElement?.clientHeight || 0;
-            if (targetRect.top >= 0) {
-                return targetRect.top;
-            }
-            const baseline = viewportHeight > 0 ? viewportHeight : 1000;
-            return Math.abs(targetRect.top) + baseline;
-        }
-    } catch (error) {
-        // 忽略优先级计算异常
-    }
-    return Number.MAX_SAFE_INTEGER;
-}
-
-/**
- * 调度懒加载队列处理
- */
-function scheduleLazyQueueProcessing() {
-    if (queueProcessingScheduled) return;
-    queueProcessingScheduled = true;
-    const scheduler = typeof requestAnimationFrame === 'function'
-        ? requestAnimationFrame
-        : (cb) => setTimeout(cb, 16);
-    scheduler(() => {
-        queueProcessingScheduled = false;
-        processLazyRequestQueue();
-    });
-}
-
-/**
- * 处理懒加载请求队列
- */
-function processLazyRequestQueue() {
-    if (lazyRequestQueue.length === 0) return;
-    lazyRequestQueue.sort((a, b) => {
-        if (a.priority !== b.priority) {
-            return a.priority - b.priority;
-        }
-        return a.timestamp - b.timestamp;
-    });
-    let index = 0;
-    while (index < lazyRequestQueue.length) {
-        const entry = lazyRequestQueue[index];
-        const { img } = entry;
-        if (!img || !img.isConnected || safeClassList(img, 'contains', 'loaded') || img.dataset.thumbStatus === 'failed') {
-            queuedImages.delete(img);
-            lazyRequestQueue.splice(index, 1);
-            continue;
-        }
-        const thumbnailUrl = img.dataset?.src;
-        if (!thumbnailUrl) {
-            queuedImages.delete(img);
-            lazyRequestQueue.splice(index, 1);
-            continue;
-        }
-        if (!thumbnailRequestThrottler.canSendRequest(thumbnailUrl)) {
-            break;
-        }
-        queuedImages.delete(img);
-        lazyRequestQueue.splice(index, 1);
-        requestLazyImage(img, true);
-    }
-}
-
-/**
- * 将图片加入懒加载队列
- * @param {HTMLImageElement} img
- * @param {Object} options
- * @param {DOMRect} options.rect
- * @param {number} options.priority
- */
-export function enqueueLazyImage(img, options = {}) {
-    if (!img) return;
-    if (safeClassList(img, 'contains', 'loaded') || img.dataset.thumbStatus === 'failed') return;
-    const { rect, priority } = options;
-    const computedPriority = Number.isFinite(priority) ? priority : computeImagePriority(img, rect);
-    const existing = queuedImages.get(img);
-    if (existing) {
-        existing.priority = Math.min(existing.priority, computedPriority);
-        existing.timestamp = Date.now();
-    } else {
-        const entry = {
-            img,
-            priority: computedPriority,
-            timestamp: Date.now()
-        };
-        queuedImages.set(img, entry);
-        lazyRequestQueue.push(entry);
-    }
-    scheduleLazyQueueProcessing();
+export function enqueueLazyImage(img) {
+    requestLazyImage(img);
 }
 
 /**
@@ -796,26 +441,31 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
             const imageBlob = await response.blob();
             img.dataset.thumbStatus = '';
             blobUrlManager.setBlobUrl(img, imageBlob);
-            thumbnailRetryManager.removeRetry(img);
         } else if (response.status === 202) {
             const imageBlob = await response.blob();
             img.dataset.thumbStatus = 'processing';
             blobUrlManager.setBlobUrl(img, imageBlob);
-            thumbnailRetryManager.addRetry(img, thumbnailUrl);
+
+            // SSE 偶发缺失时的兜底：5 秒后仍在处理则再拉一次
+            const retryTimeoutId = setTimeout(() => {
+                if (img.isConnected && img.dataset.thumbStatus === 'processing') {
+                    lazyloadLogger.debug('processing 超时兜底重试', { thumbnailUrl });
+                    requestLazyImage(img);
+                }
+            }, 5000);
+            resourceCleanupManager.registerTimer(retryTimeoutId);
         } else if (response.status === 429) {
             lazyloadLogger.debug('缩略图请求被频率限制，延迟重试', { thumbnailUrl });
-            thumbnailRequestThrottler.markRequestEnd(thumbnailUrl);
             const retryTimeoutId = setTimeout(() => {
-                const rect = typeof img.getBoundingClientRect === 'function' ? img.getBoundingClientRect() : null;
-                enqueueLazyImage(img, { rect });
-            }, 2000);
+                if (!img.isConnected) return;
+                requestLazyImage(img);
+            }, 1500);
             resourceCleanupManager.registerTimer(retryTimeoutId);
             return;
         } else if (response.status === 500 && (response.headers.get('X-Thumb-Status') === 'failed')) {
             const imageBlob = await response.blob();
             img.dataset.thumbStatus = 'failed';
             blobUrlManager.setBlobUrl(img, imageBlob);
-            thumbnailRetryManager.removeRetry(img);
         } else {
             throw new Error(`Server responded with status: ${response.status}`);
         }
@@ -833,7 +483,7 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
  * @param {HTMLImageElement} img
  * @param {boolean} fromQueue 是否来自队列
  */
-export function requestLazyImage(img, fromQueue = false) {
+export function requestLazyImage(img) {
     const thumbnailUrl = img.dataset.src;
     if (!thumbnailUrl || thumbnailUrl.includes('undefined') || thumbnailUrl.includes('null')) {
         lazyloadLogger.error('懒加载失败: 无效的图片URL', { thumbnailUrl });
@@ -851,21 +501,9 @@ export function requestLazyImage(img, fromQueue = false) {
             lazyloadLogger.debug('快速加载之前加载过的图片', { thumbnailUrl });
         }
     }
-    // 检查是否可以发送请求
-    if (!thumbnailRequestThrottler.canSendRequest(thumbnailUrl)) {
-        const rect = typeof img.getBoundingClientRect === 'function' ? img.getBoundingClientRect() : null;
-        enqueueLazyImage(img, { rect });
-        return;
-    }
-    thumbnailRequestThrottler.markRequestStart(thumbnailUrl);
-    executeThumbnailRequest(img, thumbnailUrl)
-        .finally(() => {
-            thumbnailRequestThrottler.markRequestEnd(thumbnailUrl);
-            scheduleLazyQueueProcessing();
-        })
-        .catch(() => {
-            // 429 错误已在内部处理
-        });
+    executeThumbnailRequest(img, thumbnailUrl).catch(() => {
+        // 捕获已在内部处理的错误，避免未处理的Promise异常
+    });
 }
 
 /**
@@ -1007,24 +645,11 @@ function getOrCreateImageObserver() {
 }
 
 /**
- * 确保滚动速度监听器已注册
- */
-function ensureScrollVelocityListener() {
-    if (globalScrollHandler) return;
-    globalScrollHandler = () => {
-        const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-        thumbnailRequestThrottler.updateScrollVelocity(scrollTop);
-    };
-    window.addEventListener('scroll', globalScrollHandler, { passive: true });
-}
-
-/**
  * 初始化懒加载功能
  * @returns {IntersectionObserver}
  */
 export function setupLazyLoading() {
     const observer = getOrCreateImageObserver();
-    ensureScrollVelocityListener();
     document.querySelectorAll('.lazy-image').forEach(img => {
         if (!img._observed) {
             observer.observe(img);

@@ -16,9 +16,6 @@ import { setManagedTimeout } from '../core/timer-manager.js';
 // 日志实例
 const sseLogger = createModuleLogger('SSE');
 
-// 直接导入重试管理器，避免异步导入问题
-import { thumbnailRetryManager } from '../features/gallery/lazyload.js';
-
 // 活动连接与重连相关变量
 let eventSource = null;
 let streamAbortController = null;
@@ -126,7 +123,6 @@ async function updateThumbnailImage(img, imagePath) {
         img.dataset.thumbStatus = 'processing';
         safeClassList(img, 'add', 'processing');
         img.dataset.src = freshThumbnailUrl;
-        thumbnailRetryManager.addRetry(img, freshThumbnailUrl);
         return;
     }
 
@@ -160,7 +156,6 @@ async function updateThumbnailImage(img, imagePath) {
 
         safeClassList(img, 'remove', 'opacity-0');
         safeClassList(img, 'add', 'loaded');
-        thumbnailRetryManager.removeRetry(img);
 
         setManagedTimeout(() => {
             if (img.onload) img.onload = null;
