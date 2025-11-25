@@ -13,10 +13,10 @@ import { enablePinchZoom } from '../features/gallery/touch.js';
 import { createModuleLogger } from '../core/logger.js';
 import { safeSetInnerHTML, safeSetStyle, safeClassList } from '../shared/dom-utils.js';
 import {
-  scheduleNavigationProgressBar,
-  hideNavigationProgressBar,
-  setNavigationProgress,
-  setNavigationBlurProgress
+    scheduleNavigationProgressBar,
+    hideNavigationProgressBar,
+    setNavigationProgress,
+    setNavigationBlurProgress
 } from './navigation.js';
 
 const modalLogger = createModuleLogger('Modal');
@@ -127,28 +127,28 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
     state.currentPhotoIndex = index;
     const { modalVideo, modalImg, navigationHint, captionContainer, captionContainerMobile, mediaPanel } = elements;
     const shouldPixelate = !!(effects && effects.pixelate);
-    
+
     // 移除旧的视频加载器
     const oldSpinner = mediaPanel.querySelector('#video-spinner');
     if (oldSpinner) oldSpinner.remove();
 
     // 清理之前的媒体内容
-    try { modalVideo.pause(); } catch {}
-    try { modalVideo.removeAttribute('src'); modalVideo.load(); } catch {}
-    modalImg.src = ''; 
+    try { modalVideo.pause(); } catch { }
+    try { modalVideo.removeAttribute('src'); modalVideo.load(); } catch { }
+    modalImg.src = '';
     if (state.currentObjectURL) {
         URL.revokeObjectURL(state.currentObjectURL);
         state.currentObjectURL = null;
     }
 
     const isVideo = /\.(mp4|webm|mov)$/i.test(originalPathForAI);
-    
+
     // 更新背景模糊效果
     const blurSource = thumbForBlur || mediaSrc;
     const inactiveBackdropKey = state.activeBackdrop === 'one' ? 'two' : 'one';
     const activeBackdropElem = backdrops[state.activeBackdrop];
     const inactiveBackdropElem = backdrops[inactiveBackdropKey];
-    
+
     safeSetStyle(inactiveBackdropElem, 'backgroundImage', `url('${blurSource}')`);
     safeClassList(activeBackdropElem, 'remove', 'active-backdrop');
     safeClassList(inactiveBackdropElem, 'add', 'active-backdrop');
@@ -160,11 +160,11 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
     const isAIEnabled = localAI.AI_ENABLED === 'true' || state.aiEnabled;
     const showAiElements = !isVideo && isAIEnabled;
     safeClassList(elements.aiControlsContainer, 'toggle', 'hidden', !showAiElements);
-    
+
     resetModalImageTransition();
     safeClassList(modalVideo, 'toggle', 'hidden', !isVideo);
     safeClassList(modalImg, 'toggle', 'hidden', isVideo);
-    
+
     if (isVideo) {
         const myToken = ++activeVideoToken;
         safeClassList(navigationHint, 'remove', 'show-hint');
@@ -192,7 +192,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
             modalVideo.removeEventListener('loadeddata', onLoadedData);
             modalVideo.removeEventListener('timeupdate', onTimeUpdate);
             modalVideo.removeEventListener('loadedmetadata', onLoadedMetadata);
-            try { if (_onResizeRef) window.removeEventListener('resize', _onResizeRef); } catch {}
+            try { if (_onResizeRef) window.removeEventListener('resize', _onResizeRef); } catch { }
         };
 
         /**
@@ -263,7 +263,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
             if (height > maxH) { height = maxH; width = height * aspect; }
             safeSetStyle(modalVideo, 'width', `${Math.round(width)}px`);
             safeSetStyle(modalVideo, 'height', `${Math.round(height)}px`);
-            try { safeSetStyle(modalVideo, 'aspectRatio', `${vw}/${vh}`); } catch {}
+            try { safeSetStyle(modalVideo, 'aspectRatio', `${vw}/${vh}`); } catch { }
         };
 
         /**
@@ -277,8 +277,10 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
 
         if (Hls.isSupported()) {
             const hls = new Hls({
-                // HLS.js a/b/r 配置
-                abrEwmaDefaultEstimate: 500000, // 500kbps 初始估算
+                // HLS.js 配置：默认 720p,允许自适应降级
+                startLevel: 1, // 默认使用索引 1 的质量(通常是 720p)
+                abrEwmaDefaultEstimate: 1500000, // 1.5Mbps 初始估算,适合 720p
+                // 允许自适应比特率,网络慢时会自动降级到 480p
             });
             state.hlsInstance = hls;
             hls.loadSource(hlsUrl);
@@ -289,7 +291,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
             });
             hls.on(Hls.Events.ERROR, (event, data) => {
                 if (data.fatal) {
-                    switch(data.type) {
+                    switch (data.type) {
                         case Hls.ErrorTypes.NETWORK_ERROR:
                             modalLogger.error('HLS 网络错误', data);
                             // 致命网络错误时回退到直接播放
@@ -297,16 +299,16 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
                                 modalLogger.warn('HLS 失败，回退到直接播放');
                                 // 仅销毁 HLS 实例，保留 playing/error 监听，用于移除加载圈
                                 if (state.hlsInstance) {
-                                    try { state.hlsInstance.destroy(); } catch {}
+                                    try { state.hlsInstance.destroy(); } catch { }
                                     state.hlsInstance = null;
                                 }
                                 modalVideo.src = mediaSrc;
                                 // 重新绑定事件监听
-                                try { modalVideo.removeEventListener('playing', onPlaying); } catch {}
-                                try { modalVideo.removeEventListener('error', onError); } catch {}
-                                try { modalVideo.removeEventListener('canplay', onCanPlay); } catch {}
-                                try { modalVideo.removeEventListener('loadeddata', onLoadedData); } catch {}
-                                try { modalVideo.removeEventListener('timeupdate', onTimeUpdate); } catch {}
+                                try { modalVideo.removeEventListener('playing', onPlaying); } catch { }
+                                try { modalVideo.removeEventListener('error', onError); } catch { }
+                                try { modalVideo.removeEventListener('canplay', onCanPlay); } catch { }
+                                try { modalVideo.removeEventListener('loadeddata', onLoadedData); } catch { }
+                                try { modalVideo.removeEventListener('timeupdate', onTimeUpdate); } catch { }
                                 modalVideo.addEventListener('playing', onPlaying, { once: true });
                                 modalVideo.addEventListener('error', onError, { once: true });
                                 modalVideo.addEventListener('canplay', onCanPlay, { once: true });
@@ -323,7 +325,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
                             modalLogger.error('HLS 致命错误，正在销毁', data);
                             // 致命且无法恢复：销毁实例并移除加载圈
                             if (state.hlsInstance) {
-                                try { state.hlsInstance.destroy(); } catch {}
+                                try { state.hlsInstance.destroy(); } catch { }
                                 state.hlsInstance = null;
                             }
                             removeSpinnerAndUnbind();
@@ -354,12 +356,12 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
             modalLogger.warn('自动播放可能被浏览器阻止', e);
         });
 
-        if(elements.captionBubble) safeClassList(elements.captionBubble, 'remove', 'show');
+        if (elements.captionBubble) safeClassList(elements.captionBubble, 'remove', 'show');
     } else {
         // 图片处理逻辑
         safeSetStyle(navigationHint, 'display', 'flex');
         if (modalImg._pendingPixelationHandler) {
-            try { modalImg.removeEventListener('load', modalImg._pendingPixelationHandler); } catch {}
+            try { modalImg.removeEventListener('load', modalImg._pendingPixelationHandler); } catch { }
             modalImg._pendingPixelationHandler = null;
         }
         /**
@@ -375,14 +377,14 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
         };
         modalImg._pendingPixelationHandler = onModalImageLoad;
         modalImg.addEventListener('load', onModalImageLoad, { once: true });
-        modalImg.src = mediaSrc; 
-        
+        modalImg.src = mediaSrc;
+
         // 禁用右键菜单
         if (!modalImg._noContextMenuBound) {
             modalImg.addEventListener('contextmenu', e => e.preventDefault());
             modalImg._noContextMenuBound = true;
         }
-        
+
         // AI 标题生成
         if (showAiElements) {
             // 清理之前的定时器和状态
@@ -457,11 +459,11 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
 
         // 启用移动端双指缩放/拖拽（touch.js）
         try {
-            if (window._imageGestureCleanup) { try { window._imageGestureCleanup(); } catch {} }
+            if (window._imageGestureCleanup) { try { window._imageGestureCleanup(); } catch { } }
             window._imageGestureCleanup = enablePinchZoom(modalImg, mediaPanel);
-        } catch {}
+        } catch { }
     }
-    
+
     // 预加载下一批图片
     preloadNextImages(state.currentPhotos, index);
 }
@@ -494,7 +496,7 @@ async function handleModalNavigationLoad(mediaSrc, index, navDirection = null) {
     state.isModalNavigating = true;
 
     if (activeLoader) {
-        try { activeLoader.abort(); } catch {}
+        try { activeLoader.abort(); } catch { }
     }
 
     const controller = new AbortController();
@@ -524,8 +526,8 @@ async function handleModalNavigationLoad(mediaSrc, index, navDirection = null) {
             const stream = new ReadableStream({
                 start(streamController) {
                     const onAbort = () => {
-                        try { reader.cancel(); } catch {}
-                        try { streamController.close(); } catch {}
+                        try { reader.cancel(); } catch { }
+                        try { streamController.close(); } catch { }
                     };
                     if (signal && typeof signal.addEventListener === 'function') {
                         if (signal.aborted) return onAbort();
@@ -534,7 +536,7 @@ async function handleModalNavigationLoad(mediaSrc, index, navDirection = null) {
                     const pump = () => {
                         reader.read().then(({ done, value }) => {
                             if (done) {
-                                try { streamController.close(); } catch {}
+                                try { streamController.close(); } catch { }
                                 return;
                             }
                             if (value) {
@@ -549,16 +551,16 @@ async function handleModalNavigationLoad(mediaSrc, index, navDirection = null) {
                                     setNavigationProgress(estimated);
                                     setNavigationBlurProgress(estimated);
                                 }
-                                try { streamController.enqueue(value); } catch {}
+                                try { streamController.enqueue(value); } catch { }
                             }
                             pump();
                         }).catch(err => {
                             if (err && err.name === 'AbortError') {
-                                try { streamController.close(); } catch {}
+                                try { streamController.close(); } catch { }
                                 return;
                             }
                             modalLogger.error('流读取错误', err);
-                            try { streamController.error(err); } catch {}
+                            try { streamController.error(err); } catch { }
                         });
                     };
                     pump();
@@ -594,7 +596,7 @@ async function handleModalNavigationLoad(mediaSrc, index, navDirection = null) {
             setNavigationBlurProgress(1);
             try {
                 updateModalContent(mediaSrc, index, originalPath, undefined, { pixelate: shouldPixelateReveal });
-            } catch {}
+            } catch { }
             showNotification('图片加载或解码失败', 'error');
         }
     } finally {
@@ -620,30 +622,30 @@ export function closeModal() {
     document.body.classList.remove('modal-open');
     safeClassList(elements.modal, 'add', 'opacity-0');
     safeClassList(elements.modal, 'add', 'pointer-events-none');
-    
+
     // 确保停止快速导航，避免定时器泄漏
     if (typeof stopFastNavigate === 'function') {
         stopFastNavigate();
     }
-    
+
     // 清理模态框资源
     cleanupModal();
-    
+
     // 清理媒体内容
     elements.modalImg.src = '';
     elements.modalVideo.pause();
     elements.modalVideo.src = '';
-    
+
     // 清理背景
     safeSetStyle(backdrops.one, 'backgroundImage', 'none');
     safeSetStyle(backdrops.two, 'backgroundImage', 'none');
-    
+
     // 清理对象 URL
     if (state.currentObjectURL) {
         URL.revokeObjectURL(state.currentObjectURL);
         state.currentObjectURL = null;
     }
-    
+
     // 隐藏 AI 气泡
     if (elements.captionBubble) safeClassList(elements.captionBubble, 'remove', 'show');
     if (document.activeElement) document.activeElement.blur();
@@ -653,7 +655,7 @@ export function closeModal() {
         window.scrollTo({ top: state.scrollPositionBeforeModal, behavior: 'instant' });
         state.scrollPositionBeforeModal = null;
     }
-    
+
     // 恢复焦点到缩略图
     if (state.activeThumbnail) {
         state.activeThumbnail.focus({ preventScroll: true });
@@ -669,12 +671,12 @@ export function closeModal() {
 export function navigateModal(direction) {
     if (document.activeElement) document.activeElement.blur();
     if (state.isModalNavigating) return;
-    
+
     // 隐藏控制元素并设置定时器重新显示
-    hideModalControls(); 
+    hideModalControls();
     clearTimeout(state.uiVisibilityTimer);
     state.uiVisibilityTimer = setTimeout(showModalControls, 500);
-    
+
     // 计算新的索引
     const newIndex = direction === 'prev' ? state.currentPhotoIndex - 1 : state.currentPhotoIndex + 1;
     if (newIndex >= 0 && newIndex < state.currentPhotos.length) {
@@ -695,7 +697,7 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
     // 保存当前状态
     state.scrollPositionBeforeModal = window.scrollY;
     state.activeThumbnail = element;
-    
+
     const photoItem = element.querySelector('.photo-item');
     if (!photoItem || safeClassList(photoItem, 'contains', 'is-loading')) return;
 
@@ -711,7 +713,7 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
             coverUrl: thumbUrl,
             width: Number(element.dataset.width) || 0,
             height: Number(element.dataset.height) || 0
-        }).catch(() => {});
+        }).catch(() => { });
     }
 
     if (isVideo) {
@@ -721,10 +723,10 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
         _openModal(mediaSrc, index, false, mediaSrc, thumbUrl, { pixelate: false });
         return;
     }
-    
+
     // 中止之前的加载器
     if (activeLoader) activeLoader.abort();
-    
+
     // 初始化进度圆环
     const progressCircle = photoItem.querySelector('.progress-circle-bar');
     const loadingOverlay = photoItem.querySelector('.loading-overlay');
@@ -748,9 +750,9 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
             overlayShowTimer = null;
         }, 180);
     }
-    
+
     safeClassList(photoItem, 'add', 'is-loading');
-    
+
     // 创建新的加载控制器
     const controller = new AbortController();
     const { signal } = controller;
@@ -767,14 +769,14 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
             headerContentLength = +response.headers.get('Content-Length');
             const reader = response.body.getReader();
             let receivedLength = 0;
-            
+
             return new Response(
                 new ReadableStream({
                     start(controller) {
                         // 当外部中止时，及时取消 reader，避免 AbortError 噪音
                         const onAbort = () => {
-                            try { reader.cancel(); } catch {}
-                            try { controller.close(); } catch {}
+                            try { reader.cancel(); } catch { }
+                            try { controller.close(); } catch { }
                         };
                         if (signal && typeof signal.addEventListener === 'function') {
                             if (signal.aborted) return onAbort();
@@ -784,7 +786,7 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
                         function push() {
                             reader.read().then(({ done, value }) => {
                                 if (done) {
-                                    try { controller.close(); } catch {}
+                                    try { controller.close(); } catch { }
                                     return;
                                 }
                                 receivedLength += value.length;
@@ -796,16 +798,16 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
                                     safeSetStyle(progressCircle, 'strokeDashoffset', offset);
                                 }
                                 streamedChunkCount = Math.min(12, streamedChunkCount + 1);
-                                try { controller.enqueue(value); } catch {}
+                                try { controller.enqueue(value); } catch { }
                                 push();
                             }).catch(error => {
                                 // 中止不视为错误，不再上抛，直接关闭流
                                 if (error && error.name === 'AbortError') {
-                                    try { controller.close(); } catch {}
+                                    try { controller.close(); } catch { }
                                     return;
                                 }
                                 modalLogger.error('流读取错误', error);
-                                try { controller.error(error); } catch {}
+                                try { controller.error(error); } catch { }
                             })
                         }
                         push();
@@ -824,7 +826,7 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
             slowRevealNeeded = elapsed > 420 || (!headerContentLength && streamedChunkCount >= 4);
             if (activeLoader === controller) {
                 _openModal(objectURL, index, true, mediaSrc, undefined, { pixelate: slowRevealNeeded });
-                state.currentObjectURL = objectURL; 
+                state.currentObjectURL = objectURL;
             } else {
                 URL.revokeObjectURL(objectURL);
             }
@@ -837,7 +839,7 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
             // 非中止错误：尝试直接使用原始地址回退加载，避免因流式读取失败而打不开
             const fallbackElapsed = (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - loadStartedAt;
             slowRevealNeeded = slowRevealNeeded || fallbackElapsed > 420 || (!headerContentLength && streamedChunkCount >= 4);
-            try { _openModal(mediaSrc, index, false, mediaSrc, undefined, { pixelate: slowRevealNeeded }); } catch {}
+            try { _openModal(mediaSrc, index, false, mediaSrc, undefined, { pixelate: slowRevealNeeded }); } catch { }
             showNotification('图片加载失败', 'error');
         })
         .finally(() => {
@@ -888,7 +890,7 @@ export function _openModal(mediaSrc, index = 0, isObjectURL = false, originalPat
     document.documentElement.classList.add('modal-open');
     document.body.classList.add('modal-open');
     if (document.activeElement) document.activeElement.blur();
-    
+
     // 验证媒体源
     if (!mediaSrc || typeof mediaSrc !== 'string' || mediaSrc.trim() === '') {
         modalLogger.error('打开模态框失败: 无效的媒体源', { mediaSrc });
@@ -897,11 +899,11 @@ export function _openModal(mediaSrc, index = 0, isObjectURL = false, originalPat
 
     safeClassList(elements.modal, 'remove', 'opacity-0');
     safeClassList(elements.modal, 'remove', 'pointer-events-none');
-    
+
     // 更新模态框内容
     const aiPath = originalPathForAI || mediaSrc;
     updateModalContent(mediaSrc, index, aiPath, thumbForBlur, effects);
-    
+
     if (isObjectURL) state.currentObjectURL = mediaSrc;
 
     // 显示导航提示（仅首次）
@@ -1008,10 +1010,10 @@ export function cleanupModal() {
 
     hideNavigationProgressBar(true);
     if (activeLoader) {
-        try { activeLoader.abort(); } catch {}
+        try { activeLoader.abort(); } catch { }
         activeLoader = null;
     }
-    
+
     // 清理 HLS 实例
     if (state.hlsInstance) {
         try {
@@ -1021,7 +1023,7 @@ export function cleanupModal() {
         }
         state.hlsInstance = null;
     }
-    
+
     // 清理视频元素
     const modalVideo = elements.modal.querySelector('video');
     if (modalVideo) {
@@ -1033,9 +1035,9 @@ export function cleanupModal() {
             modalLogger.warn('清理视频元素失败', e);
         }
     }
-    
+
     // 清理图片手势监听
-    try { if (window._imageGestureCleanup) { window._imageGestureCleanup(); window._imageGestureCleanup = null; } } catch {}
+    try { if (window._imageGestureCleanup) { window._imageGestureCleanup(); window._imageGestureCleanup = null; } } catch { }
 
     // 清理对象 URL
     if (state.currentObjectURL) {
@@ -1046,7 +1048,7 @@ export function cleanupModal() {
         }
         state.currentObjectURL = null;
     }
-    
+
     // 重置状态
     state.isModalNavigating = false;
     state.currentModalIndex = 0;

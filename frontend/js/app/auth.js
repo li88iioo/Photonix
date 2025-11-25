@@ -318,11 +318,14 @@ async function handleLogin(e) {
  * 设置密码输入框的显示/隐藏切换
  */
 function setupPasswordToggle() {
-    const wrapper = safeQuerySelector('.password-wrapper');
-    if (!wrapper) return;
+    const icon = safeQuerySelector('.password-toggle-icon');
+    const input = safeGetElementById('password');
 
-    const icon = wrapper.querySelector('.password-toggle-icon');
-    const input = wrapper.querySelector('input');
+    if (!icon || !input) {
+        authLogger.warn('密码切换元素未找到');
+        return;
+    }
+
     const openEye = icon.querySelector('.eye-open');
     const closedEye = icon.querySelector('.eye-closed');
 

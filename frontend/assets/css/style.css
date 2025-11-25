@@ -5486,3 +5486,20 @@ body.settings-open {
     color: #000000 !important;
     /* hover:text-black */
 }
+
+/* 登录页面密码输入框 placeholder 居中 */
+#password::placeholder {
+    text-align: center;
+}
+
+#password::-webkit-input-placeholder {
+    text-align: center;
+}
+
+#password::-moz-placeholder {
+    text-align: center;
+}
+
+#password:-ms-input-placeholder {
+    text-align: center;
+}
