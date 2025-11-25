@@ -62,7 +62,7 @@ class ThumbnailSyncService {
     // 使用Repository清空现有的缩略图状态表
     const ThumbStatusRepository = require('../../repositories/thumbStatus.repo');
     const thumbStatusRepo = new ThumbStatusRepository();
-    
+
     await this.db.dbRun('main', 'DELETE FROM thumb_status');
     let syncedCount = 0;
     let existsCount = 0;
@@ -319,7 +319,7 @@ class ThumbnailSyncService {
       // 获取媒体文件统计
       const mediaStats = await getMediaStats(['photo', 'video']);
       const sourceCount = mediaStats.photo + mediaStats.video;
-      
+
       // 获取缩略图状态统计
       const stats = await getGroupStats('thumb_status', 'status');
       const thumbStatusCount = await getCount('thumb_status');
@@ -494,7 +494,7 @@ async function getHlsFileStats() {
         skip++;
         continue;
       }
-      
+
       // 检查master.m3u8文件是否存在
       const master = path.join(THUMBS_DIR, 'hls', sanitized, 'master.m3u8');
       try {
@@ -586,7 +586,7 @@ async function performThumbnailReconcile() {
   try {
     const ThumbStatusRepository = require('../../repositories/thumbStatus.repo');
     const thumbStatusRepo = new ThumbStatusRepository();
-    
+
     const missingFiles = await thumbStatusRepo.getByStatus('missing', 1000);
 
     if (!missingFiles || missingFiles.length === 0) {
@@ -799,6 +799,7 @@ async function performHlsCleanup() {
     const hlsDir = path.join(THUMBS_DIR, 'hls');
     let deletedCount = 0;
     let errorCount = 0;
+    let permanentFailedCount = 0;
 
     async function scanAndDelete(dir, relativePath = '') {
       try {
@@ -840,6 +841,7 @@ async function performHlsCleanup() {
       }
     }
 
+    // 第一步：清理孤立的HLS目录
     try {
       await fs.access(hlsDir);
       await scanAndDelete(hlsDir);
@@ -849,8 +851,92 @@ async function performHlsCleanup() {
       }
     }
 
-    logger.info(`HLS清理完成：删除 ${deletedCount} 个冗余HLS目录，${errorCount} 个处理出错`);
-    return { deleted: deletedCount, errors: errorCount };
+    // 第二步：清理永久失败的视频源文件
+    if (redis) {
+      try {
+        const failedKeys = await redis.keys('video_failed_permanently:*');
+        logger.debug(`[HLS Cleanup] 发现 ${failedKeys.length} 个永久失败标记`);
+
+        for (const key of failedKeys) {
+          try {
+            const relativePath = key.replace('video_failed_permanently:', '');
+            const sanitizedPath = sanitizePath(relativePath);
+
+            if (!sanitizedPath || !isPathSafe(sanitizedPath)) {
+              logger.warn(`[HLS Cleanup] 跳过可疑路径: ${relativePath}`);
+              continue;
+            }
+
+            const sourceAbsPath = path.join(PHOTOS_DIR, sanitizedPath);
+
+            // 检查源文件是否存在
+            let sourceExists = false;
+            try {
+              await fs.access(sourceAbsPath);
+              sourceExists = true;
+            } catch (accessErr) {
+              if (accessErr.code !== 'ENOENT') {
+                logger.debug(`[HLS Cleanup] 检测源文件失败: ${sourceAbsPath}`, accessErr.message);
+              }
+            }
+
+            if (!sourceExists) {
+              // 源文件已经不存在，只清理 Redis 标记
+              await safeRedisDel(redis, key, '清理永久失败视频标记');
+              logger.debug(`[HLS Cleanup] 源文件不存在，清理标记: ${relativePath}`);
+              continue;
+            }
+
+            // 删除数据库记录
+            try {
+              const removed = await itemsRepo.deleteWithRelations(sanitizedPath);
+              if (removed) {
+                logger.info(`[HLS Cleanup] 删除永久失败视频数据库记录: ${sanitizedPath}`);
+              }
+            } catch (dbErr) {
+              logger.warn(`[HLS Cleanup] 删除数据库记录失败: ${sanitizedPath}`, dbErr.message);
+            }
+
+            // 删除源文件
+            try {
+              await fs.unlink(sourceAbsPath);
+              logger.info(`[HLS Cleanup] 删除永久失败视频源文件: ${sourceAbsPath}`);
+              permanentFailedCount++;
+            } catch (unlinkErr) {
+              if (unlinkErr.code !== 'ENOENT') {
+                logger.warn(`[HLS Cleanup] 删除源文件失败: ${sourceAbsPath}`, unlinkErr.message);
+                errorCount++;
+              }
+            }
+
+            // 删除 HLS 目录（如果存在）
+            try {
+              const videoHlsDir = path.join(THUMBS_DIR, 'hls', sanitizedPath);
+              await fs.rm(videoHlsDir, { recursive: true, force: true });
+              logger.debug(`[HLS Cleanup] 删除永久失败视频的HLS目录: ${videoHlsDir}`);
+            } catch (hlsErr) {
+              logger.debug(`[HLS Cleanup] 删除HLS目录失败（可能不存在）: ${sanitizedPath}`);
+            }
+
+            // 删除 Redis 标记
+            await safeRedisDel(redis, key, '清理永久失败视频标记');
+
+          } catch (itemErr) {
+            logger.warn(`[HLS Cleanup] 处理永久失败视频失败: ${key}`, itemErr.message);
+            errorCount++;
+          }
+        }
+      } catch (redisErr) {
+        logger.warn('[HLS Cleanup] 扫描永久失败标记时出错:', redisErr.message);
+      }
+    }
+
+    logger.info(`HLS清理完成：删除 ${deletedCount} 个冗余HLS目录，${permanentFailedCount} 个永久失败源文件，${errorCount} 个处理出错`);
+    return {
+      deleted: deletedCount,
+      permanentSourcesRemoved: permanentFailedCount,
+      errors: errorCount
+    };
   } catch (error) {
     logger.error('HLS清理失败:', error);
     throw error;

@@ -50,12 +50,14 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
     const MAX_CONCURRENT_TASKS = Math.max(1, Math.min(VIDEO_MAX_CONCURRENCY, 4)); // 视频处理最大并发，默认受限于硬件
     const TASK_TIMEOUT_MS = 30 * 60 * 1000; // 单个任务超时时间：30分钟
     const QUEUE_HEALTH_CHECK_INTERVAL = 30 * 1000; // 队列健康检查间隔：30秒（更频繁以便监控内存）
-    
+
     // --- 空闲超时管理 ---
-    const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5分钟空闲超时
+    const IDLE_TIMEOUT_MS = Math.max(5000, Number(process.env.VIDEO_WORKER_IDLE_TIMEOUT_MS || 10000)); // 默认10秒空闲超时
     let lastActivityTime = Date.now();
     let idleCheckTimer = null;
     let isShuttingDown = false;
+    let idleNotified = false;
+    let lastMemoryWarningTime = 0;
 
     // 任务超时包装器
     async function executeTaskWithTimeout(task, timeoutMs = TASK_TIMEOUT_MS) {
@@ -75,6 +77,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
         });
     }
 
+
     // 内存和队列健康检查
     function performQueueHealthCheck() {
         const queueSize = taskQueue.length;
@@ -83,9 +86,18 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
         const heapTotalMB = Math.max(1, Math.round(memUsage.heapTotal / 1024 / 1024));
         const rssMB = Math.round(memUsage.rss / 1024 / 1024);
 
+        // 动态计算 RSS 阈值
+        // 1. 优先使用环境变量
+        // 2. 其次使用 DETECTED_MEMORY_GB 的 60%
+        // 3. 最后使用 os.totalmem() 的 60%
+        const detectedMemGB = Number(process.env.DETECTED_MEMORY_GB || 0);
+        const systemMemGB = detectedMemGB || Math.floor(os.totalmem() / (1024 * 1024 * 1024));
+        const defaultRssThresholdMB = Math.floor(systemMemGB * 1024 * 0.6); // 系统内存的60%
+        const rssThresholdMB = Number(process.env.VIDEO_WORKER_RSS_THRESHOLD_MB || defaultRssThresholdMB);
+
         // 内存压力检测
         const memoryPressure = heapUsedMB > heapTotalMB * 0.9; // 堆使用超过90%
-        const highMemoryUsage = rssMB > 500; // RSS超过500MB
+        const highMemoryUsage = rssMB > rssThresholdMB; // RSS超过动态阈值
 
         // 队列积压检测
         const isStuck = queueSize > 0 && activeTaskCount === 0 && !schedulerBackoffTimer;
@@ -94,7 +106,12 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
 
         // 内存紧急情况：强制垃圾回收和暂停新任务
         if (memoryPressure || highMemoryUsage) {
-            logger.warn(`[VIDEO-PROCESSOR] 检测到内存压力 - 堆使用: ${heapUsedMB}/${heapTotalMB}MB, RSS: ${rssMB}MB`);
+            // 限流：只每分钟记录一次内存压力警告
+            const now = Date.now();
+            if (now - lastMemoryWarningTime > 60000) {
+                logger.warn(`[VIDEO-PROCESSOR] 检测到内存压力 - 堆使用: ${heapUsedMB}/${heapTotalMB}MB, RSS: ${rssMB}MB`);
+                lastMemoryWarningTime = now;
+            }
 
             // 尝试垃圾回收（如果可用）
             if (global.gc) {
@@ -133,39 +150,45 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
         if (!isShuttingDown) {
             lastActivityTime = Date.now();
             logger.debug('[VIDEO-PROCESSOR] 活动时间已更新');
+            idleNotified = false;
         }
     }
 
     // 检查空闲状态并决定是否退出
     function checkIdleAndExit() {
         if (isShuttingDown) return;
-        
+
         const idleTime = Date.now() - lastActivityTime;
         const hasActiveTasks = taskQueue.length > 0 || isProcessingQueue || activeTaskCount > 0;
-        
+
         if (!hasActiveTasks && idleTime > IDLE_TIMEOUT_MS) {
-            logger.info(`[VIDEO-PROCESSOR] 检测到空闲超时 (${Math.round(idleTime / 1000)}秒)，准备优雅退出`);
-            gracefulShutdown('idle_timeout');
-        } else if (hasActiveTasks) {
-            logger.debug(`[VIDEO-PROCESSOR] 仍有活跃任务，继续运行 (队列: ${taskQueue.length}, 活跃: ${activeTaskCount})`);
-        } else {
-            logger.debug(`[VIDEO-PROCESSOR] 空闲时间: ${Math.round(idleTime / 1000)}秒 (超时: ${Math.round(IDLE_TIMEOUT_MS / 1000)}秒)`);
+            if (!idleNotified) {
+                idleNotified = true;
+                logger.info(`[VIDEO-PROCESSOR] 空闲超时 (${Math.round(idleTime / 1000)}秒)，通知主进程可释放线程`);
+                parentPort.postMessage(createWorkerResult({
+                    type: 'WORKER_IDLE',
+                    idleForMs: idleTime,
+                    timestamp: new Date().toISOString()
+                }));
+            }
+            return;
         }
+        // 移除活跃任务的debug日志，避免刷屏
     }
 
     // 优雅关闭函数
     function gracefulShutdown(reason = 'manual') {
         if (isShuttingDown) return;
-        
+
         isShuttingDown = true;
         logger.info(`[VIDEO-PROCESSOR] 开始优雅关闭 (原因: ${reason})`);
-        
+
         // 清理定时器
         if (healthCheckTimer) {
             clearInterval(healthCheckTimer);
             healthCheckTimer = null;
         }
-        
+
         if (idleCheckTimer) {
             clearInterval(idleCheckTimer);
             idleCheckTimer = null;
@@ -174,7 +197,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
             clearTimeout(schedulerBackoffTimer);
             schedulerBackoffTimer = null;
         }
-        
+
         // 发送退出信号给主进程
         parentPort.postMessage(createWorkerError({
             type: 'worker_shutdown',
@@ -184,20 +207,20 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
             queueLength: taskQueue.length,
             isProcessing: isProcessingQueue || activeTaskCount > 0,
         }));
-        
+
         // 等待当前任务完成（最多30秒）
         const shutdownTimeout = setTimeout(() => {
             logger.warn('[VIDEO-PROCESSOR] 关闭超时，强制退出');
             process.exit(0);
         }, 30000);
-        
+
         // 如果队列为空且没有处理中的任务，立即退出
         if (taskQueue.length === 0 && activeTaskCount === 0) {
             clearTimeout(shutdownTimeout);
             logger.info('[VIDEO-PROCESSOR] 队列为空，立即退出');
             process.exit(0);
         }
-        
+
         // 监听队列完成事件
         const checkShutdown = () => {
             if (taskQueue.length === 0 && activeTaskCount === 0) {
@@ -206,10 +229,10 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
                 process.exit(0);
             }
         };
-        
+
         // 定期检查是否可以退出
         const shutdownCheckInterval = setInterval(checkShutdown, 1000);
-        
+
         // 清理关闭检查定时器
         setTimeout(() => {
             clearInterval(shutdownCheckInterval);
@@ -218,9 +241,10 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
 
     // 启动定期健康检查
     const healthCheckTimer = setInterval(performQueueHealthCheck, QUEUE_HEALTH_CHECK_INTERVAL);
-    
+
     // 启动空闲检查
-    idleCheckTimer = setInterval(checkIdleAndExit, 60000); // 每分钟检查一次
+    const idleCheckInterval = Math.max(2000, Math.floor(IDLE_TIMEOUT_MS / 2));
+    idleCheckTimer = setInterval(checkIdleAndExit, idleCheckInterval);
 
     // 队列处理函数 - 支持有限并发与资源感知
     function processTaskQueue() {
@@ -344,7 +368,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
 
         // 在处理目录中创建 .nomedia 文件，防止被索引工具读取
         const nomediaFile = path.join(processingDir, '.nomedia');
-        await fs.writeFile(nomediaFile, '# 处理目录，请勿索引\n').catch(() => {});
+        await fs.writeFile(nomediaFile, '# 处理目录，请勿索引\n').catch(() => { });
 
         // 创建HLS输出目录
         await fs.mkdir(hlsOutputDir, { recursive: true });
@@ -519,7 +543,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
                         try {
                             const files = await fs.readdir(processingDir).catch(() => []);
                             if (files.length === 0) {
-                                await fs.rmdir(processingDir).catch(() => {});
+                                await fs.rmdir(processingDir).catch(() => { });
                                 logger.debug(`清理空的处理目录: ${processingDir}`);
                             }
                         } catch (e) {
@@ -674,15 +698,15 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
         try {
             logger.info('[VIDEO-PROCESSOR] 开始清理残留的临时文件...');
             let cleanedCount = 0;
-            
+
             // 递归查找并清理 .tmp 目录
             async function cleanupDir(dirPath) {
                 try {
                     const entries = await fs.readdir(dirPath, { withFileTypes: true });
-                    
+
                     for (const entry of entries) {
                         const fullPath = path.join(dirPath, entry.name);
-                        
+
                         if (entry.isDirectory()) {
                             if (entry.name === '.tmp') {
                                 // 清理 .tmp 目录
@@ -714,10 +738,10 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
                     logger.debug(`[VIDEO-PROCESSOR] 临时目录扫描失败（忽略）: ${dirPath} -> ${e && e.message}`);
                 }
             }
-            
+
             await cleanupDir(PHOTOS_DIR);
             logger.info(`[VIDEO-PROCESSOR] 临时文件清理完成，共清理 ${cleanedCount} 个目录`);
-            
+
         } catch (error) {
             logger.error('[VIDEO-PROCESSOR] 清理临时文件时出错:', error);
         }
@@ -726,73 +750,73 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
     parentPort.on('message', async (message) => {
         // 提取追踪上下文
         const traceContext = TraceManager.fromWorkerMessage(message);
-        
+
         // 获取实际任务数据
         // 修复消息处理逻辑，确保能正确提取任务类型
-        const task = message && message.type ? 
-            message : 
-            (message && message.payload && message.payload.type) ? 
-            message.payload : 
-            (message && message.task && message.task.type) ? 
-            message.task : 
-            message;
-        
+        const task = message && message.type ?
+            message :
+            (message && message.payload && message.payload.type) ?
+                message.payload :
+                (message && message.task && message.task.type) ?
+                    message.task :
+                    message;
+
         // 定义处理函数
         const processTask = async () => {
             // 更新活动时间
             updateActivity();
-            
+
             if (task.type === 'backfill') {
-            logger.info('[VIDEO-PROCESSOR] 收到 HLS 回填任务，开始扫描数据库...');
-            try {
-                // 先清理残留的临时文件
-                await cleanupOrphanedTempFiles();
-                
-                const videos = await dbAll('main', `SELECT path FROM items WHERE type = 'video'`);
-                // 允许通过 Redis 自适应开关关闭回填
+                logger.info('[VIDEO-PROCESSOR] 收到 HLS 回填任务，开始扫描数据库...');
                 try {
-                    const disableBackfill = await safeRedisGet(redis, 'adaptive:disable_hls_backfill', '禁用HLS回填标记');
-                    if (disableBackfill === '1') {
-                        logger.warn('[VIDEO-PROCESSOR] 自适应模式：已禁用 HLS 回填。本轮跳过。');
-                        return;
-                    }
-                } catch (disableCheckErr) {
-                    logger.debug('[VIDEO-PROCESSOR] 检查 HLS 回填禁用标记失败（忽略）:', disableCheckErr && disableCheckErr.message);
-                }
-                logger.info(`发现 ${videos.length} 个视频需要检查 HLS 状态`);
-                for (const video of videos) {
-                    // 更新活动时间
-                    updateActivity();
-                    
-                    // 动态中断：运行中若切到 low 档，立即停止后续回填，保护系统
+                    // 先清理残留的临时文件
+                    await cleanupOrphanedTempFiles();
+
+                    const videos = await dbAll('main', `SELECT path FROM items WHERE type = 'video'`);
+                    // 允许通过 Redis 自适应开关关闭回填
                     try {
-                        const stopNow = await safeRedisGet(redis, 'adaptive:disable_hls_backfill', '检查HLS回填停止');
-                        if (stopNow === '1') {
-                            logger.warn('[VIDEO-PROCESSOR] 自适应模式切换为低负载，已中断剩余回填任务。');
-                            break;
+                        const disableBackfill = await safeRedisGet(redis, 'adaptive:disable_hls_backfill', '禁用HLS回填标记');
+                        if (disableBackfill === '1') {
+                            logger.warn('[VIDEO-PROCESSOR] 自适应模式：已禁用 HLS 回填。本轮跳过。');
+                            return;
                         }
-                    } catch (stopCheckErr) {
-                        logger.debug('[VIDEO-PROCESSOR] 检查中止标记失败（忽略）:', stopCheckErr && stopCheckErr.message);
+                    } catch (disableCheckErr) {
+                        logger.debug('[VIDEO-PROCESSOR] 检查 HLS 回填禁用标记失败（忽略）:', disableCheckErr && disableCheckErr.message);
                     }
-                    // 依次处理，避免并发过高，增加处理间隔
-                    await handleTask({
-                        filePath: path.join(PHOTOS_DIR, video.path),
-                        relativePath: video.path,
-                        thumbsDir: THUMBS_DIR
-                    });
-                    
-                    // 每个视频处理完后等待，减少系统压力
-                    const cpusDelay = Math.max(1, Number(process.env.DETECTED_CPU_COUNT) || ((os.cpus && os.cpus().length) || 1));
-                    const la = (os.loadavg && os.loadavg()[0]) || 0;
-                    const highLoad = la > cpusDelay * 0.8;
-                    const delayMs = highLoad ? Math.max(VIDEO_TASK_DELAY_MS, 2000) : VIDEO_TASK_DELAY_MS;
-await new Promise(resolve => setTimeout(resolve, delayMs));
+                    logger.info(`发现 ${videos.length} 个视频需要检查 HLS 状态`);
+                    for (const video of videos) {
+                        // 更新活动时间
+                        updateActivity();
+
+                        // 动态中断：运行中若切到 low 档，立即停止后续回填，保护系统
+                        try {
+                            const stopNow = await safeRedisGet(redis, 'adaptive:disable_hls_backfill', '检查HLS回填停止');
+                            if (stopNow === '1') {
+                                logger.warn('[VIDEO-PROCESSOR] 自适应模式切换为低负载，已中断剩余回填任务。');
+                                break;
+                            }
+                        } catch (stopCheckErr) {
+                            logger.debug('[VIDEO-PROCESSOR] 检查中止标记失败（忽略）:', stopCheckErr && stopCheckErr.message);
+                        }
+                        // 依次处理，避免并发过高，增加处理间隔
+                        await handleTask({
+                            filePath: path.join(PHOTOS_DIR, video.path),
+                            relativePath: video.path,
+                            thumbsDir: THUMBS_DIR
+                        });
+
+                        // 每个视频处理完后等待，减少系统压力
+                        const cpusDelay = Math.max(1, Number(process.env.DETECTED_CPU_COUNT) || ((os.cpus && os.cpus().length) || 1));
+                        const la = (os.loadavg && os.loadavg()[0]) || 0;
+                        const highLoad = la > cpusDelay * 0.8;
+                        const delayMs = highLoad ? Math.max(VIDEO_TASK_DELAY_MS, 2000) : VIDEO_TASK_DELAY_MS;
+                        await new Promise(resolve => setTimeout(resolve, delayMs));
+                    }
+                    logger.info('[VIDEO-PROCESSOR] HLS 回填任务检查完成。');
+                } catch (e) {
+                    logger.error('[VIDEO-PROCESSOR] HLS 回填任务失败:', e);
                 }
-                logger.info('[VIDEO-PROCESSOR] HLS 回填任务检查完成。');
-            } catch (e) {
-                logger.error('[VIDEO-PROCESSOR] HLS 回填任务失败:', e);
-            }
-        } else if (task.type === 'cleanup') {
+            } else if (task.type === 'cleanup') {
                 // 手动触发清理任务
                 await cleanupOrphanedTempFiles();
                 parentPort.postMessage(createWorkerResult({
@@ -808,7 +832,7 @@ await new Promise(resolve => setTimeout(resolve, delayMs));
                 setImmediate(() => processTaskQueue());
             }
         };
-        
+
         // 在追踪上下文中运行
         if (traceContext) {
             await TraceManager.run(traceContext, processTask);

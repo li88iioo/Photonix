@@ -1,13 +1,13 @@
 /**
- * 视频处理服务 - 手动补全 HLS（一次性会话）
- * 使用一次性 video worker：创建 -> 批量派发 -> 收敛完成 -> 终止
+ * 视频处理服务 - 手动补全 HLS（共享 Worker 按需唤醒）
+ * 负责将批处理任务派发给按需启动的 video worker，并在任务完成后返回统计。
  */
 const path = require('path');
 const logger = require('../config/logger');
 const { TraceManager } = require('../utils/trace');
 const { normalizeWorkerMessage } = require('../utils/workerMessage');
 const { PHOTOS_DIR, THUMBS_DIR, HLS_BATCH_TIMEOUT_MS } = require('../config');
-const { createDisposableWorker } = require('./worker.manager');
+const { startVideoWorker } = require('./worker.manager');
 
 /**
  * 规范化输入路径为 { abs, rel }
@@ -31,207 +31,125 @@ function normalizePaths(inputPaths) {
  * @returns {Promise<{total:number, success:number, failed:number, skipped:number}>}
  */
 async function runHlsBatch(paths, opts = {}) {
-  const tasks = normalizePaths(paths).filter(p => /\.(mp4|webm|mov)$/i.test(p.abs));
-  const total = tasks.length;
+  const normalized = normalizePaths(paths).filter(p => /\.(mp4|webm|mov)$/i.test(p.abs));
+  const uniqueTasks = [];
+  const dedupe = new Set();
+  for (const task of normalized) {
+    if (!dedupe.has(task.rel)) {
+      dedupe.add(task.rel);
+      uniqueTasks.push(task);
+    }
+  }
+
+  const total = uniqueTasks.length;
   if (total === 0) {
     return { total: 0, success: 0, failed: 0, skipped: 0 };
   }
 
+  const worker = startVideoWorker();
+  if (!worker) {
+    throw new Error('无法启动视频处理线程');
+  }
+
   const timeoutMs = Math.max(10000, Number(opts.timeoutMs || HLS_BATCH_TIMEOUT_MS));
-  return new Promise(async (resolve, reject) => {
+  const pending = new Set(uniqueTasks.map(task => task.rel));
+  let success = 0;
+  let failed = 0;
+  let skipped = 0;
+  let timer = null;
+
+  return new Promise((resolve, reject) => {
     let settled = false;
-    const worker = createDisposableWorker('video');
-    const done = new Set();
-    let success = 0, failed = 0, skipped = 0;
-    let forceTerminated = false;
+    const removeListener = typeof worker.off === 'function' ? worker.off.bind(worker) : worker.removeListener.bind(worker);
 
-    const cleanup = async () => {
-      try {
-        // 先移除所有监听器，防止在终止过程中触发事件
-        worker.removeAllListeners();
-
-        // 优雅终止：给工作进程一些时间来自行清理
-        if (!forceTerminated) {
-          worker.terminate();
-          // 等待最多2秒让进程优雅退出
-          await new Promise(resolve => {
-            const graceTimer = setTimeout(() => resolve(), 2000);
-            worker.once('exit', () => {
-              clearTimeout(graceTimer);
-              resolve();
-            });
-          });
-        }
-      } catch (cleanupErr) {
-        logger.debug('[VIDEO-SERVICE] 清理 worker 资源时出现异常（忽略）:', cleanupErr && cleanupErr.message ? { error: cleanupErr.message } : cleanupErr);
-      }
+    const cleanup = () => {
+      if (cleanup.__done) return;
+      cleanup.__done = true;
+      clearTimeout(timer);
+      removeListener('message', onMessage);
+      worker.removeListener('error', onError);
+      worker.removeListener('exit', onExit);
     };
 
-    const tryFinish = () => {
-      if (done.size >= total) {
-        if (!settled) { settled = true; cleanup(); resolve({ total, success, failed, skipped }); }
-      }
-    };
-
-    // 进程健康监控
-    const healthCheckInterval = setInterval(() => {
-      if (settled) {
-        clearInterval(healthCheckInterval);
-        return;
-      }
-
-      try {
-        // 检查工作进程是否仍然活跃
-        if (worker && typeof worker.kill === 'function') {
-          // 发送心跳检查（可选，如果工作进程支持）
-        }
-      } catch (healthErr) {
-        logger.silly(`[VIDEO-SERVICE] 健康检查失败（忽略）: ${healthErr && healthErr.message}`);
-      }
-    }, 30000); // 每30秒检查一次
-
-    // 收集结果
-    worker.on('message', (rawMessage) => {
+    const finish = () => {
       if (settled) return;
+      settled = true;
+      cleanup();
+      resolve({ total, success, failed, skipped });
+    };
 
-      const processMessage = () => {
-        try {
-          const message = normalizeWorkerMessage(rawMessage);
-          const payload = message.payload || {};
-          const eventType = payload.type || (rawMessage && rawMessage.type) || message.kind;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
 
-          if (message.kind === 'log') {
-            const level = (payload.level || 'debug').toLowerCase();
-            const text = payload.message || payload.text || '';
-            const fn = typeof logger[level] === 'function' ? level : 'debug';
-            logger[fn](`[VIDEO-SERVICE][worker-log] ${text}`);
-            return;
-          }
-
-          if (message.kind === 'error') {
-            if (eventType === 'worker_shutdown') {
-              logger.info(`[VIDEO-SERVICE] Worker进程关闭信号: ${payload.reason}`);
-              if (!settled) {
-                settled = true;
-                cleanup().finally(() => {
-                  const remaining = total - done.size;
-                  resolve({
-                    total,
-                    success,
-                    failed: failed + remaining,
-                    skipped,
-                    workerShutdown: true,
-                    message: `Worker进程关闭 (${payload.reason})，${remaining} 个任务被标记为失败`
-                  });
-                });
-              }
-              return;
-            }
-
-            const rel = payload.task && payload.task.relativePath
-              ? payload.task.relativePath
-              : (payload.path ? payload.path : null);
-
-            if (rel && !done.has(rel)) {
-              done.add(rel);
-              failed++;
-            }
-
-            const errMsg = (payload.error && payload.error.message) || payload.message || '未知错误';
-            logger.error(`[VIDEO-SERVICE] 视频处理失败: ${rel || 'unknown'}, 原因: ${errMsg}`);
-            tryFinish();
-            return;
-          }
-
-          const rel = payload.task && payload.task.relativePath
-            ? payload.task.relativePath
-            : (payload.path ? payload.path : null);
-
-          if (rel && !done.has(rel)) {
-            done.add(rel);
-            if (payload.success === true) {
-              success++;
-            } else if (payload.status === 'skipped_hls_exists' || payload.status === 'skipped_permanent_failure') {
-              skipped++;
-            } else {
-              failed++;
-            }
-          }
-          tryFinish();
-        } catch (e) {
-          logger.warn('[VIDEO-SERVICE] 结果解析失败:', e && e.message ? e.message : e);
-        }
-      };
-
+    const onMessage = (rawMessage) => {
+      if (settled) return;
       try {
-        const traceContext = TraceManager.fromWorkerMessage(rawMessage);
-        if (traceContext) {
-          TraceManager.run(traceContext, processMessage);
+        const message = normalizeWorkerMessage(rawMessage);
+        const payload = message.payload || {};
+        const eventType = payload.type || rawMessage?.type || message.kind;
+
+        if (eventType === 'WORKER_IDLE') {
+          return;
+        }
+
+        if (message.kind === 'log') {
+          const level = (payload.level || 'debug').toLowerCase();
+          const text = payload.message || payload.text || '';
+          const fn = typeof logger[level] === 'function' ? level : 'debug';
+          logger[fn](`[VIDEO-SERVICE][worker-log] ${text}`);
+          return;
+        }
+
+        const rel = payload.task && payload.task.relativePath
+          ? payload.task.relativePath
+          : (payload.path ? payload.path : null);
+
+        if (!rel || !pending.has(rel)) {
+          return;
+        }
+
+        pending.delete(rel);
+        if (message.kind === 'error') {
+          failed += 1;
+        } else if (payload.status === 'skipped_hls_exists' || payload.status === 'skipped_permanent_failure') {
+          skipped += 1;
+        } else if (payload.success === true) {
+          success += 1;
         } else {
-          processMessage();
+          failed += 1;
+        }
+
+        if (pending.size === 0) {
+          finish();
         }
       } catch (err) {
         logger.warn('[VIDEO-SERVICE] 处理worker消息失败:', err && err.message ? err.message : err);
       }
-    });
+    };
 
-    worker.on('error', (err) => {
-      logger.error('[VIDEO-SERVICE] 工作进程错误:', err);
-      if (!settled) {
-        clearInterval(healthCheckInterval);
-        settled = true;
-        cleanup().finally(() => reject(err));
+    const onError = (err) => fail(err);
+
+    const onExit = (code) => {
+      if (pending.size === 0) {
+        return;
       }
-    });
+      fail(new Error(`视频处理线程提前退出 (code ${code})，剩余 ${pending.size} 个任务未完成`));
+    };
 
-    worker.on('exit', (code) => {
-      clearInterval(healthCheckInterval);
+    worker.on('message', onMessage);
+    worker.on('error', onError);
+    worker.on('exit', onExit);
 
-      if (settled) return;
-
-      // 分析退出原因
-      if (code === 0) {
-        logger.info('[VIDEO-SERVICE] 工作进程正常退出');
-      } else {
-        logger.warn(`[VIDEO-SERVICE] 工作进程异常退出，代码: ${code}`);
-      }
-
-      // 如果任务未全部完成，按失败处理剩余任务
-      if (done.size < total) {
-        const remaining = total - done.size;
-        failed += remaining;
-        logger.warn(`[VIDEO-SERVICE] ${remaining} 个任务因进程退出而失败`);
-      }
-
-      settled = true;
-      resolve({ total, success, failed, skipped });
-    });
-
-    // 安全超时：防止意外卡住
-    const timer = setTimeout(async () => {
-      if (!settled) {
-        logger.warn(`[VIDEO-SERVICE] 批处理超时 (${timeoutMs}ms)，强制终止`);
-        clearInterval(healthCheckInterval);
-        forceTerminated = true; // 标记为强制终止
-
-        settled = true;
-        await cleanup();
-
-        const remaining = total - done.size;
-        resolve({
-          total,
-          success,
-          failed: failed + remaining,
-          skipped,
-          timeout: true,
-          message: `处理超时，${remaining} 个任务被标记为失败`
-        });
-      }
+    timer = setTimeout(() => {
+      fail(new Error(`HLS 批处理超时 (${timeoutMs}ms)`));
     }, timeoutMs);
 
-    // 逐条派发任务
     try {
-      for (const { abs, rel } of tasks) {
+      for (const { abs, rel } of uniqueTasks) {
         const message = TraceManager.injectToWorkerMessage({
           filePath: abs,
           relativePath: rel,
@@ -239,14 +157,8 @@ async function runHlsBatch(paths, opts = {}) {
         });
         worker.postMessage(message);
       }
-    } catch (e) {
-      logger.error('[VIDEO-SERVICE] 任务派发失败:', e);
-      clearTimeout(timer);
-      clearInterval(healthCheckInterval);
-      settled = true;
-      await cleanup();
-      reject(new Error(`任务派发失败: ${e.message}`));
-      return;
+    } catch (error) {
+      fail(new Error(`任务派发失败: ${error.message}`));
     }
   });
 }

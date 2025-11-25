@@ -10,7 +10,7 @@ const { safeRedisIncr, safeRedisDel } = require('../utils/helpers');
 const { invalidateTags } = require('./cache.service');
 const { PHOTOS_DIR, THUMBS_DIR, INDEX_STABILIZE_DELAY_MS } = require('../config');
 const { dbRun, runPreparedBatch, dbAll } = require('../db/multi-db');
-const { getIndexingWorker, getVideoWorker, createDisposableWorker } = require('./worker.manager');
+const { getIndexingWorker, getVideoWorker, startVideoWorker, createDisposableWorker } = require('./worker.manager');
 const settingsService = require('./settings.service');
 const orchestrator = require('./orchestrator');
 const { sanitizePath, isPathSafe } = require('../utils/path.utils');
@@ -43,6 +43,102 @@ function enqueueIndexChange(change) {
         pendingIndexChanges.set(key, bucket);
     }
     bucket.push(change);
+}
+
+let completedVideoBatch = [];
+let videoCompletionTimer = null;
+
+function processCompletedVideoBatch() {
+    if (completedVideoBatch.length === 0) return;
+
+    logger.info(`[Main-Thread] 开始处理 ${completedVideoBatch.length} 个已完成视频的后续任务...`);
+
+    for (const videoPath of completedVideoBatch) {
+        enqueueIndexChange({ type: 'add', filePath: videoPath });
+    }
+
+    triggerDelayedIndexProcessing();
+
+    completedVideoBatch = [];
+    if (videoCompletionTimer) {
+        clearTimeout(videoCompletionTimer);
+        videoCompletionTimer = null;
+    }
+}
+
+function handleVideoWorkerMessage(rawMessage) {
+    const processMessage = () => {
+        try {
+            const message = normalizeWorkerMessage(rawMessage);
+            const payload = message.payload || {};
+
+            if (message.kind === 'log') {
+                const level = (payload.level || 'debug').toLowerCase();
+                const text = payload.message || payload.text || '';
+                const fn = typeof logger[level] === 'function' ? level : 'debug';
+                logger[fn](`[视频线程] ${text}`);
+                return;
+            }
+
+            if (message.kind === 'error') {
+                if (payload.type === 'worker_shutdown') {
+                    logger.info(`[VIDEO-WORKER] 线程关闭: ${payload.reason || 'unknown'}`);
+                } else {
+                    const errorPath = payload.path || (payload.task && payload.task.relativePath) || 'unknown';
+                    const errorMessage = (payload.error && payload.error.message) || payload.message || '未知错误';
+                    logger.error(`视频处理失败: ${errorPath}, 原因: ${errorMessage}`);
+                }
+                return;
+            }
+
+            if (payload.success === true) {
+                const resolvedPath = payload.path || (payload.task && payload.task.relativePath);
+                if (resolvedPath) {
+                    logger.debug(`视频处理完成或跳过: ${resolvedPath}`);
+                    completedVideoBatch.push(resolvedPath);
+                }
+            }
+
+            if (videoCompletionTimer) {
+                clearTimeout(videoCompletionTimer);
+            }
+
+            if (completedVideoBatch.length >= 10) {
+                processCompletedVideoBatch();
+            } else {
+                videoCompletionTimer = setTimeout(processCompletedVideoBatch, 5000);
+            }
+        } catch (err) {
+            logger.debug('[Main-Thread] 视频消息处理失败（忽略）:', err && err.message ? err.message : err);
+        }
+    };
+
+    try {
+        const traceContext = TraceManager.fromWorkerMessage(rawMessage);
+        if (traceContext) {
+            TraceManager.run(traceContext, processMessage);
+        } else {
+            processMessage();
+        }
+    } catch (err) {
+        logger.debug('[Main-Thread] 视频消息追踪恢复失败（忽略）:', err && err.message ? err.message : err);
+    }
+}
+
+function attachVideoWorkerListeners(worker) {
+    if (!worker || worker.__photonixVideoListenerBound) {
+        return;
+    }
+
+    const handler = (message) => handleVideoWorkerMessage(message);
+    const remover = typeof worker.off === 'function' ? worker.off.bind(worker) : worker.removeListener.bind(worker);
+
+    worker.on('message', handler);
+    worker.once('exit', () => {
+        remover('message', handler);
+        worker.__photonixVideoListenerBound = false;
+    });
+    worker.__photonixVideoListenerBound = true;
 }
 
 function flattenPendingChanges() {
@@ -144,91 +240,14 @@ async function queueVideoTasksInBatches(videos) {
  * 为索引工作线程、设置工作线程和视频工作线程添加消息处理
  */
 function setupWorkerListeners() {
-    // --- 将批处理逻辑完全封装在当前作用域内，避免引用错误 ---
-    let completedVideoBatch = [];
-    let videoCompletionTimer = null;
-
-    function processCompletedVideoBatch() {
-        if (completedVideoBatch.length === 0) return;
-
-        logger.info(`[Main-Thread] 开始处理 ${completedVideoBatch.length} 个已完成视频的后续任务...`);
-        
-        for (const videoPath of completedVideoBatch) {
-            enqueueIndexChange({ type: 'add', filePath: videoPath });
-        }
-        
-        triggerDelayedIndexProcessing();
-
-        completedVideoBatch = [];
-        if (videoCompletionTimer) {
-            clearTimeout(videoCompletionTimer);
-            videoCompletionTimer = null;
-        }
-    }
-
-    // --- 启动时检查已禁用（HLS处理改为手动模式）---
-
     // --- 监听器设置 ---
     const indexingWorker = getIndexingWorker();
     const videoWorker = getVideoWorker();
-    videoWorker.on('message', (rawMessage) => {
-        const processMessage = () => {
-            try {
-                const message = normalizeWorkerMessage(rawMessage);
-                const payload = message.payload || {};
-
-                if (message.kind === 'log') {
-                    const level = (payload.level || 'debug').toLowerCase();
-                    const text = payload.message || payload.text || '';
-                    const fn = typeof logger[level] === 'function' ? level : 'debug';
-                    logger[fn](`[视频线程] ${text}`);
-                    return;
-                }
-
-                if (message.kind === 'error') {
-                    if (payload.type === 'worker_shutdown') {
-                        logger.info(`[VIDEO-WORKER] 线程关闭: ${payload.reason || 'unknown'}`);
-                    } else {
-                        const errorPath = payload.path || (payload.task && payload.task.relativePath) || 'unknown';
-                        const errorMessage = (payload.error && payload.error.message) || payload.message || '未知错误';
-                        logger.error(`视频处理失败: ${errorPath}, 原因: ${errorMessage}`);
-                    }
-                    return;
-                }
-
-                if (payload.success === true) {
-                    const resolvedPath = payload.path || (payload.task && payload.task.relativePath);
-                    if (resolvedPath) {
-                        logger.debug(`视频处理完成或跳过: ${resolvedPath}`);
-                        completedVideoBatch.push(resolvedPath);
-                    }
-                }
-
-                if (videoCompletionTimer) {
-                    clearTimeout(videoCompletionTimer);
-                }
-
-                if (completedVideoBatch.length >= 10) {
-                    processCompletedVideoBatch();
-                } else {
-                    videoCompletionTimer = setTimeout(processCompletedVideoBatch, 5000);
-                }
-            } catch (err) {
-                logger.debug('[Main-Thread] 视频消息处理失败（忽略）:', err && err.message ? err.message : err);
-            }
-        };
-
-        try {
-            const traceContext = TraceManager.fromWorkerMessage(rawMessage);
-            if (traceContext) {
-                TraceManager.run(traceContext, processMessage);
-            } else {
-                processMessage();
-            }
-        } catch (err) {
-            logger.debug('[Main-Thread] 视频消息追踪恢复失败（忽略）:', err && err.message ? err.message : err);
-        }
-    });
+    if (videoWorker) {
+        attachVideoWorkerListeners(videoWorker);
+    } else {
+        logger.debug('[Main-Thread] 视频工作线程暂未启动，监听器将在首次启动时挂载。');
+    }
 
     indexingWorker.on('message', async (rawMessage) => {
         const processMessage = async () => {
@@ -294,7 +313,8 @@ function setupWorkerListeners() {
                         try {
                             const videoPaths = Array.isArray(payload.videoPaths) ? payload.videoPaths : [];
                             if (videoPaths.length > 0) {
-                                const vw = getVideoWorker();
+                                const vw = startVideoWorker();
+                                attachVideoWorkerListeners(vw);
                                 for (const absPath of videoPaths) {
                                     const safePaths = resolveVideoTaskPaths(absPath);
                                     if (!safePaths) {
@@ -834,6 +854,7 @@ module.exports = {
     buildSearchIndex,        // 构建搜索索引
     processManualChanges,    // 手动变更处理（同步）
     enqueueManualChanges,    // 手动变更排队（异步）
+    attachVideoWorkerListeners,
 };
 
 /**

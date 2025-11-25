@@ -257,7 +257,7 @@ function spawnCoreWorker(name) {
             return getSettingsWorker();
         case 'video':
             clearWorkerReference(name);
-            return getVideoWorker();
+            return startVideoWorker();
         default:
             throw new Error(`Unknown core worker: ${name}`);
     }
@@ -618,15 +618,85 @@ function getHistoryWorker() {
  * 获取视频worker（惰性创建单例）
  * @returns {Worker}
  */
-function getVideoWorker() {
-    if (!__videoWorker) {
-        __videoWorker = new Worker(path.resolve(__dirname, '..', 'workers', 'video-processor.js'), {
-            resourceLimits: { maxOldGenerationSizeMb: Number(process.env.WORKER_MEMORY_MB || 256) }
-        });
-        noteWorkerCreated('video', __videoWorker);
-        attachDefaultHandlers(__videoWorker, 'videoWorker');
-        attachVideoMetrics(__videoWorker);
+function bindVideoWorkerIdleHandler(worker) {
+    if (!worker || worker.__idleMessageBound) {
+        return;
     }
+
+    const detach = () => {
+        if (worker.__idleMessageBound) {
+            const remover = typeof worker.off === 'function' ? worker.off.bind(worker) : worker.removeListener.bind(worker);
+            remover('message', onMessage);
+            worker.__idleMessageBound = false;
+        }
+    };
+
+    const onMessage = (raw) => {
+        try {
+            const message = normalizeWorkerMessage(raw);
+            const payload = message.payload || {};
+            const eventType = payload.type || raw?.type;
+            if (eventType !== 'WORKER_IDLE') {
+                return;
+            }
+
+            if (worker.__idleTerminationRequested) {
+                return;
+            }
+            worker.__idleTerminationRequested = true;
+            videoMetrics.workerState = 'idle';
+            videoMetrics.lastUpdatedAt = Date.now();
+            logger.info('[WorkerManager] 视频工作线程空闲，准备终止以释放资源。');
+            detach();
+
+            // 标记为预期终止，避免自动重启
+            worker.__expectedTermination = true;
+
+            // 清除全局引用，避免 getVideoWorker 返回已终止的 worker
+            __videoWorker = null;
+
+            const termination = worker.terminate();
+            if (termination && typeof termination.catch === 'function') {
+                termination.catch((err) => logWorkerIgnore('终止视频线程', err));
+            }
+        } catch (error) {
+            logger.debug('[WorkerManager] 处理视频线程空闲消息失败（忽略）:', error && error.message);
+        }
+    };
+
+    const handler = typeof worker.on === 'function' ? worker.on.bind(worker) : worker.addListener.bind(worker);
+    handler('message', onMessage);
+    worker.once('exit', () => {
+        worker.__idleMessageBound = false;
+        worker.__idleTerminationRequested = false;
+    });
+    worker.__idleMessageBound = true;
+}
+
+function startVideoWorker() {
+    if (__videoWorker) {
+        return __videoWorker;
+    }
+
+    __videoWorker = new Worker(path.resolve(__dirname, '..', 'workers', 'video-processor.js'), {
+        resourceLimits: { maxOldGenerationSizeMb: Number(process.env.WORKER_MEMORY_MB || 256) }
+    });
+    noteWorkerCreated('video', __videoWorker);
+    attachDefaultHandlers(__videoWorker, 'videoWorker');
+    attachVideoMetrics(__videoWorker);
+    bindVideoWorkerIdleHandler(__videoWorker);
+    try {
+        const { attachVideoWorkerListeners } = require('./indexer.service');
+        if (typeof attachVideoWorkerListeners === 'function') {
+            attachVideoWorkerListeners(__videoWorker);
+        }
+    } catch (error) {
+        logger.debug('[WorkerManager] 安装视频worker监听器失败（忽略）:', error && error.message);
+    }
+    return __videoWorker;
+}
+
+function getVideoWorker() {
     return __videoWorker;
 }
 
@@ -907,16 +977,21 @@ function attachDefaultHandlers(worker, name) {
             }
         });
         worker.on('exit', (code) => {
-            if (code !== 0) {
+            // 检查是否为预期终止（例如空闲自动停止）
+            const isExpectedTermination = worker.__expectedTermination === true;
+
+            if (code !== 0 && !isExpectedTermination) {
                 logger.warn(`${name} 意外退出，退出码: ${code}`);
-            } else {
-                logger.info(`${name} 退出，退出码: ${code}`);
+            } else if (code === 0 || isExpectedTermination) {
+                logger.info(`${name} 正常退出，退出码: ${code}`);
             }
 
             if (coreName) {
                 const exitInfo = { exitCode: code, exitedAt: Date.now() };
                 clearWorkerReference(coreName);
-                if (code === 0) {
+
+                // 只有非预期终止才标记为错误并尝试重启
+                if (code === 0 || isExpectedTermination) {
                     updateCoreWorkerState(coreName, Object.assign({}, exitInfo, { state: 'stopped' }));
                 } else {
                     updateCoreWorkerState(coreName, Object.assign({}, exitInfo, { state: 'errored' }));
@@ -935,8 +1010,7 @@ function attachDefaultHandlers(worker, name) {
 function ensureCoreWorkers() {
     const w1 = getIndexingWorker(); attachDefaultHandlers(w1, 'indexingWorker');
     const w2 = getSettingsWorker(); attachDefaultHandlers(w2, 'settingsWorker');
-    const w4 = getVideoWorker(); attachDefaultHandlers(w4, 'videoWorker');
-    return { w1, w2, w4 };
+    return { w1, w2 };
 }
 
 /**
@@ -973,6 +1047,7 @@ module.exports = {
     getIndexingWorker,
     getSettingsWorker,
     getVideoWorker,
+    startVideoWorker,
     ensureCoreWorkers,
     createDisposableWorker,
 
@@ -1001,35 +1076,35 @@ module.exports = {
  * @returns {string} 任务ID
  */
 function scheduleWorkerTask(taskType, payload, options = {}) {
-  const { priority = 1, timeout = 300000, retries = 3 } = options;
+    const { priority = 1, timeout = 300000, retries = 3 } = options;
 
-  const task = {
-    id: `${taskType}_${Date.now()}_${Math.random()}`,
-    type: taskType,
-    priority,
-    payload,
-    handler: async (data) => {
-      // 通过类型选择worker
-      switch (taskType) {
-        case 'thumbnail':
-          await processThumbnailTask(data);
-          break;
-        case 'index':
-          await processIndexTask(data);
-          break;
-        case 'video':
-          await processVideoTask(data);
-          break;
-        default: {
-          const { ValidationError } = require('../utils/errors');
-          throw new ValidationError(`Unknown task type: ${taskType}`, { taskType, validTypes: ['index', 'video'] });
+    const task = {
+        id: `${taskType}_${Date.now()}_${Math.random()}`,
+        type: taskType,
+        priority,
+        payload,
+        handler: async (data) => {
+            // 通过类型选择worker
+            switch (taskType) {
+                case 'thumbnail':
+                    await processThumbnailTask(data);
+                    break;
+                case 'index':
+                    await processIndexTask(data);
+                    break;
+                case 'video':
+                    await processVideoTask(data);
+                    break;
+                default: {
+                    const { ValidationError } = require('../utils/errors');
+                    throw new ValidationError(`Unknown task type: ${taskType}`, { taskType, validTypes: ['index', 'video'] });
+                }
+            }
         }
-      }
-    }
-  };
+    };
 
-  taskScheduler.addTask(task);
-  return task.id;
+    taskScheduler.addTask(task);
+    return task.id;
 }
 
 /**
@@ -1039,29 +1114,29 @@ function scheduleWorkerTask(taskType, payload, options = {}) {
  * @returns {Worker|null}
  */
 function selectOptimalWorker(taskType) {
-  // 简单负载均衡实现，后续可扩展（如轮询/权重等）
-  switch (taskType) {
-    case 'thumbnail':
-      if (idleThumbnailWorkers.length > 0) {
-        return idleThumbnailWorkers[0];
-      }
-      // 没有空闲则考虑自动扩容
-      if (thumbnailWorkers.length < NUM_WORKERS) {
-        scaleThumbnailWorkerPool(thumbnailWorkers.length + 1);
-        return thumbnailWorkers[thumbnailWorkers.length - 1];
-      }
-      break;
+    // 简单负载均衡实现，后续可扩展（如轮询/权重等）
+    switch (taskType) {
+        case 'thumbnail':
+            if (idleThumbnailWorkers.length > 0) {
+                return idleThumbnailWorkers[0];
+            }
+            // 没有空闲则考虑自动扩容
+            if (thumbnailWorkers.length < NUM_WORKERS) {
+                scaleThumbnailWorkerPool(thumbnailWorkers.length + 1);
+                return thumbnailWorkers[thumbnailWorkers.length - 1];
+            }
+            break;
 
-    case 'index':
-      return getIndexingWorker();
+        case 'index':
+            return getIndexingWorker();
 
-    case 'settings':
-      return getSettingsWorker();
+        case 'settings':
+            return getSettingsWorker();
 
-    case 'video':
-      return getVideoWorker();
-  }
-  return null;
+        case 'video':
+            return startVideoWorker();
+    }
+    return null;
 }
 
 /**
@@ -1070,29 +1145,29 @@ function selectOptimalWorker(taskType) {
  * @returns {object}
  */
 function performWorkerHealthCheck() {
-  const buildCoreState = (name, ref) => {
-    const base = coreWorkerStates[name] ? { ...coreWorkerStates[name] } : { state: ref ? 'active' : 'inactive' };
-    if (ref && typeof ref.threadId === 'number') {
-      base.threadId = ref.threadId;
-    }
-    return base;
-  };
+    const buildCoreState = (name, ref) => {
+        const base = coreWorkerStates[name] ? { ...coreWorkerStates[name] } : { state: ref ? 'active' : 'inactive' };
+        if (ref && typeof ref.threadId === 'number') {
+            base.threadId = ref.threadId;
+        }
+        return base;
+    };
 
-  const status = {
-    indexing: buildCoreState('indexing', __indexingWorker),
-    settings: buildCoreState('settings', __settingsWorker),
-    history: buildCoreState('history', __historyWorker),
-    video: Object.assign({}, buildCoreState('video', __videoWorker), { metrics: getVideoTaskMetrics() }),
-    thumbnail: {
-      total: thumbnailWorkers.length,
-      idle: idleThumbnailWorkers.length,
-      active: thumbnailWorkers.length - idleThumbnailWorkers.length
-    },
-    taskQueue: taskScheduler.getQueueStatus()
-  };
+    const status = {
+        indexing: buildCoreState('indexing', __indexingWorker),
+        settings: buildCoreState('settings', __settingsWorker),
+        history: buildCoreState('history', __historyWorker),
+        video: Object.assign({}, buildCoreState('video', __videoWorker), { metrics: getVideoTaskMetrics() }),
+        thumbnail: {
+            total: thumbnailWorkers.length,
+            idle: idleThumbnailWorkers.length,
+            active: thumbnailWorkers.length - idleThumbnailWorkers.length
+        },
+        taskQueue: taskScheduler.getQueueStatus()
+    };
 
-  logger.silly('[WorkerHealth] 状态检查:', status);
-  return status;
+    logger.silly('[WorkerHealth] 状态检查:', status);
+    return status;
 }
 
 /**
@@ -1101,81 +1176,81 @@ function performWorkerHealthCheck() {
  * @returns {Promise<any>}
  */
 async function processThumbnailTask(data) {
-  const worker = selectOptimalWorker('thumbnail');
-  if (!worker) {
-    const { ServiceUnavailableError } = require('../utils/errors');
-    throw new ServiceUnavailableError('缩略图Worker', { reason: '无可用Worker' });
-  }
-
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let timeoutId;
-    const removeListener = typeof worker.off === 'function'
-      ? (event, handler) => worker.off(event, handler)
-      : (event, handler) => worker.removeListener(event, handler);
-
-    function cleanup() {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-      removeListener('message', onMessage);
-      removeListener('error', onError);
+    const worker = selectOptimalWorker('thumbnail');
+    if (!worker) {
+        const { ServiceUnavailableError } = require('../utils/errors');
+        throw new ServiceUnavailableError('缩略图Worker', { reason: '无可用Worker' });
     }
 
-    function finalizeResolve(result) {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(result);
-    }
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        let timeoutId;
+        const removeListener = typeof worker.off === 'function'
+            ? (event, handler) => worker.off(event, handler)
+            : (event, handler) => worker.removeListener(event, handler);
 
-    function finalizeReject(error) {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(error);
-    }
-
-    function onMessage(result) {
-      const message = normalizeWorkerMessage(result);
-      if (message.kind === 'log') {
-        logWorkerChannel('thumbnail-worker', message.payload);
-        return;
-      }
-      if (message.kind === 'result') {
-        const payload = Object.assign({ success: true }, message.payload || {});
-        if (payload.success === false) {
-          finalizeReject(new Error(payload.error || payload.message || 'Thumbnail processing failed'));
-          return;
+        function cleanup() {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+            }
+            removeListener('message', onMessage);
+            removeListener('error', onError);
         }
-        finalizeResolve(payload);
-        return;
-      }
-      if (message.kind === 'error') {
-        const payload = message.payload || {};
-        const errMessage = (payload.error && payload.error.message) || payload.message || 'Thumbnail processing failed';
-        finalizeReject(new Error(errMessage));
-      }
-    }
 
-    function onError(error) {
-      finalizeReject(error);
-    }
+        function finalizeResolve(result) {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(result);
+        }
 
-    worker.on('message', onMessage);
-    worker.on('error', onError);
+        function finalizeReject(error) {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(error);
+        }
 
-    timeoutId = setTimeout(() => {
-      finalizeReject(new Error('Thumbnail task timeout'));
-    }, 300000); // 5min
+        function onMessage(result) {
+            const message = normalizeWorkerMessage(result);
+            if (message.kind === 'log') {
+                logWorkerChannel('thumbnail-worker', message.payload);
+                return;
+            }
+            if (message.kind === 'result') {
+                const payload = Object.assign({ success: true }, message.payload || {});
+                if (payload.success === false) {
+                    finalizeReject(new Error(payload.error || payload.message || 'Thumbnail processing failed'));
+                    return;
+                }
+                finalizeResolve(payload);
+                return;
+            }
+            if (message.kind === 'error') {
+                const payload = message.payload || {};
+                const errMessage = (payload.error && payload.error.message) || payload.message || 'Thumbnail processing failed';
+                finalizeReject(new Error(errMessage));
+            }
+        }
 
-    const message = TraceManager.injectToWorkerMessage({
-      type: 'process_thumbnail',
-      payload: data
+        function onError(error) {
+            finalizeReject(error);
+        }
+
+        worker.on('message', onMessage);
+        worker.on('error', onError);
+
+        timeoutId = setTimeout(() => {
+            finalizeReject(new Error('Thumbnail task timeout'));
+        }, 300000); // 5min
+
+        const message = TraceManager.injectToWorkerMessage({
+            type: 'process_thumbnail',
+            payload: data
+        });
+        worker.postMessage(message);
     });
-    worker.postMessage(message);
-  });
 }
 
 /**
@@ -1184,77 +1259,77 @@ async function processThumbnailTask(data) {
  * @returns {Promise<any>}
  */
 async function processIndexTask(data) {
-  const worker = getIndexingWorker();
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let timeoutId;
-    const removeListener = typeof worker.off === 'function'
-      ? (event, handler) => worker.off(event, handler)
-      : (event, handler) => worker.removeListener(event, handler);
+    const worker = getIndexingWorker();
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        let timeoutId;
+        const removeListener = typeof worker.off === 'function'
+            ? (event, handler) => worker.off(event, handler)
+            : (event, handler) => worker.removeListener(event, handler);
 
-    function cleanup() {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-      removeListener('message', onMessage);
-      removeListener('error', onError);
-    }
-
-    function finalizeResolve(result) {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(result);
-    }
-
-    function finalizeReject(error) {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(error);
-    }
-
-    function onMessage(result) {
-      const message = normalizeWorkerMessage(result);
-      if (message.kind === 'log') {
-        logWorkerChannel('indexing-worker', message.payload);
-        return;
-      }
-      if (message.kind === 'error') {
-        const payload = message.payload || {};
-        const errMessage = (payload.error && payload.error.message) || payload.message || payload.error || 'Index processing failed';
-        finalizeReject(new Error(errMessage));
-        return;
-      }
-      if (message.kind === 'result') {
-        const payload = message.payload || {};
-        const type = payload.type || result.type;
-        if (type === 'rebuild_complete' || type === 'index_complete') {
-          finalizeResolve(payload);
-        } else {
-          finalizeResolve(payload);
+        function cleanup() {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+            }
+            removeListener('message', onMessage);
+            removeListener('error', onError);
         }
-      }
-    }
 
-    function onError(error) {
-      finalizeReject(error);
-    }
+        function finalizeResolve(result) {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(result);
+        }
 
-    worker.on('message', onMessage);
-    worker.on('error', onError);
+        function finalizeReject(error) {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(error);
+        }
 
-    timeoutId = setTimeout(() => {
-      finalizeReject(new Error('Index task timeout'));
-    }, 600000); // 10min
+        function onMessage(result) {
+            const message = normalizeWorkerMessage(result);
+            if (message.kind === 'log') {
+                logWorkerChannel('indexing-worker', message.payload);
+                return;
+            }
+            if (message.kind === 'error') {
+                const payload = message.payload || {};
+                const errMessage = (payload.error && payload.error.message) || payload.message || payload.error || 'Index processing failed';
+                finalizeReject(new Error(errMessage));
+                return;
+            }
+            if (message.kind === 'result') {
+                const payload = message.payload || {};
+                const type = payload.type || result.type;
+                if (type === 'rebuild_complete' || type === 'index_complete') {
+                    finalizeResolve(payload);
+                } else {
+                    finalizeResolve(payload);
+                }
+            }
+        }
 
-    const message = TraceManager.injectToWorkerMessage({
-      type: 'rebuild_index',
-      payload: data
+        function onError(error) {
+            finalizeReject(error);
+        }
+
+        worker.on('message', onMessage);
+        worker.on('error', onError);
+
+        timeoutId = setTimeout(() => {
+            finalizeReject(new Error('Index task timeout'));
+        }, 600000); // 10min
+
+        const message = TraceManager.injectToWorkerMessage({
+            type: 'rebuild_index',
+            payload: data
+        });
+        worker.postMessage(message);
     });
-    worker.postMessage(message);
-  });
 }
 
 /**
@@ -1263,130 +1338,130 @@ async function processIndexTask(data) {
  * @returns {Promise<any>}
  */
 async function processVideoTask(data) {
-  const worker = getVideoWorker();
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let timeoutId;
-    const removeListener = typeof worker.off === 'function'
-      ? (event, handler) => worker.off(event, handler)
-      : (event, handler) => worker.removeListener(event, handler);
+    const worker = startVideoWorker();
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        let timeoutId;
+        const removeListener = typeof worker.off === 'function'
+            ? (event, handler) => worker.off(event, handler)
+            : (event, handler) => worker.removeListener(event, handler);
 
-    function cleanup() {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-      removeListener('message', onMessage);
-      removeListener('error', onError);
-    }
-
-    function finalizeResolve(result) {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(result);
-    }
-
-    function finalizeReject(error) {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(error);
-    }
-
-    function onMessage(result) {
-      const message = normalizeWorkerMessage(result);
-      if (message.kind === 'log') {
-        logWorkerChannel('video-worker', message.payload);
-        return;
-      }
-      if (message.kind === 'error') {
-        const payload = message.payload || {};
-        if (payload.type === 'worker_shutdown') {
-          finalizeReject(new Error(payload.message || '视频工作线程在任务完成前停止'));
-          return;
+        function cleanup() {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+            }
+            removeListener('message', onMessage);
+            removeListener('error', onError);
         }
-        const errMessage = (payload.error && payload.error.message) || payload.message || payload.error || '视频处理失败';
-        finalizeReject(new Error(errMessage));
-        return;
-      }
-      if (message.kind === 'result') {
-        const payload = Object.assign({ success: true }, message.payload || {});
-        if (payload.success === false) {
-          const errMessage = (payload.error && payload.error.message) || payload.error || payload.message || '视频处理失败';
-          finalizeReject(new Error(errMessage));
-          return;
+
+        function finalizeResolve(result) {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(result);
         }
-        finalizeResolve(payload);
-      }
-    }
 
-    function onError(error) {
-      finalizeReject(error);
-    }
+        function finalizeReject(error) {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(error);
+        }
 
-    worker.on('message', onMessage);
-    worker.on('error', onError);
+        function onMessage(result) {
+            const message = normalizeWorkerMessage(result);
+            if (message.kind === 'log') {
+                logWorkerChannel('video-worker', message.payload);
+                return;
+            }
+            if (message.kind === 'error') {
+                const payload = message.payload || {};
+                if (payload.type === 'worker_shutdown') {
+                    finalizeReject(new Error(payload.message || '视频工作线程在任务完成前停止'));
+                    return;
+                }
+                const errMessage = (payload.error && payload.error.message) || payload.message || payload.error || '视频处理失败';
+                finalizeReject(new Error(errMessage));
+                return;
+            }
+            if (message.kind === 'result') {
+                const payload = Object.assign({ success: true }, message.payload || {});
+                if (payload.success === false) {
+                    const errMessage = (payload.error && payload.error.message) || payload.error || payload.message || '视频处理失败';
+                    finalizeReject(new Error(errMessage));
+                    return;
+                }
+                finalizeResolve(payload);
+            }
+        }
 
-    timeoutId = setTimeout(() => {
-      finalizeReject(new Error('视频任务超时'));
-    }, 1800000); // 30min
+        function onError(error) {
+            finalizeReject(error);
+        }
 
-    const message = TraceManager.injectToWorkerMessage({
-      type: 'process_video',
-      payload: data
+        worker.on('message', onMessage);
+        worker.on('error', onError);
+
+        timeoutId = setTimeout(() => {
+            finalizeReject(new Error('视频任务超时'));
+        }, 1800000); // 30min
+
+        const message = TraceManager.injectToWorkerMessage({
+            type: 'process_video',
+            payload: data
+        });
+        worker.postMessage(message);
     });
-    worker.postMessage(message);
-  });
 }
 
 /**
  * 兼容属性导出（访问即懒加载单例worker），含部分快捷工厂/指令
  */
 Object.defineProperties(module.exports, {
-  indexingWorker: {
-    enumerable: true,
-    get() { return getIndexingWorker(); }
-  },
-  settingsWorker: {
-    enumerable: true,
-    get() { return getSettingsWorker(); }
-  },
-  videoWorker: {
-    enumerable: true,
-    get() { return getVideoWorker(); }
-  },
-  // 新增功能快捷口
-  taskScheduler: {
-    enumerable: true,
-    value: taskScheduler
-  },
-  scheduleWorkerTask: {
-    enumerable: true,
-    value: scheduleWorkerTask
-  },
-  selectOptimalWorker: {
-    enumerable: true,
-    value: selectOptimalWorker
-  },
-  performWorkerHealthCheck: {
-    enumerable: true,
-    value: performWorkerHealthCheck
-  },
-  getTaskSchedulerMetrics: {
-    enumerable: true,
-    value: getTaskSchedulerMetrics
-  },
-  getVideoTaskMetrics: {
-    enumerable: true,
-    value: getVideoTaskMetrics
-  },
-  thumbnailWorkers: {
-    enumerable: true,
-    get() { return thumbnailWorkers; }
-  },
-  idleThumbnailWorkers: {
-    enumerable: true,
-    get() { return idleThumbnailWorkers; }
-  }
+    indexingWorker: {
+        enumerable: true,
+        get() { return getIndexingWorker(); }
+    },
+    settingsWorker: {
+        enumerable: true,
+        get() { return getSettingsWorker(); }
+    },
+    videoWorker: {
+        enumerable: true,
+        get() { return getVideoWorker(); }
+    },
+    // 新增功能快捷口
+    taskScheduler: {
+        enumerable: true,
+        value: taskScheduler
+    },
+    scheduleWorkerTask: {
+        enumerable: true,
+        value: scheduleWorkerTask
+    },
+    selectOptimalWorker: {
+        enumerable: true,
+        value: selectOptimalWorker
+    },
+    performWorkerHealthCheck: {
+        enumerable: true,
+        value: performWorkerHealthCheck
+    },
+    getTaskSchedulerMetrics: {
+        enumerable: true,
+        value: getTaskSchedulerMetrics
+    },
+    getVideoTaskMetrics: {
+        enumerable: true,
+        value: getVideoTaskMetrics
+    },
+    thumbnailWorkers: {
+        enumerable: true,
+        get() { return thumbnailWorkers; }
+    },
+    idleThumbnailWorkers: {
+        enumerable: true,
+        get() { return idleThumbnailWorkers; }
+    }
 });

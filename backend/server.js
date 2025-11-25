@@ -29,7 +29,7 @@ const { PORT, THUMBS_DIR, DB_FILE, SETTINGS_DB_FILE, HISTORY_DB_FILE, INDEX_DB_F
 const { initializeConnections, closeAllConnections } = require('./db/multi-db');
 const { initializeAllDBs, ensureCoreTables } = require('./db/migrations');
 const { migrateToMultiDB } = require('./db/migrate-to-multi-db');
-const { createThumbnailWorkerPool, ensureCoreWorkers, getVideoWorker } = require('./services/worker.manager');
+const { createThumbnailWorkerPool, ensureCoreWorkers } = require('./services/worker.manager');
 const { startAdaptiveScheduler } = require('./services/adaptive.service');
 const { setupThumbnailWorkerListeners, startIdleThumbnailGeneration } = require('./services/thumbnail.service');
 const { setupWorkerListeners, buildSearchIndex } = require('./services/indexer.service');
@@ -730,28 +730,15 @@ async function startServer() {
             startServices().catch((err) => {
                 logger.debug('后台服务启动流程捕获异常（忽略）:', err && err.message);
             })
-        ]);
+        ])
+
+            ;
 
         // 6. 启动 HTTP 服务监听
         app.listen(PORT, () => {
             logger.info(`服务已启动在 http://localhost:${PORT}`);
             logger.info(`照片目录: ${PHOTOS_DIR}`);
             logger.info(`数据目录: ${DATA_DIR}`);
-
-            // 打印 HLS 自适应配置
-            try {
-                const { getAdaptiveHlsConfig } = require('./config');
-                const hlsConfig = getAdaptiveHlsConfig();
-                const loadLevel = hlsConfig.loadFactor > 0.8 ? '高' :
-                                 hlsConfig.loadFactor > 0.5 ? '中' : '低';
-
-                logger.info(`HLS自适应配置已激活 - 当前负载等级: ${loadLevel} (${(hlsConfig.loadFactor * 100).toFixed(1)}%)`);
-                logger.info(`  - 缓存TTL: ${(hlsConfig.HLS_CACHE_TTL_MS / 1000 / 60).toFixed(1)}分钟`);
-                logger.info(`  - 最小检查间隔: ${(hlsConfig.HLS_MIN_CHECK_INTERVAL_MS / 1000).toFixed(1)}秒`);
-                logger.info(`  - 批处理延迟: ${hlsConfig.HLS_BATCH_DELAY_MS}毫秒`);
-            } catch (e) {
-                logger.debug('HLS配置状态记录失败（忽略）:', e.message);
-            }
         });
 
         // 7. 启动索引监控与监听
