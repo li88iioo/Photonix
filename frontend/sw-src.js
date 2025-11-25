@@ -32,7 +32,7 @@ const __WB_ENTRIES = (self && Array.isArray(self["__WB_MANIFEST"])) ? self["__WB
 let __BUILD_REV = 'dev';
 try {
   __BUILD_REV = hashString(JSON.stringify(__WB_ENTRIES));
-} catch {}
+} catch { }
 
 // 加载缓存管理器 - 使用绝对路径确保在所有环境下都能正确加载
 try {
@@ -89,7 +89,9 @@ const CORE_ASSETS = [
   '/js/dist/main.js',
 
   // --- 静态资源 (assets) ---
-  '/assets/icon.svg'
+  '/assets/icon.svg',
+  '/assets/icon-192.png',
+  '/assets/icon-512.png'
 
 
   // --- 外部资源 ---
@@ -319,9 +321,9 @@ self.addEventListener('fetch', event => {
           const copy = response.clone();
           // 使用统一缓存接口
           if (self.swCacheManager && typeof self.swCacheManager.putWithLRU === 'function') {
-            self.swCacheManager.putWithLRU('static', new Request('/index.html'), copy).catch(() => {});
+            self.swCacheManager.putWithLRU('static', new Request('/index.html'), copy).catch(() => { });
           } else {
-            caches.open(STATIC_CACHE_VERSION).then(cache => cache.put('/index.html', copy)).catch(() => {});
+            caches.open(STATIC_CACHE_VERSION).then(cache => cache.put('/index.html', copy)).catch(() => { });
           }
           return response;
         })
@@ -359,7 +361,7 @@ self.addEventListener('fetch', event => {
         .then(resp => {
           if (isCacheableResponse(resp, request)) {
             const copy = resp.clone();
-            caches.open(STATIC_CACHE_VERSION).then(cache => cache.put(request, copy)).catch(() => {});
+            caches.open(STATIC_CACHE_VERSION).then(cache => cache.put(request, copy)).catch(() => { });
           }
           return resp;
         })
@@ -398,13 +400,13 @@ self.addEventListener('fetch', event => {
               return networkResponse;
             })
             .catch(() => new Response('', { status: 503, statusText: '服务不可用' }));
-          
+
           // 如果有缓存，立即返回缓存，同时后台更新
           if (cachedResponse) {
-            fetchPromise.catch(() => {}); // 静默处理后台更新错误
+            fetchPromise.catch(() => { }); // 静默处理后台更新错误
             return cachedResponse;
           }
-          
+
           // 无缓存时等待网络请求
           return fetchPromise;
         });
@@ -450,11 +452,11 @@ self.addEventListener('fetch', event => {
               if (networkResponse.ok && isCacheableResponse(networkResponse, request)) {
                 const ct = (networkResponse.headers.get('Content-Type') || '').toLowerCase();
                 const isVideo = ct.startsWith('video/');
-                
+
                 // 缓存图片和小于 10MB 的非视频文件
                 const cl = parseInt(networkResponse.headers.get('Content-Length') || '0', 10) || 0;
                 const shouldCache = !isVideo && (cl === 0 || cl <= 10 * 1024 * 1024);
-                
+
                 if (shouldCache) {
                   const copy = networkResponse.clone();
                   cache.put(request, copy).catch(err => {
@@ -466,13 +468,13 @@ self.addEventListener('fetch', event => {
               return networkResponse;
             })
             .catch(() => new Response('', { status: 503, statusText: '服务不可用' }));
-          
+
           // 如果有缓存，立即返回缓存，同时后台更新
           if (cachedResponse) {
-            fetchPromise.catch(() => {}); // 静默处理后台更新错误
+            fetchPromise.catch(() => { }); // 静默处理后台更新错误
             return cachedResponse;
           }
-          
+
           // 无缓存时等待网络请求
           return fetchPromise;
         });
@@ -529,10 +531,10 @@ self.addEventListener('fetch', event => {
 
 // 4. 后台同步，处理离线请求
 self.addEventListener('sync', event => {
-    if (event.tag === 'sync-gallery-requests') {
-        console.log('Service Worker: 后台同步已触发');
-        event.waitUntil(syncFailedRequests());
-    }
+  if (event.tag === 'sync-gallery-requests') {
+    console.log('Service Worker: 后台同步已触发');
+    event.waitUntil(syncFailedRequests());
+  }
 });
 
 async function handleSearchRequest(request, url, hasAuth) {
@@ -560,32 +562,32 @@ async function handleGenericApiRequest(request, url, hasAuth) {
 }
 
 function syncFailedRequests() {
-    return openDb().then(db => {
-        const tx = db.transaction(STORE_NAME, 'readonly');
-        const store = tx.objectStore(STORE_NAME);
-        const requests = store.getAll();
-        return new Promise(resolve => {
-            requests.onsuccess = () => {
-                const failedRequests = requests.result;
-                const promises = failedRequests.map(req => {
-                    if (req.type === 'search') {
-                        return fetch(`/api/search?q=${encodeURIComponent(req.query)}`);
-                    } else if (req.type === 'ai-caption') {
-                        return fetch('/api/ai/generate', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(req.payload)
-                        });
-                    }
-                });
-                Promise.all(promises).then(() => {
-                    const writeTx = db.transaction(STORE_NAME, 'readwrite');
-                    writeTx.objectStore(STORE_NAME).clear();
-                    resolve();
-                });
-            };
+  return openDb().then(db => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    const requests = store.getAll();
+    return new Promise(resolve => {
+      requests.onsuccess = () => {
+        const failedRequests = requests.result;
+        const promises = failedRequests.map(req => {
+          if (req.type === 'search') {
+            return fetch(`/api/search?q=${encodeURIComponent(req.query)}`);
+          } else if (req.type === 'ai-caption') {
+            return fetch('/api/ai/generate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(req.payload)
+            });
+          }
         });
+        Promise.all(promises).then(() => {
+          const writeTx = db.transaction(STORE_NAME, 'readwrite');
+          writeTx.objectStore(STORE_NAME).clear();
+          resolve();
+        });
+      };
     });
+  });
 }
 
 const DB_NAME = 'offline-requests-db';
@@ -593,64 +595,64 @@ const STORE_NAME = 'requests';
 
 // 打开 IndexedDB 数据库
 function openDb() {
-    return new Promise((resolve, reject) => {
-        const request = self.indexedDB.open(DB_NAME, 1);
-        request.onupgradeneeded = event => {
-            const db = event.target.result;
-            if (!db.objectStoreNames.contains(STORE_NAME)) {
-                db.createObjectStore(STORE_NAME, { autoIncrement: true });
-            }
-        };
-        request.onsuccess = event => resolve(event.target.result);
-        request.onerror = event => reject(event.target.error);
-    });
+  return new Promise((resolve, reject) => {
+    const request = self.indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = event => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { autoIncrement: true });
+      }
+    };
+    request.onsuccess = event => resolve(event.target.result);
+    request.onerror = event => reject(event.target.error);
+  });
 }
 
 // 5. 监听手动刷新消息，清除 API 缓存
 async function clearApiCacheBuckets(scope = 'all', tokenHash = null) {
-    const buildPrefix = `api-${getActiveBuildRev()}`;
-    const cacheKeys = await caches.keys();
+  const buildPrefix = `api-${getActiveBuildRev()}`;
+  const cacheKeys = await caches.keys();
 
-    const shouldDelete = (name) => {
-        if (!name.startsWith(buildPrefix)) return false;
-        if (scope === 'all') return true;
-        if (scope === 'anon') return name.includes('-anon-');
-        if (scope === 'auth') {
-            if (tokenHash) {
-                return name.includes(`-auth-${tokenHash}`);
-            }
-            return name.includes('-auth-');
-        }
-        if (scope === 'bucket' && tokenHash) {
-            return name.endsWith(`-${tokenHash}`);
-        }
-        return false;
-    };
-
-    await Promise.all(cacheKeys.filter(shouldDelete).map(name => caches.delete(name)));
-
-    if (self.swCacheManager && typeof self.swCacheManager.manualCleanup === 'function') {
-        try { await self.swCacheManager.manualCleanup('api'); } catch {}
+  const shouldDelete = (name) => {
+    if (!name.startsWith(buildPrefix)) return false;
+    if (scope === 'all') return true;
+    if (scope === 'anon') return name.includes('-anon-');
+    if (scope === 'auth') {
+      if (tokenHash) {
+        return name.includes(`-auth-${tokenHash}`);
+      }
+      return name.includes('-auth-');
     }
+    if (scope === 'bucket' && tokenHash) {
+      return name.endsWith(`-${tokenHash}`);
+    }
+    return false;
+  };
+
+  await Promise.all(cacheKeys.filter(shouldDelete).map(name => caches.delete(name)));
+
+  if (self.swCacheManager && typeof self.swCacheManager.manualCleanup === 'function') {
+    try { await self.swCacheManager.manualCleanup('api'); } catch { }
+  }
 }
 
 self.addEventListener('message', event => {
-    if (!event.data || typeof event.data !== 'object') return;
-    const { type, scope, tokenHash } = event.data;
-    if (type === SW_MESSAGE.CLEAR_API_CACHE) {
-        event.waitUntil(clearApiCacheBuckets(scope || 'all', tokenHash || null));
-        return;
-    }
-    if (type === SW_MESSAGE.MANUAL_REFRESH) {
-        console.log('Service Worker: 手动刷新 API 数据已触发');
-        event.waitUntil(
-            (async () => {
-                await clearApiCacheBuckets('all');
-                cleanupCache('api');
-                cleanupCache('thumbnail');
-            })()
-        );
-    }
+  if (!event.data || typeof event.data !== 'object') return;
+  const { type, scope, tokenHash } = event.data;
+  if (type === SW_MESSAGE.CLEAR_API_CACHE) {
+    event.waitUntil(clearApiCacheBuckets(scope || 'all', tokenHash || null));
+    return;
+  }
+  if (type === SW_MESSAGE.MANUAL_REFRESH) {
+    console.log('Service Worker: 手动刷新 API 数据已触发');
+    event.waitUntil(
+      (async () => {
+        await clearApiCacheBuckets('all');
+        cleanupCache('api');
+        cleanupCache('thumbnail');
+      })()
+    );
+  }
 });
 
 

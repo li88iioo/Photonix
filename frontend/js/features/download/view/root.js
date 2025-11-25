@@ -527,7 +527,7 @@ function ensureStyleHelpers() {
       border: 1px solid var(--border-color);
       box-shadow: var(--shadow-md);
       display: grid;
-      grid-template-columns: 6px 1fr auto;
+      grid-template-columns: auto 1fr auto;
       gap: 14px;
       align-items: center;
       transform: translateY(-20px);
@@ -1315,26 +1315,26 @@ function setRootVisible(visible) {
   if (visible) {
     document.documentElement.classList.add('download-page-active');
     document.body.classList.add('download-page-active');
-    
+
     // 下载页状态栏沉浸（移动端）
     const themeColorMeta = document.querySelector('meta[name="theme-color"]');
     if (themeColorMeta) {
       themeColorMeta.dataset.originalColor = themeColorMeta.getAttribute('content');
-      themeColorMeta.setAttribute('content', '#f7f8fa'); 
+      themeColorMeta.setAttribute('content', '#f7f8fa');
     }
-    
+
     applyInteractiveEffects(rootEl);
   } else {
     document.documentElement.classList.remove('download-page-active');
     document.body.classList.remove('download-page-active');
-    
+
     // 恢复主应用状态栏颜色
     const themeColorMeta = document.querySelector('meta[name="theme-color"]');
     if (themeColorMeta && themeColorMeta.dataset.originalColor) {
       themeColorMeta.setAttribute('content', themeColorMeta.dataset.originalColor);
       delete themeColorMeta.dataset.originalColor;
     }
-    
+
     const notifContainer = document.getElementById('download-notification-container');
     if (notifContainer && notifContainer.parentNode) {
       notifContainer.parentNode.removeChild(notifContainer);
