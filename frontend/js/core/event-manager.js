@@ -147,73 +147,21 @@ class EventManager {
 export const eventManager = new EventManager();
 
 /**
- * 创建页面特定的事件控制器（返回兼容对象）
+ * 创建页面特定的事件控制器
  * @param {string} pageName - 页面名称
- * @returns {Object} 兼容的事件组对象
+ * @returns {AbortController} AbortController 实例
  */
 export function createPageGroup(pageName) {
-    const controller = eventManager.getController(`page:${pageName}`);
-    return createCompatibleGroup(controller);
+    return eventManager.getController(`page:${pageName}`);
 }
 
 /**
- * 创建组件特定的事件控制器（返回兼容对象）
+ * 创建组件特定的事件控制器
  * @param {string} componentName - 组件名称
- * @returns {Object} 兼容的事件组对象
+ * @returns {AbortController} AbortController 实例
  */
 export function createComponentGroup(componentName) {
-    const controller = eventManager.getController(`component:${componentName}`);
-    return createCompatibleGroup(controller);
-}
-
-/**
- * 创建模态框特定的事件控制器（返回兼容对象）
- * @param {string} modalName - 模态框名称
- * @returns {Object} 兼容的事件组对象
- */
-export function createModalGroup(modalName) {
-    const controller = eventManager.getController(`modal:${modalName}`);
-    return createCompatibleGroup(controller);
-}
-
-/**
- * 创建兼容旧 API 的事件组对象
- * @param {AbortController} controller - AbortController 实例
- * @returns {Object} 兼容对象
- */
-function createCompatibleGroup(controller) {
-    return {
-        controller,
-        /**
-         * 添加事件监听器
-         * @param {EventTarget} target - 事件目标
-         * @param {string} eventType - 事件类型
-         * @param {Function} handler - 事件处理函数
-         * @param {object} options - 事件选项
-         */
-        add(target, eventType, handler, options = {}) {
-            on(target, eventType, handler, { ...options, signal: controller.signal });
-        },
-        /**
-         * 激活事件组（兼容方法，实际上事件已自动绑定）
-         */
-        activate() {
-            // 使用 AbortController 时，事件在 add() 时就已经绑定
-            // 这个方法保留是为了向后兼容
-        },
-        /**
-         * 停用事件组（中止所有事件）
-         */
-        deactivate() {
-            controller.abort();
-        },
-        /**
-         * 销毁事件组（中止所有事件）
-         */
-        destroy() {
-            controller.abort();
-        }
-    };
+    return eventManager.getController(`component:${componentName}`);
 }
 
 /**

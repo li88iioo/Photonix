@@ -14,7 +14,7 @@ import { AbortBus } from '../../core/abort-bus.js';
 import { setupLazyLoading } from './lazyload.js';
 import { UI, getCommonScrollConfig } from '../../core/constants.js';
 import { showSettingsModal } from '../../app/settings.js';
-import { createPageGroup, createComponentGroup, cleanupPage } from '../../core/event-manager.js';
+import { createPageGroup, createComponentGroup, cleanupPage, on } from '../../core/event-manager.js';
 import { createModuleLogger } from '../../core/logger.js';
 import { safeGetElementById, safeClassList, safeSetStyle } from '../../shared/dom-utils.js';
 import { showNotification } from '../../shared/utils.js';
@@ -546,20 +546,18 @@ export function refreshPageEventListeners() {
  * 设置全局事件（所有页面通用）
  */
 function setupGlobalEvents() {
-    const globalGroup = createComponentGroup('global');
-    registerSettingsChangeHandler(globalGroup);
-    registerKeyboardShortcuts(globalGroup);
-    registerBlurGesture(globalGroup);
-
-    globalGroup.activate();
+    const globalController = createComponentGroup('global');
+    registerSettingsChangeHandler(globalController);
+    registerKeyboardShortcuts(globalController);
+    registerBlurGesture(globalController);
 }
 
 /**
  * 注册设置变更事件处理
- * @param {Object} group - 事件组
+ * @param {AbortController} controller - 事件控制器
  */
-function registerSettingsChangeHandler(group) {
-    group.add(window, 'settingsChanged', (event) => {
+function registerSettingsChangeHandler(controller) {
+    on(window, 'settingsChanged', (event) => {
         const detail = event.detail || {};
         const { aiEnabled, passwordEnabled, aiSettings, albumDeletionEnabled, manualSyncSchedule } = detail;
 
@@ -585,15 +583,15 @@ function registerSettingsChangeHandler(group) {
         if (typeof manualSyncSchedule !== 'undefined') {
             state.update('manualSyncSchedule', manualSyncSchedule);
         }
-    });
+    }, { signal: controller.signal });
 }
 
 /**
  * 注册全局键盘快捷键
- * @param {Object} group - 事件组
+ * @param {AbortController} controller - 事件控制器
  */
-function registerKeyboardShortcuts(group) {
-    group.add(document, 'keydown', (e) => {
+function registerKeyboardShortcuts(controller) {
+    on(document, 'keydown', (e) => {
         if (e.key === 'Escape' && activeAlbumDeleteOverlay) {
             closeActiveAlbumDeleteOverlay();
             return;
@@ -662,20 +660,20 @@ function registerKeyboardShortcuts(group) {
                 photoLinks[index].click();
             }
         }
-    });
+    }, { signal: controller.signal });
 }
 
 /**
  * 注册三指触摸模糊手势
- * @param {Object} group - 事件组
+ * @param {AbortController} controller - 事件控制器
  */
-function registerBlurGesture(group) {
-    group.add(document, 'touchstart', (e) => {
+function registerBlurGesture(controller) {
+    on(document, 'touchstart', (e) => {
         if (e.touches.length === 3) {
             e.preventDefault();
             toggleMediaBlur();
         }
-    }, { passive: false });
+    }, { passive: false, signal: controller.signal });
 }
 
 /**
@@ -694,19 +692,19 @@ function setupCurrentPageEvents() {
 
     currentPageGroup = pageType;
 
-    // 创建页面特定的事件组
-    const pageGroup = createPageGroup(pageType);
+    // 创建页面特定的事件控制器
+    const pageController = createPageGroup(pageType);
 
     // 设置页面特定的滚动事件
     if (pageType === 'browse') {
-        pageGroup.add(window, 'scroll', handleBrowseScroll, { passive: true });
+        on(window, 'scroll', handleBrowseScroll, { passive: true, signal: pageController.signal });
     } else if (pageType === 'search') {
-        pageGroup.add(window, 'scroll', handleSearchScroll, { passive: true });
+        on(window, 'scroll', handleSearchScroll, { passive: true, signal: pageController.signal });
     }
 
     // 设置窗口大小变化事件（所有页面都需要）
     let resizeTimeout;
-    pageGroup.add(window, 'resize', () => {
+    on(window, 'resize', () => {
         clearTimeout(resizeTimeout);
         resizeTimeout = setTimeout(() => {
             const newColumnCount = getMasonryColumns();
@@ -720,9 +718,7 @@ function setupCurrentPageEvents() {
             }
             // 骨架屏已废弃，无需刷新
         }, 60);
-    });
-
-    pageGroup.activate();
+    }, { signal: pageController.signal });
 }
 
 /**
@@ -791,48 +787,45 @@ export function setupEventListeners() {
     }
 
     // 其他 UI 组件事件
-    const uiGroup = createComponentGroup('ui');
+    const uiController = createComponentGroup('ui');
 
     // 回到顶部按钮
     const backToTopBtn = safeGetElementById('back-to-top-btn');
     if (backToTopBtn) {
         // 点击回到顶部
-        uiGroup.add(backToTopBtn, 'click', () => {
+        on(backToTopBtn, 'click', () => {
             window.scrollTo({ top: 0, behavior: 'smooth' });
-        });
+        }, { signal: uiController.signal });
     }
 
     // 设置按钮 - 动态导入实现按需加载
     const settingsBtn = safeGetElementById('settings-btn');
     if (settingsBtn) {
-        uiGroup.add(settingsBtn, 'click', async () => {
+        on(settingsBtn, 'click', async () => {
             try {
                 showSettingsModal();
             } catch (error) {
                 listenersLogger.error('加载设置模块失败', error);
                 alert('加载设置页面失败，请刷新页面重试');
             }
-        });
+        }, { signal: uiController.signal });
     }
 
     // Photonix 标题点击返回首页
     const mainTitle = safeGetElementById('main-title');
     if (mainTitle) {
-        uiGroup.add(mainTitle, 'click', () => {
+        on(mainTitle, 'click', () => {
             // 和键盘快捷键 'h' 行为保持一致
             window.location.hash = '#/';
-        });
+        }, { signal: uiController.signal });
     }
-
-    // 激活 UI 事件组
-    uiGroup.activate();
 }
 
 /**
  * 设置顶栏相关交互事件
  */
 function setupTopbarInteractions() {
-    const topbarGroup = createComponentGroup('topbar');
+    const topbarController = createComponentGroup('topbar');
     const topbar = safeGetElementById('topbar');
     const searchToggleBtn = safeGetElementById('search-toggle-btn');
     const commandSearchBtn = safeGetElementById('command-search-btn');
@@ -919,8 +912,8 @@ function setupTopbarInteractions() {
     // 移除多次延迟重试，改由router.js在路由切换前预计算
     // 仅保留初始化调用和响应式更新
     updateTopbarOffset();
-    topbarGroup.add(window, 'resize', () => { updateTopbarOffset(); });
-    topbarGroup.add(window, 'scroll', () => {
+    on(window, 'resize', () => { updateTopbarOffset(); }, { signal: topbarController.signal });
+    on(window, 'scroll', () => {
         if (ticking) return;
         requestAnimationFrame(() => {
             onScroll();
@@ -929,7 +922,7 @@ function setupTopbarInteractions() {
             ticking = false;
         });
         ticking = true;
-    }, { passive: true });
+    }, { passive: true, signal: topbarController.signal });
 
     if (window.ResizeObserver) {
         let topbarResizeTimeout;
@@ -944,13 +937,13 @@ function setupTopbarInteractions() {
     }
 
     if (searchToggleBtn) {
-        topbarGroup.add(searchToggleBtn, 'click', (e) => {
+        on(searchToggleBtn, 'click', (e) => {
             e.stopPropagation();
             safeClassList(topbar, 'toggle', 'topbar--search-open');
             if (safeClassList(topbar, 'contains', 'topbar--search-open') && searchInput) {
                 setTimeout(() => { searchInput.focus(); }, 0);
             }
-        });
+        }, { signal: topbarController.signal });
     }
 
     /**
@@ -971,57 +964,55 @@ function setupTopbarInteractions() {
     }
 
     if (commandSearchBtn) {
-        topbarGroup.add(commandSearchBtn, 'click', (e) => {
+        on(commandSearchBtn, 'click', (e) => {
             e.stopPropagation();
             openCommandSearch();
-        });
+        }, { signal: topbarController.signal });
     }
 
     if (mobileSearchBtn) {
-        topbarGroup.add(mobileSearchBtn, 'click', (e) => {
+        on(mobileSearchBtn, 'click', (e) => {
             e.stopPropagation();
             safeClassList(topbar, 'add', 'topbar--inline-search');
             openCommandSearch();
-        });
+        }, { signal: topbarController.signal });
     }
 
     if (mobileSearchBackBtn) {
-        topbarGroup.add(mobileSearchBackBtn, 'click', () => {
+        on(mobileSearchBackBtn, 'click', () => {
             safeClassList(topbar, 'remove', 'topbar--search-open');
             safeClassList(topbar, 'remove', 'topbar--inline-search');
             if (searchContainer) searchContainer.removeAttribute('style');
             if (searchInput) searchInput.blur();
-        });
+        }, { signal: topbarController.signal });
     }
 
     if (searchSubmitBtn) {
-        topbarGroup.add(searchSubmitBtn, 'click', (e) => {
+        on(searchSubmitBtn, 'click', (e) => {
             e.preventDefault();
             if (!searchInput) return;
             const q = (searchInput.value || '').trim();
             if (q) {
                 window.location.hash = `/search?q=${encodeURIComponent(q)}`;
             }
-        });
+        }, { signal: topbarController.signal });
     }
 
-    topbarGroup.add(document, 'click', handleDocumentClick);
-
-    topbarGroup.activate();
+    on(document, 'click', handleDocumentClick, { signal: topbarController.signal });
 }
 
 /**
  * 设置内容区交互事件
  */
 function setupContentInteractions() {
-    const contentGroup = createComponentGroup('content');
+    const contentController = createComponentGroup('content');
 
     const grid = elements.contentGrid;
     if (!grid) {
         return;
     }
 
-    contentGroup.add(grid, 'click', async (e) => {
+    on(grid, 'click', async (e) => {
         const deleteTriggerBtn = e.target.closest('.album-delete-trigger');
         if (deleteTriggerBtn) {
             e.preventDefault();
@@ -1085,7 +1076,7 @@ function setupContentInteractions() {
                     thumbnailUrl: coverUrl,
                     width: Number(albumLink.dataset.width) || 0,
                     height: Number(albumLink.dataset.height) || 0
-                }).catch(() => {});
+                }).catch(() => { });
             }
             _navigateToAlbum(e, path);
         } else if (photoLink) {
@@ -1094,31 +1085,31 @@ function setupContentInteractions() {
             const index = parseInt(photoLink.dataset.index, 10);
             _handleThumbnailClick(photoLink, url, index);
         }
-    });
+    }, { signal: contentController.signal });
 
-    contentGroup.add(grid, 'contextmenu', (e) => {
+    on(grid, 'contextmenu', (e) => {
         if (!isAlbumDeletionEnabled()) return;
         const albumLink = e.target.closest('.album-link');
         if (!albumLink) return;
         e.preventDefault();
         e.stopPropagation();
         showAlbumDeleteOverlay(albumLink);
-    });
+    }, { signal: contentController.signal });
 
-    contentGroup.add(grid, 'touchstart', (e) => {
+    on(grid, 'touchstart', (e) => {
         if (!isAlbumDeletionEnabled()) return;
         if (e.touches && e.touches.length > 1) return;
         const albumLink = e.target.closest('.album-link');
         if (!albumLink) return;
         scheduleDeleteOverlay(albumLink);
-    }, { passive: true });
+    }, { passive: true, signal: contentController.signal });
 
     const cancelTouch = () => {
         cancelDeleteOverlayTimer();
     };
 
-    contentGroup.add(grid, 'touchmove', cancelTouch, { passive: true });
-    contentGroup.add(grid, 'touchend', (e) => {
+    on(grid, 'touchmove', cancelTouch, { passive: true, signal: contentController.signal });
+    on(grid, 'touchend', (e) => {
         if (deleteLongPressTimer) {
             cancelDeleteOverlayTimer();
             return;
@@ -1128,10 +1119,8 @@ function setupContentInteractions() {
             e.preventDefault();
             e.stopPropagation();
         }
-    }, { passive: false });
-    contentGroup.add(grid, 'touchcancel', cancelTouch, { passive: true });
-
-    contentGroup.activate();
+    }, { passive: false, signal: contentController.signal });
+    on(grid, 'touchcancel', cancelTouch, { passive: true, signal: contentController.signal });
 }
 
 /**
@@ -1142,7 +1131,7 @@ function setupSearchInteractions() {
         return;
     }
 
-    const searchGroup = createComponentGroup('search');
+    const searchController = createComponentGroup('search');
 
     const searchHistoryContainer = safeGetElementById('search-history');
     let searchHistoryModule = null;
@@ -1153,7 +1142,7 @@ function setupSearchInteractions() {
         listenersLogger.warn('搜索历史模块加载失败，将在需要时重试', error);
     });
 
-    searchGroup.add(elements.searchInput, 'input', (e) => {
+    on(elements.searchInput, 'input', (e) => {
         clearTimeout(state.searchDebounceTimer);
         const query = e.target.value;
 
@@ -1183,48 +1172,46 @@ function setupSearchInteractions() {
                 window.location.hash = state.preSearchHash || '#/';
             }
         }, 800);
-    });
+    }, { signal: searchController.signal });
 
-    searchGroup.add(elements.searchInput, 'focus', () => {
+    on(elements.searchInput, 'focus', () => {
         if (!elements.searchInput.value.trim() && searchHistoryModule) {
             searchHistoryModule.showSearchHistory(elements.searchInput, searchHistoryContainer);
         }
-    });
-
-    searchGroup.activate();
+    }, { signal: searchController.signal });
 }
 
 /**
  * 设置模态框相关交互事件
  */
 function setupModalInteractions() {
-    const modalGroup = createComponentGroup('modal');
+    const modalController = createComponentGroup('modal');
 
-    modalGroup.add(window, 'popstate', () => {
+    on(window, 'popstate', () => {
         if (!window.location.hash.endsWith('#modal') && !safeClassList(elements.modal, 'contains', 'opacity-0')) {
             closeModal();
         }
-    });
+    }, { signal: modalController.signal });
 
-    modalGroup.add(elements.modalClose, 'click', () => {
+    on(elements.modalClose, 'click', () => {
         if (window.location.hash.endsWith('#modal')) {
             window.history.back();
         }
-    });
+    }, { signal: modalController.signal });
 
     let touchMoved = false;
-    modalGroup.add(elements.mediaPanel, 'touchstart', () => { touchMoved = false; }, { passive: true });
-    modalGroup.add(elements.mediaPanel, 'touchmove', () => { touchMoved = true; }, { passive: true });
-    modalGroup.add(elements.mediaPanel, 'click', (e) => {
+    on(elements.mediaPanel, 'touchstart', () => { touchMoved = false; }, { passive: true, signal: modalController.signal });
+    on(elements.mediaPanel, 'touchmove', () => { touchMoved = true; }, { passive: true, signal: modalController.signal });
+    on(elements.mediaPanel, 'click', (e) => {
         if (e.target === elements.mediaPanel && window.location.hash.endsWith('#modal') && !touchMoved) {
             window.history.back();
         }
-    });
+    }, { signal: modalController.signal });
 
     // PC端密语气泡框现在默认显示，不需要切换按钮
     // 移动端密语显示在工具栏中
 
-    modalGroup.add(elements.modal, 'wheel', (e) => {
+    on(elements.modal, 'wheel', (e) => {
         if (window.innerWidth <= 768) return;
         const now = Date.now();
         if (now - state.lastWheelTime < 300) return;
@@ -1234,7 +1221,7 @@ function setupModalInteractions() {
         } else {
             navigateModal('next');
         }
-    }, { passive: true });
+    }, { passive: true, signal: modalController.signal });
 
     // 滑动手势处理
     const swipeHandler = new SwipeHandler(elements.mediaPanel, {
@@ -1261,13 +1248,11 @@ function setupModalInteractions() {
         }
     });
 
-    modalGroup.add(elements.mediaPanel, 'touchend', () => {
+    on(elements.mediaPanel, 'touchend', () => {
         stopFastNavigate();
         if (swipeHandler) {
             swipeHandler.resetState();
             swipeHandler.resetCoordinates();
         }
-    });
-
-    modalGroup.activate();
+    }, { signal: modalController.signal });
 }
