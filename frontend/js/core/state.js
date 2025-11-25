@@ -299,114 +299,29 @@ export const stateManager = {
 };
 
 /**
- * 允许的状态属性集合（类型安全，严格访问）
- * @type {Set<string>}
- * @constant
- */
-const ALLOWED_STATE_KEYS = new Set([
-    // 应用基础状态
-    'userId', 'API_BASE',
-
-    // 内容和导航状态
-    'currentPhotos', 'currentPhotoIndex', 'isModalNavigating',
-
-    // UI 状态
-    'isBlurredMode', 'hasShownNavigationHint', 'lastWheelTime',
-    'uiVisibilityTimer', 'activeBackdrop', 'isInitialLoad',
-
-    // 功能开关状态
-    'aiEnabled', 'passwordEnabled', 'albumDeletionEnabled', 'manualSyncSchedule',
-    'adminSecretConfigured',
-
-    // 异步操作状态
-    'captionDebounceTimer', 'currentAbortController', 'searchDebounceTimer',
-
-    // 媒体和 URL 状态
-    'currentObjectURL', 'scrollPositionBeforeModal', 'activeThumbnail', 'preSearchHash', 'fromSearchHash',
-
-    // 滚动位置缓存
-    'scrollPositions',
-
-    // 缩略图请求管理
-    'thumbnailRequestQueue', 'activeThumbnailRequests', 'MAX_CONCURRENT_THUMBNAIL_REQUESTS',
-
-    // 搜索和浏览状态
-    'isSearchLoading', 'currentSearchPage', 'totalSearchPages', 'currentSearchQuery',
-    'isBrowseLoading', 'currentBrowsePage', 'totalBrowsePages', 'currentBrowsePath',
-    'currentSort', 'entrySort', 'currentColumnCount', 'currentLayoutWidth', 'pageCache',
-    'albumTombstones',
-
-    // 预览布局模式
-    'layoutMode',
-
-    // 虚拟滚动器状态
-    'virtualScroller',
-
-    // 同步任务状态
-    'isSilent', 'isMonitoring', 'monitoringType', 'monitoringIntervalId', 'monitoringTimeoutId'
-]);
-
-/**
- * 状态代理对象（主状态访问接口），严格属性访问和方法转发
- * @type {Proxy}
+ * 导出状态管理接口
+ * 使用轻量级 Proxy 支持直接属性访问（向后兼容），但不进行白名单验证
  */
 export const state = new Proxy(stateManager, {
     get(target, prop) {
-        // 方法访问
+        // 如果是 stateManager 的方法，返回绑定的方法
         if (typeof target[prop] === 'function') {
             return target[prop].bind(target);
         }
 
-        // 严格的状态属性访问
-        if (ALLOWED_STATE_KEYS.has(prop)) {
-            return target.state[prop];
+        // 如果是 'state' 属性，返回当前状态对象
+        if (prop === 'state') {
+            return target.state;
         }
 
-        // 管理器自身属性访问
-        if (prop in target) {
-            return target[prop];
-        }
-
-        // 访问未定义的状态属性时警告
-        stateLogger.warn(`访问未定义的状态属性: ${prop}`, {
-            allowedKeys: Array.from(ALLOWED_STATE_KEYS),
-            suggestion: '请检查属性名称是否正确，或在ALLOWED_STATE_KEYS中添加新属性'
-        });
-
-        return undefined;
+        // 否则从状态对象中获取属性值
+        return target.state[prop];
     },
 
     set(target, prop, value) {
-        // 严格的状态属性设置
-        if (ALLOWED_STATE_KEYS.has(prop)) {
-            target.update(prop, value);
-            return true;
-        }
-
-        // 管理器自身属性设置
-        target[prop] = value;
+        // 直接属性赋值转换为 update 调用
+        target.update(prop, value);
         return true;
-    },
-
-    has(target, prop) {
-        return ALLOWED_STATE_KEYS.has(prop) || prop in target;
-    },
-
-    ownKeys(target) {
-        // 返回所有允许的键
-        return Array.from(ALLOWED_STATE_KEYS);
-    },
-
-    getOwnPropertyDescriptor(target, prop) {
-        if (ALLOWED_STATE_KEYS.has(prop)) {
-            return {
-                configurable: true,
-                enumerable: true,
-                value: target.state[prop],
-                writable: true
-            };
-        }
-        return undefined;
     }
 });
 

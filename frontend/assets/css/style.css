@@ -1482,7 +1482,7 @@ a.thumbnail-generating .image-placeholder {
 
 /* === 动态沉浸式顶栏 === */
 .topbar {
-    position: fixed;
+    position: sticky;
     top: 0;
     left: 0;
     right: 0;
@@ -1500,6 +1500,9 @@ a.thumbnail-generating .image-placeholder {
     --sg-surface-bg-strong: rgba(17, 24, 39, 0.50);
     --sg-surface-border: rgba(255, 255, 255, 0.08);
     --sg-surface-shadow: 0 10px 24px rgba(0, 0, 0, 0.25);
+    /* ✅ 负 margin 抵消 page-inner 的 padding，让 topbar 宽度与 gallery-view 一致 */
+    margin-left: -0.5rem;
+    margin-right: -0.5rem;
 }
 
 .topbar.topbar--hidden {
@@ -1524,18 +1527,15 @@ body.download-page-active .topbar {
     --sg-surface-shadow: 0 8px 20px rgba(0, 0, 0, 0.22);
 }
 
-/* ✅ 修复：为页面内容预留顶部内边距，避免被topbar遮挡 */
-/* 使用 CSS 变量动态设置，并添加!important确保优先级 */
-.with-fixed-topbar .container {
-    padding-top: var(--topbar-offset, 96px) !important;
+/* ✅ 为 gallery-view 添加顶部间距，与 topbar 分开 */
+#gallery-view {
+    margin-top: 1rem;
+    /* 16px - topbar 下方间距 */
 }
 
 .with-fixed-topbar #page-inner {
-    padding-top: var(--topbar-offset, 96px) !important;
     padding-bottom: 0.5rem;
     /* 8px */
-    /* ✅ 平滑过渡padding-top，消除路由切换时的突兀感 */
-    transition: padding-top 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* 响应式底部间距 */
@@ -1564,14 +1564,14 @@ body.download-page-active .topbar {
     gap: 0.75rem;
 }
 
-/* 顶栏宽度与页面内容保持一致：使用流动最大宽度以减少大屏留白并避免错位 */
-@media (min-width: 0px) {
-    .topbar-inner {
-        max-width: min(96vw, 1760px);
-    }
-}
+/* 响应式 padding，与 page-inner 保持一致 */
 
 @media (min-width: 640px) {
+    .topbar {
+        margin-left: -1rem;
+        margin-right: -1rem;
+    }
+
     .topbar-inner {
         padding-left: 1rem;
         padding-right: 1rem;
@@ -1579,6 +1579,11 @@ body.download-page-active .topbar {
 }
 
 @media (min-width: 768px) {
+    .topbar {
+        margin-left: -2rem;
+        margin-right: -2rem;
+    }
+
     .topbar-inner {
         padding-left: 2rem;
         padding-right: 2rem;

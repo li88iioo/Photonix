@@ -2,7 +2,7 @@
  * @file event-manager.js
  * @module EventManager
  * @description
- * 统一事件管理器，避免内存泄漏和重复绑定，支持事件分组、批量管理与自动清理。
+ * 简化的事件管理工具，基于原生 AbortController 实现自动清理。
  */
 
 import { createModuleLogger } from './logger.js';
@@ -10,475 +10,215 @@ import { createModuleLogger } from './logger.js';
 const eventLogger = createModuleLogger('EventManager');
 
 /**
- * @class EventRecord
- * @classdesc 单个事件绑定记录，负责事件的绑定与解绑。
+ * 创建一个新的 AbortController 用于管理事件生命周期
+ * @returns {AbortController} 新的 AbortController 实例
  */
-class EventRecord {
-    /**
-     * @constructor
-     * @param {EventTarget|NodeList|Array} target 事件目标
-     * @param {string} eventType 事件类型
-     * @param {Function} handler 事件处理函数
-     * @param {object} [options={}] 事件选项
-     */
-    constructor(target, eventType, handler, options = {}) {
-        this.target = target;
-        this.eventType = eventType;
-        this.handler = handler;
-        this.options = options;
-        this.id = `${eventType}:${Date.now()}:${Math.random().toString(36).substr(2, 9)}`;
-        this.isBound = false;
-    }
-
-    /**
-     * 绑定事件到目标
-     * @returns {boolean} 是否成功绑定
-     */
-    bind() {
-        if (this.isBound || !this.target) return false;
-
-        try {
-            if (this.target instanceof EventTarget) {
-                this.target.addEventListener(this.eventType, this.handler, this.options);
-            } else if (this.target instanceof NodeList || Array.isArray(this.target)) {
-                // 批量绑定到多个元素
-                this.target.forEach(element => {
-                    if (element instanceof EventTarget) {
-                        element.addEventListener(this.eventType, this.handler, this.options);
-                    }
-                });
-            }
-            this.isBound = true;
-            return true;
-        } catch (error) {
-            eventLogger.warn('Failed to bind event', { eventType: this.eventType, error });
-            return false;
-        }
-    }
-
-    /**
-     * 解绑事件
-     * @returns {boolean} 是否成功解绑
-     */
-    unbind() {
-        if (!this.isBound || !this.target) return false;
-
-        try {
-            if (this.target instanceof EventTarget) {
-                this.target.removeEventListener(this.eventType, this.handler, this.options);
-            } else if (this.target instanceof NodeList || Array.isArray(this.target)) {
-                // 批量解绑多个元素
-                this.target.forEach(element => {
-                    if (element instanceof EventTarget) {
-                        element.removeEventListener(this.eventType, this.handler, this.options);
-                    }
-                });
-            }
-            this.isBound = false;
-            return true;
-        } catch (error) {
-            eventLogger.warn('Failed to unbind event', { eventType: this.eventType, error });
-            return false;
-        }
-    }
-
-    /**
-     * 检查目标元素是否仍然有效
-     * @returns {boolean} 目标元素是否有效
-     */
-    isTargetValid() {
-        if (!this.target) return false;
-
-        if (this.target instanceof EventTarget) {
-            // 检查DOM元素是否仍然在文档中
-            return !(this.target instanceof Node) || document.contains(this.target);
-        }
-
-        if (Array.isArray(this.target) || this.target instanceof NodeList) {
-            // 检查数组中的元素是否仍然有效
-            return Array.from(this.target).some(element =>
-                element instanceof EventTarget && (!(element instanceof Node) || document.contains(element))
-            );
-        }
-
-        return false;
-    }
+export function createController() {
+    return new AbortController();
 }
 
 /**
- * @class EventGroup
- * @classdesc 事件组，用于批量管理相关事件的绑定与解绑。
+ * 添加事件监听器，支持通过 AbortController 自动管理解绑
+ * @param {EventTarget|NodeList|Array} target - 事件目标
+ * @param {string} eventType - 事件类型
+ * @param {Function} handler - 事件处理函数
+ * @param {object} [options={}] - 事件选项，可包含 signal 用于自动清理
+ * @returns {void}
  */
-class EventGroup {
-    /**
-     * @constructor
-     * @param {string} name 事件组名称
-     */
-    constructor(name) {
-        this.name = name;
-        this.events = new Map();
-        this.isActive = false;
+export function on(target, eventType, handler, options = {}) {
+    if (!target || !eventType || !handler) {
+        eventLogger.warn('Invalid event binding parameters', { target, eventType, handler });
+        return;
     }
 
-    /**
-     * 添加事件到组
-     * @param {EventTarget|NodeList|Array} target 事件目标
-     * @param {string} eventType 事件类型
-     * @param {Function} handler 事件处理函数
-     * @param {object} [options={}] 事件选项
-     * @returns {EventRecord} 事件记录
-     */
-    add(target, eventType, handler, options = {}) {
-        const record = new EventRecord(target, eventType, handler, options);
-        const key = `${eventType}:${this.events.size}`;
-        this.events.set(key, record);
-        return record;
-    }
-
-    /**
-     * 激活组内所有事件（批量绑定）
-     * @returns {void}
-     */
-    activate() {
-        if (this.isActive) return;
-
-        let boundCount = 0;
-        for (const record of this.events.values()) {
-            if (record.bind()) {
-                boundCount++;
-            }
-        }
-
-        this.isActive = true;
-
-        eventLogger.debug('Activated group', {
-            name: this.name,
-            boundCount,
-            totalEvents: this.events.size
-        });
-    }
-
-    /**
-     * 停用组内所有事件（批量解绑）
-     * @returns {void}
-     */
-    deactivate() {
-        if (!this.isActive) return;
-
-        let unboundCount = 0;
-        for (const record of this.events.values()) {
-            if (record.unbind()) {
-                unboundCount++;
-            }
-        }
-
-        this.isActive = false;
-
-        eventLogger.debug('Deactivated group', {
-            name: this.name,
-            unboundCount,
-            totalEvents: this.events.size
-        });
-    }
-
-    /**
-     * 清理无效的事件记录
-     * @returns {void}
-     */
-    cleanup() {
-        const toRemove = [];
-
-        for (const [key, record] of this.events) {
-            if (!record.isTargetValid()) {
-                toRemove.push(key);
-            }
-        }
-
-        toRemove.forEach(key => this.events.delete(key));
-
-        if (toRemove.length > 0) {
-            eventLogger.debug('Cleaned up invalid events from group', {
-                name: this.name,
-                cleanedCount: toRemove.length
+    try {
+        if (target instanceof EventTarget) {
+            target.addEventListener(eventType, handler, options);
+        } else if (target instanceof NodeList || Array.isArray(target)) {
+            // 批量绑定到多个元素
+            target.forEach(element => {
+                if (element instanceof EventTarget) {
+                    element.addEventListener(eventType, handler, options);
+                }
             });
         }
-    }
-
-    /**
-     * 获取组的状态信息
-     * @returns {object} 组的状态信息
-     */
-    getStats() {
-        return {
-            name: this.name,
-            eventCount: this.events.size,
-            activeEvents: Array.from(this.events.values()).filter(record => record.isBound).length,
-            isActive: this.isActive
-        };
-    }
-
-    /**
-     * 销毁事件组，解绑所有事件并清空
-     * @returns {void}
-     */
-    destroy() {
-        this.deactivate();
-        this.events.clear();
+    } catch (error) {
+        eventLogger.warn('Failed to bind event', { eventType, error });
     }
 }
 
 /**
- * @class EventManager
- * @classdesc 全局事件管理器，支持事件分组、全局事件、自动清理等功能。
+ * 移除事件监听器
+ * @param {EventTarget|NodeList|Array} target - 事件目标
+ * @param {string} eventType - 事件类型
+ * @param {Function} handler - 事件处理函数
+ * @param {object} [options={}] - 事件选项
+ * @returns {void}
+ */
+export function off(target, eventType, handler, options = {}) {
+    if (!target || !eventType || !handler) {
+        return;
+    }
+
+    try {
+        if (target instanceof EventTarget) {
+            target.removeEventListener(eventType, handler, options);
+        } else if (target instanceof NodeList || Array.isArray(target)) {
+            // 批量解绑多个元素
+            target.forEach(element => {
+                if (element instanceof EventTarget) {
+                    element.removeEventListener(eventType, handler, options);
+                }
+            });
+        }
+    } catch (error) {
+        eventLogger.warn('Failed to unbind event', { eventType, error });
+    }
+}
+
+/**
+ * 全局事件管理器（保持向后兼容）
+ * 新代码应该使用 createController() + on() 的方式
  */
 class EventManager {
-    /**
-     * @constructor
-     */
     constructor() {
-        /** @type {Map<string, EventGroup>} */
-        this.groups = new Map();
-        /** @type {Map<string, EventRecord>} */
-        this.globalEvents = new Map();
-        /** @type {number|null} */
-        this.cleanupInterval = null;
-
-        // 启动定期清理
-        this.startPeriodicCleanup();
+        this.controllers = new Map();
     }
 
     /**
-     * 创建或获取事件组
-     * @param {string} name 事件组名称
-     * @returns {EventGroup} 事件组
+     * 创建或获取命名的 AbortController
+     * @param {string} name - 控制器名称
+     * @returns {AbortController}
      */
-    getGroup(name) {
-        if (!this.groups.has(name)) {
-            this.groups.set(name, new EventGroup(name));
+    getController(name) {
+        if (!this.controllers.has(name)) {
+            this.controllers.set(name, new AbortController());
         }
-        return this.groups.get(name);
+        return this.controllers.get(name);
     }
 
     /**
-     * 删除事件组
-     * @param {string} name 事件组名称
-     * @returns {void}
+     * 中止并移除命名的控制器
+     * @param {string} name - 控制器名称
      */
-    removeGroup(name) {
-        const group = this.groups.get(name);
-        if (group) {
-            group.destroy();
-            this.groups.delete(name);
+    abortController(name) {
+        const controller = this.controllers.get(name);
+        if (controller) {
+            controller.abort();
+            this.controllers.delete(name);
         }
     }
 
     /**
-     * 切换事件组状态
-     * @param {string} activeGroupName 要激活的事件组名称
-     * @param {boolean} [deactivateOthers=true] 是否停用其他组
-     * @returns {void}
+     * 绑定事件到命名的控制器
+     * @param {string} groupName - 组名称
+     * @param {EventTarget} target - 事件目标
+     * @param {string} eventType - 事件类型
+     * @param {Function} handler - 事件处理函数
+     * @param {object} [options={}] - 事件选项
      */
-    switchToGroup(activeGroupName, deactivateOthers = true) {
-        // 停用其他组
-        if (deactivateOthers) {
-            for (const [name, group] of this.groups) {
-                if (name !== activeGroupName && group.isActive) {
-                    group.deactivate();
-                }
-            }
-        }
-
-        // 激活指定组
-        const targetGroup = this.groups.get(activeGroupName);
-        if (targetGroup) {
-            targetGroup.activate();
-        }
+    bindToGroup(groupName, target, eventType, handler, options = {}) {
+        const controller = this.getController(groupName);
+        on(target, eventType, handler, { ...options, signal: controller.signal });
     }
 
     /**
-     * 绑定全局事件（不属于任何组）
-     * @param {EventTarget|NodeList|Array} target 事件目标
-     * @param {string} eventType 事件类型
-     * @param {Function} handler 事件处理函数
-     * @param {object} [options={}] 事件选项
-     * @returns {string|null} 事件键或null
+     * 移除事件组（中止所有相关事件）
+     * @param {string} groupName - 组名称
      */
-    bindGlobal(target, eventType, handler, options = {}) {
-        const record = new EventRecord(target, eventType, handler, options);
-        const key = `global:${record.id}`;
-
-        if (record.bind()) {
-            this.globalEvents.set(key, record);
-            return key;
-        }
-
-        return null;
+    removeGroup(groupName) {
+        this.abortController(groupName);
     }
 
     /**
-     * 解绑全局事件
-     * @param {string} key 事件键
-     * @returns {boolean} 是否成功解绑
-     */
-    unbindGlobal(key) {
-        const record = this.globalEvents.get(key);
-        if (record) {
-            record.unbind();
-            this.globalEvents.delete(key);
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * 批量绑定事件到组
-     * @param {string} groupName 事件组名称
-     * @param {Array<{target: EventTarget|NodeList|Array, event: string, handler: Function, options?: object}>} bindings 事件绑定数组
-     * @returns {EventGroup} 事件组
-     */
-    bindToGroup(groupName, bindings) {
-        const group = this.getGroup(groupName);
-
-        bindings.forEach(({ target, event, handler, options = {} }) => {
-            group.add(target, event, handler, options);
-        });
-
-        return group;
-    }
-
-    /**
-     * 清理所有无效的事件绑定
-     * @returns {void}
-     */
-    cleanup() {
-        // 清理事件组
-        for (const group of this.groups.values()) {
-            group.cleanup();
-        }
-
-        // 清理全局事件
-        const invalidGlobals = [];
-        for (const [key, record] of this.globalEvents) {
-            if (!record.isTargetValid()) {
-                invalidGlobals.push(key);
-            }
-        }
-
-        invalidGlobals.forEach(key => {
-            const record = this.globalEvents.get(key);
-            if (record) {
-                record.unbind();
-                this.globalEvents.delete(key);
-            }
-        });
-
-        if (invalidGlobals.length > 0) {
-            eventLogger.debug('Cleanup completed', {
-                removedGlobalEvents: invalidGlobals.length,
-                remainingGroups: this.groups.size
-            });
-        }
-    }
-
-    /**
-     * 启动定期清理
-     * @private
-     * @returns {void}
-     */
-    startPeriodicCleanup() {
-        this.cleanupInterval = setInterval(() => {
-            this.cleanup();
-        }, 5 * 60 * 1000); // 每5分钟清理一次
-    }
-
-    /**
-     * 获取统计信息
-     * @returns {object} 统计信息
-     */
-    getStats() {
-        const groupStats = {};
-        for (const [name, group] of this.groups) {
-            groupStats[name] = group.getStats();
-        }
-
-        return {
-            groups: groupStats,
-            globalEvents: this.globalEvents.size,
-            totalGroups: this.groups.size,
-            timestamp: Date.now()
-        };
-    }
-
-    /**
-     * 销毁事件管理器，解绑所有事件并清理资源
-     * @returns {void}
+     * 销毁所有事件
      */
     destroy() {
-        if (this.cleanupInterval) {
-            clearInterval(this.cleanupInterval);
-            this.cleanupInterval = null;
+        for (const controller of this.controllers.values()) {
+            controller.abort();
         }
-
-        // 销毁所有事件组
-        for (const group of this.groups.values()) {
-            group.destroy();
-        }
-        this.groups.clear();
-
-        // 销毁全局事件
-        for (const record of this.globalEvents.values()) {
-            record.unbind();
-        }
-        this.globalEvents.clear();
+        this.controllers.clear();
     }
 }
 
 /**
- * @type {EventManager}
- * @description 全局事件管理器实例
+ * 全局事件管理器实例（保持向后兼容）
  */
 export const eventManager = new EventManager();
 
 /**
- * 创建页面特定的事件组
- * @param {string} pageName 页面名称
- * @returns {EventGroup} 事件组
+ * 创建页面特定的事件控制器（返回兼容对象）
+ * @param {string} pageName - 页面名称
+ * @returns {Object} 兼容的事件组对象
  */
 export function createPageGroup(pageName) {
-    return eventManager.getGroup(`page:${pageName}`);
+    const controller = eventManager.getController(`page:${pageName}`);
+    return createCompatibleGroup(controller);
 }
 
 /**
- * 创建组件特定的事件组
- * @param {string} componentName 组件名称
- * @returns {EventGroup} 事件组
+ * 创建组件特定的事件控制器（返回兼容对象）
+ * @param {string} componentName - 组件名称
+ * @returns {Object} 兼容的事件组对象
  */
 export function createComponentGroup(componentName) {
-    return eventManager.getGroup(`component:${componentName}`);
+    const controller = eventManager.getController(`component:${componentName}`);
+    return createCompatibleGroup(controller);
 }
 
 /**
- * 创建模态框特定的事件组
- * @param {string} modalName 模态框名称
- * @returns {EventGroup} 事件组
+ * 创建模态框特定的事件控制器（返回兼容对象）
+ * @param {string} modalName - 模态框名称
+ * @returns {Object} 兼容的事件组对象
  */
 export function createModalGroup(modalName) {
-    return eventManager.getGroup(`modal:${modalName}`);
+    const controller = eventManager.getController(`modal:${modalName}`);
+    return createCompatibleGroup(controller);
 }
 
 /**
- * 切换到指定页面的事件组（激活该组，停用其他组）
- * @param {string} pageName 页面名称
- * @returns {void}
+ * 创建兼容旧 API 的事件组对象
+ * @param {AbortController} controller - AbortController 实例
+ * @returns {Object} 兼容对象
  */
-export function switchToPage(pageName) {
-    eventManager.switchToGroup(`page:${pageName}`);
+function createCompatibleGroup(controller) {
+    return {
+        controller,
+        /**
+         * 添加事件监听器
+         * @param {EventTarget} target - 事件目标
+         * @param {string} eventType - 事件类型
+         * @param {Function} handler - 事件处理函数
+         * @param {object} options - 事件选项
+         */
+        add(target, eventType, handler, options = {}) {
+            on(target, eventType, handler, { ...options, signal: controller.signal });
+        },
+        /**
+         * 激活事件组（兼容方法，实际上事件已自动绑定）
+         */
+        activate() {
+            // 使用 AbortController 时，事件在 add() 时就已经绑定
+            // 这个方法保留是为了向后兼容
+        },
+        /**
+         * 停用事件组（中止所有事件）
+         */
+        deactivate() {
+            controller.abort();
+        },
+        /**
+         * 销毁事件组（中止所有事件）
+         */
+        destroy() {
+            controller.abort();
+        }
+    };
 }
 
 /**
- * 清理指定页面的事件组
- * @param {string} pageName 页面名称
- * @returns {void}
+ * 清理指定页面的事件
+ * @param {string} pageName - 页面名称
  */
 export function cleanupPage(pageName) {
     eventManager.removeGroup(`page:${pageName}`);

@@ -14,7 +14,8 @@
     <link rel="modulepreload" href="/js/dist/main.js">
     <!-- AI密语字体文件 -->
     <style>
-        body, html {
+        body,
+        html {
             font-family: 'ZCOOL KuaiLe', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif;
         }
     </style>
@@ -22,13 +23,12 @@
 </head>
 
 <body class="bg-gray-50 text-gray-800 selection:bg-purple-500 selection:text-white">
-    <div id="app-container" class="transition-opacity duration-500 opacity-0 with-fixed-topbar"
-        style="--topbar-offset: 112px;">
+    <div id="app-container" class="transition-opacity duration-500 opacity-0 with-fixed-topbar">
         <div id="page-inner" class="mx-auto max-w-[min(96vw,1760px)] px-2 sm:px-4 md:px-8">
             <header id="topbar"
-                class="topbar fixed top-0 left-0 right-0 z-50 transition-transform duration-300 ease-in-out">
+                class="topbar sticky top-0 left-0 right-0 z-50 transition-transform duration-300 ease-in-out">
                 <div
-                    class="topbar-inner mx-auto px-4 h-16 w-full flex items-center justify-between bg-white/85 backdrop-blur-md border-b border-gray-200/60 shadow-sm">
+                    class="topbar-inner mx-auto h-16 w-full flex items-center justify-between bg-white/85 backdrop-blur-md border-b border-gray-200/60 shadow-sm">
 
                     <nav id="breadcrumb-container"
                         class="flex-1 min-w-0 mr-4 overflow-hidden transition-opacity duration-200">
@@ -72,7 +72,7 @@
                         <div id="sort-wrapper" class="relative"></div>
 
                         <button id="settings-btn"
-                            class="p-2 rounded-lg text-gray-600 hover:text-black hover:bg-gray-100 transition-all">
+                            class="p-2 rounded-lg text-gray-600 hover:text-black hover:bg-gray-100 transition-all flex items-center justify-center">
                             <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
                                 viewBox="0 0 24 24">
                                 <path
@@ -171,7 +171,9 @@
                         <h2>设置</h2>
                         <p class="settings-subtitle">Photonix Config</p>
                     </div>
-                    <button class="settings-close-btn settings-close-btn--mobile" title="关闭"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <button class="settings-close-btn settings-close-btn--mobile" title="关闭"><svg
+                            xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                             <line x1="18" y1="6" x2="6" y2="18"></line>
                             <line x1="6" y1="6" x2="18" y2="18"></line>
                         </svg></button>
@@ -217,9 +219,9 @@
                         </svg><span>运维管理</span></button>
                 </nav>
                 <div class="settings-content-wrapper">
-                    <button class="settings-close-btn settings-close-btn--desktop" title="关闭"><svg xmlns="http://www.w3.org/2000/svg" width="24"
-                            height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-                            stroke-linecap="round" stroke-linejoin="round">
+                    <button class="settings-close-btn settings-close-btn--desktop" title="关闭"><svg
+                            xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                             <line x1="18" y1="6" x2="6" y2="18"></line>
                             <line x1="6" y1="6" x2="18" y2="18"></line>
                         </svg></button>
@@ -268,7 +270,8 @@
                             </div>
                             <div class="settings-actions">
                                 <div class="actions-inner">
-                                    <button type="button" class="settings-action-btn btn-secondary cancel-btn">取消</button>
+                                    <button type="button"
+                                        class="settings-action-btn btn-secondary cancel-btn">取消</button>
                                     <button type="button" class="settings-action-btn btn-primary save-btn" disabled>
                                         <span class="btn-text">保存更改</span>
                                         <div class="spinner"></div>
@@ -325,7 +328,8 @@
                             </div>
                             <div class="settings-actions">
                                 <div class="actions-inner">
-                                    <button type="button" class="settings-action-btn btn-secondary cancel-btn">取消</button>
+                                    <button type="button"
+                                        class="settings-action-btn btn-secondary cancel-btn">取消</button>
                                     <button type="button" class="settings-action-btn btn-primary save-btn" disabled>
                                         <span class="btn-text">保存更改</span>
                                         <div class="spinner"></div>
@@ -345,11 +349,13 @@
                                     <p class="manage-card-description">自动监听关闭时，可在此集中处理相册与媒体的增删变化。</p>
                                 </div>
                                 <div class="manage-card-body">
-                                    <button id="manual-sync-btn" class="btn btn-primary manage-primary-btn">执行手动同步</button>
+                                    <button id="manual-sync-btn"
+                                        class="btn btn-primary manage-primary-btn">执行手动同步</button>
                                     <div id="manual-sync-report" class="manage-report"></div>
                                     <div class="manage-block">
                                         <div class="manage-block-title">自动维护计划</div>
-                                        <p class="manage-helper-text" id="manual-sync-schedule-hint">输入分钟数（如 30）或 5 段 cron
+                                        <p class="manage-helper-text" id="manual-sync-schedule-hint">输入分钟数（如 30）或 5 段
+                                            cron
                                             表达式（如 */30 * * * *），填写 off 可关闭后台维护。</p>
                                         <div class="manage-input-group">
                                             <input type="text" id="manual-sync-schedule" class="form-input"
@@ -367,8 +373,8 @@
                                     <p class="manage-card-description">开启安全开关后，可在相册封面右击或长按进行删除。</p>
                                 </div>
                                 <div class="manage-card-body">
-                                    <div class="manage-toggle-row" id="album-delete-toggle-row" role="button" tabindex="0"
-                                        aria-pressed="false">
+                                    <div class="manage-toggle-row" id="album-delete-toggle-row" role="button"
+                                        tabindex="0" aria-pressed="false">
                                         <div class="manage-toggle-text">
                                             <div class="manage-toggle-title">启用网页相册删除</div>
                                             <div class="manage-toggle-description">支持直接在前端管理相册内容</div>
@@ -442,8 +448,8 @@
     <div id="notification-container"></div>
     <script type="module" src="/js/dist/main.js"></script>
     <button id="back-to-top-btn" aria-label="回到顶部" title="回到顶部">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none"
-            viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5"
+            stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" />
         </svg>
     </button>

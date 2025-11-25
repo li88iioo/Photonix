@@ -407,7 +407,7 @@ async function renderRecentHistory(path, signal) {
             recordHierarchyView(path, {
                 entryType: 'album',
                 name: path.split('/').pop() || ''
-            }).catch(() => {});
+            }).catch(() => { });
         }
 
         const hasMediaFiles = items.some(item => item.type === 'photo' || item.type === 'video');
@@ -716,67 +716,7 @@ async function executeSearch(query, signal) {
     }
 }
 
-/**
- * 预计算并设置topbar高度，确保在内容渲染前padding-top已正确
- * @param {string} targetPath - 目标路径
- */
-function preCalculateTopbarOffset(targetPath) {
-    const topbar = safeGetElementById('topbar');
-    const topbarContext = safeGetElementById('topbar-context');
-    const appContainer = safeGetElementById('app-container');
 
-    if (!topbar || !appContainer) return;
-
-    // 预测topbar-context是否会显示
-    // 规则：所有页面都显示context（包含排序和布局按钮）
-    // 首页显示空白面包屑+按钮，子目录显示完整面包屑+按钮
-    const willShowContext = true;
-
-    // 立即设置topbar状态为完全展开（移除hidden和condensed）
-    safeClassList(topbar, 'remove', 'topbar--hidden');
-    safeClassList(topbar, 'remove', 'topbar--condensed');
-
-    // 如果context存在但不应该显示，临时隐藏（避免测量错误）
-    let contextWasHidden = false;
-    if (topbarContext && !willShowContext) {
-        const currentDisplay = window.getComputedStyle(topbarContext).display;
-        if (currentDisplay !== 'none') {
-            contextWasHidden = true;
-            safeSetStyle(topbarContext, 'display', 'none');
-        }
-    }
-
-    // 强制浏览器同步布局，获取真实高度
-    const topbarInner = topbar.querySelector('.topbar-inner');
-    const persistentHeight = topbarInner?.offsetHeight || 56;
-
-    // context高度：只有在应该显示时才计算
-    let contextHeight = 0;
-    if (willShowContext && topbarContext) {
-        // 临时显示context以测量高度
-        const originalDisplay = topbarContext.style.display;
-        safeSetStyle(topbarContext, 'display', '');
-        contextHeight = topbarContext.offsetHeight;
-        // 恢复原始状态
-        if (contextWasHidden) {
-            safeSetStyle(topbarContext, 'display', 'none');
-        }
-    }
-
-    // 计算总高度（+16px为额外间距）
-    const totalOffset = persistentHeight + contextHeight + 16;
-
-    // 立即设置CSS变量
-    safeSetStyle(appContainer, '--topbar-offset', `${totalOffset}px`);
-
-    routerLogger.debug('预计算topbar高度', {
-        path: targetPath,
-        willShowContext,
-        persistentHeight,
-        contextHeight,
-        totalOffset
-    });
-}
 
 /**
  * 准备新内容渲染，清理旧页面与状态，并处理loading效果。
@@ -784,13 +724,6 @@ function preCalculateTopbarOffset(targetPath) {
  */
 function prepareForNewContent() {
     return new Promise(resolve => {
-        // 0. 获取目标路径并预计算topbar高度（最优先）
-        const { cleanHashString, newDecodedPath } = sanitizeHash();
-        const navigation = buildNavigationContext(cleanHashString, newDecodedPath);
-        const targetPath = navigation?.pathOnly || '';
-
-        // 预先计算并设置topbar高度，避免后续跳动
-        preCalculateTopbarOffset(targetPath);
 
         // 1. 先清空内容，避免滚动时看到旧内容移动
         safeSetInnerHTML(elements.contentGrid, '');

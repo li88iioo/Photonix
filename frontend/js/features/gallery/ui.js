@@ -105,7 +105,7 @@ function encodePathForHash(path) {
 /**
  * 清除排序缓存（保留 API 但无实际操作，兼容调用）
  */
-export function clearSortCache() {}
+export function clearSortCache() { }
 
 /**
  * 确保排序按钮容器节点位于设置按钮之前
@@ -613,7 +613,7 @@ export function renderSortDropdown() {
 	// 排序按钮
 	const sortButton = document.createElement('button');
 	sortButton.id = 'sort-btn';
-	sortButton.className = 'p-2 rounded-lg text-gray-600 hover:text-black hover:bg-gray-100 transition-all group relative';
+	sortButton.className = 'p-2 rounded-lg text-gray-600 hover:text-black hover:bg-gray-100 transition-all group relative flex items-center justify-center';
 	sortButton.setAttribute('aria-expanded', 'false');
 
 	// 设置当前选中图标
@@ -898,7 +898,7 @@ export function updateLayoutToggleButton(btn) {
  */
 function createLayoutToggle() {
 	const btn = createElement('button', {
-		classes: ['p-2', 'rounded-lg', 'text-gray-600', 'hover:text-black', 'hover:bg-gray-100', 'transition-all', 'relative', 'group'],
+		classes: ['p-2', 'rounded-lg', 'text-gray-600', 'hover:text-black', 'hover:bg-gray-100', 'transition-all', 'relative', 'group', 'flex', 'items-center', 'justify-center'],
 		attributes: { id: 'layout-toggle-btn', type: 'button', 'aria-pressed': state.layoutMode === 'grid' ? 'true' : 'false' }
 	});
 	function updateLabel() {
