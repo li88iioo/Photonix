@@ -317,6 +317,22 @@ async function isThumbsDirEffectivelyEmpty(rootDir) {
 }
 
 /**
+ * 重置卡在'processing'状态的缩略图记录
+ * 这种情况通常发生在服务器异常退出时
+ */
+async function resetStuckProcessingTasks() {
+    try {
+        const { runAsync } = require('./db/multi-db');
+        const result = await runAsync('main', "UPDATE thumb_status SET status='pending' WHERE status='processing'");
+        if (result.changes > 0) {
+            logger.info(`[Startup] 已重置 ${result.changes} 个卡在 'processing' 状态的缩略图任务。`);
+        }
+    } catch (e) {
+        logger.debug('[Startup] 重置缩略图状态失败（忽略）：', e && e.message);
+    }
+}
+
+/**
  * 启动期缩略图一致性自愈检查
  * - 如缩略图目录“几乎为空”但 DB 里存在大量 exists 标记，则自动重置为 pending
  */
@@ -724,6 +740,9 @@ async function startServer() {
 
         // 5. 缩略图一致性自愈检查与后台服务并发启动
         await Promise.allSettled([
+            resetStuckProcessingTasks().catch((err) => {
+                logger.debug('重置卡死任务失败（降噪）:', err && err.message);
+            }),
             healThumbnailsIfInconsistent().catch((err) => {
                 logger.debug('缩略图自愈检查异步失败（降噪）:', err && err.message);
             }),

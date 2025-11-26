@@ -21,7 +21,6 @@ const { initializeConnections, getDB, dbRun, dbGet, runPreparedBatch, adaptDbTim
 const { tempFileManager } = require('../utils/tempFileManager');
 const { redis, getAvailability } = require('../config/redis');
 const { safeRedisGet, safeRedisSet, safeRedisDel } = require('../utils/helpers');
-const { runPreparedBatchWithRetry } = require('../db/sqlite-retry');
 const { createNgrams } = require('../utils/search.utils');
 const { getVideoDimensions } = require('../utils/media.utils.js');
 const { invalidateTags } = require('../services/cache.service.js');
@@ -369,9 +368,9 @@ const dbTimeoutManager = new DbTimeoutManager();
             let coversUpsertOk = false;
             if (rows.length > 0) {
                 try {
-                    // 直接使用runPreparedBatchWithRetry，它内部会管理事务
+                    // 直接使用runPreparedBatch，它内部会管理事务
                     // 不使用withAdmission/withTransaction包裹，避免嵌套事务问题
-                    await runPreparedBatchWithRetry(runPreparedBatch, 'main', upsertSql, rows, { manageTransaction: true, chunkSize: 800 }, redis);
+                    await runPreparedBatch('main', upsertSql, rows, { manageTransaction: true, chunkSize: 800 });
                     coversUpsertOk = true;
                 } catch (e) {
                     logger.error('[INDEXING-WORKER] 重建 album_covers 失败（已回滚）：' + (e && e.message));
@@ -791,14 +790,14 @@ const dbTimeoutManager = new DbTimeoutManager();
                         try {
                             const orchestrator = require('../services/orchestrator');
                             await orchestrator.withAdmission('album-covers-upsert', async () => {
-                                await runPreparedBatchWithRetry(runPreparedBatch, 'main', upsertSql, upsertRows, { manageTransaction: false, chunkSize: 800 }, redis);
+                                await runPreparedBatch('main', upsertSql, upsertRows, { manageTransaction: false, chunkSize: 800 });
                             });
                         } catch (err) {
                             if (/no such table: .*album_covers/i.test(err && err.message)) {
                                 await ensureAlbumCoversTable();
                                 const orchestrator = require('../services/orchestrator');
                                 await orchestrator.withAdmission('album-covers-upsert', async () => {
-                                    await runPreparedBatchWithRetry(runPreparedBatch, 'main', upsertSql, upsertRows, { manageTransaction: false, chunkSize: 800 }, redis);
+                                    await runPreparedBatch('main', upsertSql, upsertRows, { manageTransaction: false, chunkSize: 800 });
                                 });
                             } else {
                                 throw err;
@@ -827,8 +826,8 @@ const dbTimeoutManager = new DbTimeoutManager();
 
                     if (parentUpdateRows.length > 0) {
                         const updateParentsSql = `UPDATE items SET mtime = ? WHERE path = ?`;
-                        // 使用 runPreparedBatchWithRetry 确保在高并发下也能成功更新
-                        await runPreparedBatchWithRetry(runPreparedBatch, 'main', updateParentsSql, parentUpdateRows, { manageTransaction: false, chunkSize: 800 }, redis);
+                        // 使用 runPreparedBatch 确保在高并发下也能成功更新
+                        await runPreparedBatch('main', updateParentsSql, parentUpdateRows, { manageTransaction: false, chunkSize: 800 });
                     }
 
                 }, { mode: 'IMMEDIATE' });

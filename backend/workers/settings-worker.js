@@ -5,7 +5,6 @@ const { TraceManager } = require('../utils/trace');
 const { initializeConnections, getDB, runPreparedBatch } = require('../db/multi-db');
 const { withTransaction } = require('../services/tx.manager');
 const { redis } = require('../config/redis');
-const { runPreparedBatchWithRetry } = require('../db/sqlite-retry');
 const { invalidateTags } = require('../services/cache.service.js');
 const { safeRedisSet, safeRedisDel } = require('../utils/helpers');
 const { createWorkerResult, createWorkerError } = require('../utils/workerMessage');
@@ -46,9 +45,6 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
         async update_settings({ settingsToUpdate, updateId } = {}) {
             logger.info('开始更新配置...');
 
-            const maxRetries = 3;
-            let retryCount = 0;
-
             // 标记任务处理中
             try {
                 if (updateId) await safeRedisSet(redis, `settings_update_status:${updateId}`, JSON.stringify({ status: 'processing', updatedKeys: Object.keys(settingsToUpdate || {}), ts: Date.now() }), 'EX', 60, '设置更新状态-处理中');
@@ -56,62 +52,49 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
                 logger.debug(`[SettingsWorker] 设置Redis处理中状态失败: ${err.message}`);
             }
 
-            while (retryCount < maxRetries) {
+            try {
+                const sql = 'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)';
+                const rows = Object.entries(settingsToUpdate).map(([k, v]) => [k, String(v)]);
+                // 统一事务边界：用 withTransaction 包裹批写（runPreparedBatch 将感知外层事务）
+                await withTransaction('settings', async () => {
+                    // Native DB handling (busy_timeout) replaces application-layer retry
+                    await runPreparedBatch('settings', sql, rows, { chunkSize: 500 });
+                }, { mode: 'IMMEDIATE' });
+
+                logger.info(`配置更新成功: ${Object.keys(settingsToUpdate).join(', ')}`);
+
+                // 清理 Redis 中的 settings_cache_v1 (如果存在)
+                await safeRedisDel(redis, 'settings_cache_v1', '删除设置缓存');
+
+                // 使用新的基于标签的缓存失效机制
+                // 任何设置变更都只影响被打上 'settings' 标签的缓存
+                await invalidateTags('settings');
+
+                parentPort && parentPort.postMessage(createWorkerResult({
+                    type: 'settings_update_complete',
+                    success: true,
+                    updatedKeys: Object.keys(settingsToUpdate),
+                    updateId
+                }));
+
                 try {
-                    const sql = 'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)';
-                    const rows = Object.entries(settingsToUpdate).map(([k, v]) => [k, String(v)]);
-                    // 统一事务边界：用 withTransaction 包裹批写（runPreparedBatch 将感知外层事务）
-                    await withTransaction('settings', async () => {
-                        await runPreparedBatchWithRetry(runPreparedBatch, 'settings', sql, rows, { chunkSize: 500 }, redis);
-                    }, { mode: 'IMMEDIATE' });
+                    if (updateId) await safeRedisSet(redis, `settings_update_status:${updateId}`, JSON.stringify({ status: 'success', updatedKeys: Object.keys(settingsToUpdate || {}), ts: Date.now() }), 'EX', 300, '设置更新状态-成功');
+                } catch (err) {
+                    logger.debug(`[SettingsWorker] 设置Redis成功状态失败: ${err.message}`);
+                }
 
-                    logger.info(`配置更新成功: ${Object.keys(settingsToUpdate).join(', ')}`);
-
-                    // 清理 Redis 中的 settings_cache_v1 (如果存在)
-                    await safeRedisDel(redis, 'settings_cache_v1', '删除设置缓存');
-
-                    // 使用新的基于标签的缓存失效机制
-                    // 任何设置变更都只影响被打上 'settings' 标签的缓存
-                    await invalidateTags('settings');
-
-                    parentPort && parentPort.postMessage(createWorkerResult({
-                        type: 'settings_update_complete',
-                        success: true,
-                        updatedKeys: Object.keys(settingsToUpdate),
-                        updateId
-                    }));
-
-                    try {
-                        if (updateId) await safeRedisSet(redis, `settings_update_status:${updateId}`, JSON.stringify({ status: 'success', updatedKeys: Object.keys(settingsToUpdate || {}), ts: Date.now() }), 'EX', 300, '设置更新状态-成功');
-                    } catch (err) {
-                        logger.debug(`[SettingsWorker] 设置Redis成功状态失败: ${err.message}`);
-                    }
-
-                    return; // 成功，退出循环
-
-                } catch (error) {
-                    retryCount++;
-
-                    if (error.message.includes('SQLITE_BUSY') && retryCount < maxRetries) {
-                        const delay = retryCount * 2000;
-                        logger.warn(`数据库繁忙，${delay}ms后重试 (${retryCount}/${maxRetries}): ${error.message}`);
-                        await new Promise(resolve => setTimeout(resolve, delay));
-                        continue;
-                    }
-
-                    logger.error(`更新配置时发生错误: ${error.message}`);
-                    parentPort && parentPort.postMessage(createWorkerError({
-                        type: 'settings_update_failed',
-                        error,
-                        updatedKeys: Object.keys(settingsToUpdate),
-                        updateId
-                    }));
-                    try {
-                        if (updateId) await safeRedisSet(redis, `settings_update_status:${updateId}`, JSON.stringify({ status: 'failed', message: error.message, updatedKeys: Object.keys(settingsToUpdate || {}), ts: Date.now() }), 'EX', 300, '设置更新状态-失败');
-                    } catch (err) {
-                        logger.debug(`[SettingsWorker] 设置Redis失败状态失败: ${err.message}`);
-                    }
-                    return; // 失败，退出循环
+            } catch (error) {
+                logger.error(`更新配置时发生错误: ${error.message}`);
+                parentPort && parentPort.postMessage(createWorkerError({
+                    type: 'settings_update_failed',
+                    error,
+                    updatedKeys: Object.keys(settingsToUpdate),
+                    updateId
+                }));
+                try {
+                    if (updateId) await safeRedisSet(redis, `settings_update_status:${updateId}`, JSON.stringify({ status: 'failed', message: error.message, updatedKeys: Object.keys(settingsToUpdate || {}), ts: Date.now() }), 'EX', 300, '设置更新状态-失败');
+                } catch (err) {
+                    logger.debug(`[SettingsWorker] 设置Redis失败状态失败: ${err.message}`);
                 }
             }
         }

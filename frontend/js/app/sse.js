@@ -103,34 +103,178 @@ async function processThumbnailBatch(batch) {
  * 更新单个缩略图图片
  * @param {HTMLImageElement} img - 图片元素
  * @param {string} imagePath - 图片路径
+ * @param {number} retryCount - 当前重试次数
  * @returns {Promise<void>}
  */
-async function updateThumbnailImage(img, imagePath) {
+async function updateThumbnailImage(img, imagePath, retryCount = 0) {
+    // 检查图片是否还在DOM中
+    if (!img.isConnected) {
+        sseLog('图片已从DOM移除，取消更新', imagePath);
+        return;
+    }
+
     safeClassList(img, 'remove', 'error');
     safeClassList(img, 'remove', 'loaded');
     safeClassList(img, 'add', 'opacity-0');
 
     const decodedPathParam = decodeURIComponent(imagePath);
-    const freshThumbnailUrl = `/api/thumbnail?path=${encodeURIComponent(decodedPathParam)}&v=${Date.now()}`;
+    // 强制使用新的时间戳，确保绕过缓存
+    const freshThumbnailUrl = `/api/thumbnail?path=${encodeURIComponent(decodedPathParam)}&v=${Date.now()}&_sse=${Math.random()}`;
 
     const token = getAuthToken();
     const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
 
-    const response = await fetch(freshThumbnailUrl, { headers, cache: 'no-cache' });
+    let response;
+    try {
+        response = await fetch(freshThumbnailUrl, { 
+            headers, 
+            cache: 'no-store',  // 使用 no-store 而不是 no-cache
+            credentials: 'same-origin'
+        });
+    } catch (networkError) {
+        // 网络错误，进行重试
+        if (retryCount < 3) {
+            const delay = 1000 * Math.pow(2, retryCount); // 指数退避：1s, 2s, 4s
+            sseLog(`网络错误，将在 ${delay}ms 后重试 (attempt ${retryCount + 1}/3)`, imagePath);
+            setManagedTimeout(() => {
+                updateThumbnailImage(img, imagePath, retryCount + 1).catch(err => {
+                    sseWarn('重试缩略图更新失败:', err);
+                });
+            }, delay, 'sse-thumbnail-retry');
+            return;
+        } else {
+            sseError('缩略图更新失败（网络错误），已达最大重试次数', imagePath);
+            safeClassList(img, 'add', 'error');
+            return;
+        }
+    }
+
+    if (response.status === 429) {
+        if (retryCount < 5) {
+            const delay = 1000 + Math.random() * 2000; // 1s - 3s random delay
+            sseLog(`Thumbnail update rate limited, retrying in ${Math.round(delay)}ms (attempt ${retryCount + 1})`, imagePath);
+            setManagedTimeout(() => {
+                updateThumbnailImage(img, imagePath, retryCount + 1).catch(err => {
+                    sseWarn('Retry thumbnail update failed:', err);
+                });
+            }, delay, 'sse-thumbnail-retry');
+            return;
+        } else {
+            sseWarn('Thumbnail update failed after max retries (Rate Limit)', imagePath);
+            safeClassList(img, 'add', 'error');
+            return;
+        }
+    }
 
     if (response.status === 202) {
-        // 仍在生成，保持 processing 状态并加入重试队列
+        // 仍在生成，保持 processing 状态并加入主动轮询队列
         img.dataset.thumbStatus = 'processing';
         safeClassList(img, 'add', 'processing');
         img.dataset.src = freshThumbnailUrl;
+        
+        // 添加主动轮询检查：每2秒检查一次，最多检查10次（20秒）
+        const maxPollingAttempts = 10;
+        const pollingInterval = 2000;
+        let pollingCount = 0;
+        
+        const pollingTimer = setInterval(() => {
+            pollingCount++;
+            
+            // 检查图片是否还在DOM中
+            if (!img.isConnected) {
+                clearInterval(pollingTimer);
+                return;
+            }
+            
+            // 如果已经加载成功，停止轮询
+            if (safeClassList(img, 'contains', 'loaded')) {
+                clearInterval(pollingTimer);
+                return;
+            }
+            
+            if (pollingCount >= maxPollingAttempts) {
+                clearInterval(pollingTimer);
+                sseWarn('缩略图生成超时，停止轮询', imagePath);
+                // 不标记为错误，可能后端还在生成，交给懒加载的重试机制处理
+                return;
+            }
+            
+            // 重新检查状态
+            sseLog(`主动轮询检查缩略图状态 (${pollingCount}/${maxPollingAttempts})`, imagePath);
+            updateThumbnailImage(img, imagePath, 0).catch(err => {
+                sseWarn('轮询检查失败:', err);
+            });
+        }, pollingInterval);
+        
+        // 将定时器ID保存到图片元素，以便清理
+        img.dataset.ssePollingTimer = pollingTimer.toString();
+        
         return;
     }
 
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+    // 处理404/500等错误状态
+    if (response.status === 404 || response.status === 500) {
+        // 文件可能还在生成中，或者生成失败，进行重试
+        if (retryCount < 3) {
+            const delay = 2000 * (retryCount + 1); // 2s, 4s, 6s
+            sseLog(`缩略图未就绪 (HTTP ${response.status})，将在 ${delay}ms 后重试 (attempt ${retryCount + 1}/3)`, imagePath);
+            setManagedTimeout(() => {
+                updateThumbnailImage(img, imagePath, retryCount + 1).catch(err => {
+                    sseWarn('重试缩略图更新失败:', err);
+                });
+            }, delay, 'sse-thumbnail-retry');
+            return;
+        } else {
+            sseWarn(`缩略图更新失败 (HTTP ${response.status})，已达最大重试次数`, imagePath);
+            // 不立即标记为错误，可能还在生成，交给懒加载机制处理
+            return;
+        }
     }
 
-    const blob = await response.blob();
+    if (!response.ok) {
+        sseWarn(`缩略图请求返回异常状态: HTTP ${response.status}`, imagePath);
+        // 对于其他错误状态，也进行有限重试
+        if (retryCount < 2) {
+            const delay = 2000 * (retryCount + 1);
+            setManagedTimeout(() => {
+                updateThumbnailImage(img, imagePath, retryCount + 1).catch(err => {
+                    sseWarn('重试缩略图更新失败:', err);
+                });
+            }, delay, 'sse-thumbnail-retry');
+            return;
+        }
+        safeClassList(img, 'add', 'error');
+        return;
+    }
+
+    // 成功获取缩略图
+    let blob;
+    try {
+        blob = await response.blob();
+    } catch (blobError) {
+        sseError('读取缩略图数据失败:', blobError);
+        if (retryCount < 2) {
+            const delay = 1000 * (retryCount + 1);
+            setManagedTimeout(() => {
+                updateThumbnailImage(img, imagePath, retryCount + 1).catch(err => {
+                    sseWarn('重试缩略图更新失败:', err);
+                });
+            }, delay, 'sse-thumbnail-retry');
+            return;
+        }
+        safeClassList(img, 'add', 'error');
+        return;
+    }
+
+    // 清理之前的轮询定时器
+    if (img.dataset.ssePollingTimer) {
+        try {
+            clearInterval(Number(img.dataset.ssePollingTimer));
+        } catch (e) {
+            // 忽略清理错误
+        }
+        delete img.dataset.ssePollingTimer;
+    }
 
     setManagedTimeout(() => {
         if (img.dataset.processingBySSE) return;
@@ -141,7 +285,7 @@ async function updateThumbnailImage(img, imagePath) {
         } else {
             try {
                 if (img.src && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
-            } catch { }
+            } catch (e) { }
         }
 
         const newBlobUrl = URL.createObjectURL(blob);
@@ -159,7 +303,7 @@ async function updateThumbnailImage(img, imagePath) {
 
         setManagedTimeout(() => {
             if (img.onload) img.onload = null;
-            try { triggerMasonryUpdate(); } catch { }
+            try { triggerMasonryUpdate(); } catch (e) { }
             delete img.dataset.processingBySSE;
         }, 100, 'sse-thumbnail-finalize');
     }, 10, 'sse-thumbnail-update');

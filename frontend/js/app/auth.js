@@ -109,12 +109,20 @@ export async function checkAuthStatus() {
         }
 
         if (!response.ok) {
-            if (response.status === 404) {
+            // 对于404或500错误，默认返回密码未启用（首次部署时数据库可能未初始化）
+            if (response.status === 404 || response.status === 500) {
+                authLogger.warn(`认证状态检查返回 ${response.status}，默认密码未启用`);
                 return { passwordEnabled: false };
             }
             throw new Error(`Could not fetch auth status: ${response.status}`);
         }
-        return await response.json();
+        const result = await response.json();
+        // 确保返回的对象有 passwordEnabled 属性
+        return {
+            passwordEnabled: result && typeof result.passwordEnabled === 'boolean' 
+                ? result.passwordEnabled 
+                : false
+        };
     } catch (error) {
         clearTimeout(timeoutId);
         if (error.name === 'AbortError') {

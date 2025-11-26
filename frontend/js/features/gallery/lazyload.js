@@ -292,6 +292,8 @@ function handleImageLoad(event) {
     safeClassList(img, 'remove', 'processing');
     safeClassList(img, 'remove', 'error');
     img.dataset.thumbStatus = '';
+    // 重置重试计数器
+    delete img.dataset.retryAttempt;
 
     // 清理父元素的生成状态类
     const parent = img.closest('.photo-item, .album-card');
@@ -436,42 +438,190 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
         const token = getAuthToken();
         const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
         const signal = AbortBus.get('thumb');
-        const response = await fetch(thumbnailUrl, { headers, signal });
+        
+        // 确保URL包含时间戳参数，避免缓存问题
+        const urlWithTimestamp = thumbnailUrl.includes('?') 
+            ? `${thumbnailUrl}&_t=${Date.now()}` 
+            : `${thumbnailUrl}?_t=${Date.now()}`;
+        
+        const response = await fetch(urlWithTimestamp, { 
+            headers, 
+            signal,
+            cache: 'no-store',  // 强制不缓存
+            credentials: 'same-origin'
+        });
+        
         if (response.status === 200) {
             const imageBlob = await response.blob();
             img.dataset.thumbStatus = '';
+            delete img.dataset.retryAttempt; // 重置重试计数器
+            delete img.dataset.lastRetryTime; // 清除重试时间记录
             blobUrlManager.setBlobUrl(img, imageBlob);
-        } else if (response.status === 202) {
+            return;
+        }
+        
+        if (response.status === 202) {
             const imageBlob = await response.blob();
             img.dataset.thumbStatus = 'processing';
             blobUrlManager.setBlobUrl(img, imageBlob);
 
-            // SSE 偶发缺失时的兜底：5 秒后仍在处理则再拉一次
-            const retryTimeoutId = setTimeout(() => {
-                if (img.isConnected && img.dataset.thumbStatus === 'processing') {
-                    lazyloadLogger.debug('processing 超时兜底重试', { thumbnailUrl });
-                    requestLazyImage(img);
+            // 持久化重试机制：使用指数退避，直到成功或达到最大尝试次数
+            const retryAttempt = parseInt(img.dataset.retryAttempt || '0', 10);
+            const maxRetries = 15; // 增加到15次，给予更多时间生成
+
+            if (retryAttempt < maxRetries) {
+                // 指数退避：2秒, 3秒, 5秒, 7秒, 10秒, ... 最大15秒
+                const baseDelay = 2000;
+                const delay = Math.min(15000, baseDelay + retryAttempt * 1000);
+
+                img.dataset.retryAttempt = String(retryAttempt + 1);
+                img.dataset.lastRetryTime = String(Date.now());
+
+                const retryTimeoutId = setTimeout(() => {
+                    if (img.isConnected && img.dataset.thumbStatus === 'processing') {
+                        lazyloadLogger.debug(`重试加载处理中的缩略图 (${retryAttempt + 1}/${maxRetries})`, {
+                            thumbnailUrl,
+                            delay
+                        });
+                        requestLazyImage(img);
+                    }
+                }, delay);
+                resourceCleanupManager.registerTimer(retryTimeoutId);
+            } else {
+                // 达到最大重试次数，但不立即标记为失败，可能还在生成
+                lazyloadLogger.warn('缩略图生成超时，已达最大重试次数，将降低重试频率', { thumbnailUrl });
+                // 改为每30秒检查一次，最多再检查5次（额外2.5分钟）
+                const finalRetryAttempt = parseInt(img.dataset.finalRetryAttempt || '0', 10);
+                if (finalRetryAttempt < 5) {
+                    img.dataset.finalRetryAttempt = String(finalRetryAttempt + 1);
+                    const finalRetryTimeoutId = setTimeout(() => {
+                        if (img.isConnected) {
+                            lazyloadLogger.debug(`最终重试检查缩略图 (${finalRetryAttempt + 1}/5)`, { thumbnailUrl });
+                            requestLazyImage(img);
+                        }
+                    }, 30000); // 30秒间隔
+                    resourceCleanupManager.registerTimer(finalRetryTimeoutId);
+                } else {
+                    img.dataset.thumbStatus = 'failed';
+                    delete img.dataset.retryAttempt;
+                    delete img.dataset.finalRetryAttempt;
                 }
-            }, 5000);
-            resourceCleanupManager.registerTimer(retryTimeoutId);
-        } else if (response.status === 429) {
+            }
+            return;
+        }
+        
+        if (response.status === 429) {
             lazyloadLogger.debug('缩略图请求被频率限制，延迟重试', { thumbnailUrl });
+            const delay = 1500 + Math.random() * 1500;
             const retryTimeoutId = setTimeout(() => {
                 if (!img.isConnected) return;
                 requestLazyImage(img);
-            }, 1500);
+            }, delay);
             resourceCleanupManager.registerTimer(retryTimeoutId);
             return;
-        } else if (response.status === 500 && (response.headers.get('X-Thumb-Status') === 'failed')) {
-            const imageBlob = await response.blob();
-            img.dataset.thumbStatus = 'failed';
-            blobUrlManager.setBlobUrl(img, imageBlob);
-        } else {
-            throw new Error(`Server responded with status: ${response.status}`);
         }
+        
+        // 处理404错误：可能文件还在生成中，进行有限重试
+        if (response.status === 404) {
+            const retryAttempt = parseInt(img.dataset.retryAttempt || '0', 10);
+            const max404Retries = 5; // 404最多重试5次
+            
+            if (retryAttempt < max404Retries) {
+                const delay = 3000 * (retryAttempt + 1); // 3s, 6s, 9s, 12s, 15s
+                lazyloadLogger.debug(`缩略图未找到(404)，将在 ${delay}ms 后重试 (${retryAttempt + 1}/${max404Retries})`, { thumbnailUrl });
+                img.dataset.retryAttempt = String(retryAttempt + 1);
+                img.dataset.thumbStatus = 'processing'; // 标记为处理中，避免重复请求
+                
+                const retryTimeoutId = setTimeout(() => {
+                    if (img.isConnected) {
+                        requestLazyImage(img);
+                    }
+                }, delay);
+                resourceCleanupManager.registerTimer(retryTimeoutId);
+                return;
+            } else {
+                lazyloadLogger.warn('缩略图未找到，已达最大重试次数', { thumbnailUrl });
+                img.dataset.thumbStatus = 'failed';
+                delete img.dataset.retryAttempt;
+                return;
+            }
+        }
+        
+        // 处理500错误
+        if (response.status === 500) {
+            const thumbStatus = response.headers.get('X-Thumbnail-Status') || response.headers.get('X-Thumb-Status');
+            if (thumbStatus === 'failed') {
+                // 明确标记为失败
+                const imageBlob = await response.blob().catch(() => null);
+                img.dataset.thumbStatus = 'failed';
+                if (imageBlob) {
+                    blobUrlManager.setBlobUrl(img, imageBlob);
+                }
+                return;
+            }
+            
+            // 其他500错误，可能是临时故障，进行重试
+            const retryAttempt = parseInt(img.dataset.retryAttempt || '0', 10);
+            const max500Retries = 3;
+            
+            if (retryAttempt < max500Retries) {
+                const delay = 2000 * (retryAttempt + 1); // 2s, 4s, 6s
+                lazyloadLogger.debug(`服务器错误(500)，将在 ${delay}ms 后重试 (${retryAttempt + 1}/${max500Retries})`, { thumbnailUrl });
+                img.dataset.retryAttempt = String(retryAttempt + 1);
+                
+                const retryTimeoutId = setTimeout(() => {
+                    if (img.isConnected) {
+                        requestLazyImage(img);
+                    }
+                }, delay);
+                resourceCleanupManager.registerTimer(retryTimeoutId);
+                return;
+            }
+            
+            lazyloadLogger.error('服务器错误，已达最大重试次数', { thumbnailUrl });
+            img.dataset.thumbStatus = 'failed';
+            delete img.dataset.retryAttempt;
+            return;
+        }
+        
+        // 其他错误状态
+        lazyloadLogger.warn(`缩略图请求返回异常状态: HTTP ${response.status}`, { thumbnailUrl });
+        
+        // 对于其他错误，也进行有限重试
+        const retryAttempt = parseInt(img.dataset.retryAttempt || '0', 10);
+        if (retryAttempt < 2) {
+            const delay = 2000 * (retryAttempt + 1);
+            img.dataset.retryAttempt = String(retryAttempt + 1);
+            const retryTimeoutId = setTimeout(() => {
+                if (img.isConnected) {
+                    requestLazyImage(img);
+                }
+            }, delay);
+            resourceCleanupManager.registerTimer(retryTimeoutId);
+            return;
+        }
+        
+        throw new Error(`Server responded with status: ${response.status}`);
     } catch (error) {
         if (error.name !== 'AbortError') {
             lazyloadLogger.error('获取懒加载图片失败', { thumbnailUrl, error });
+            
+            // 网络错误也进行重试
+            const retryAttempt = parseInt(img.dataset.retryAttempt || '0', 10);
+            if (retryAttempt < 2) {
+                const delay = 2000 * (retryAttempt + 1);
+                img.dataset.retryAttempt = String(retryAttempt + 1);
+                lazyloadLogger.debug(`网络错误，将在 ${delay}ms 后重试`, { thumbnailUrl });
+                
+                const retryTimeoutId = setTimeout(() => {
+                    if (img.isConnected) {
+                        requestLazyImage(img);
+                    }
+                }, delay);
+                resourceCleanupManager.registerTimer(retryTimeoutId);
+                return;
+            }
+            
             img.dispatchEvent(new Event('error'));
         }
     }
@@ -513,9 +663,21 @@ export function requestLazyImage(img) {
 export function savePageLazyState(pageKey) {
     if (!pageKey) return;
     const lazyImages = document.querySelectorAll('.lazy-image');
+
+    // 确保会话ID已初始化
+    let sessionId = sessionStorage.getItem('pageSessionId');
+    if (!sessionId) {
+        sessionId = Date.now().toString();
+        try {
+            sessionStorage.setItem('pageSessionId', sessionId);
+        } catch (e) {
+            // SessionStorage可能不可用
+        }
+    }
+
     const pageState = {
         timestamp: Date.now(),
-        sessionId: Date.now().toString(),
+        sessionId,
         images: Array.from(lazyImages).map(img => ({
             src: img.dataset.src,
             loaded: safeClassList(img, 'contains', 'loaded'),
@@ -554,10 +716,18 @@ export function restorePageLazyState(pageKey) {
         lazyloadLogger.debug('懒加载缓存: 缓存已过期', { pageKey });
         return false;
     }
-    // 检查是否是同一会话
-    const currentSessionId = sessionStorage.getItem('pageSessionId') || Date.now().toString();
+    // 修复：确保会话ID持久化，避免每次都生成新ID导致恢复失败
+    let currentSessionId = sessionStorage.getItem('pageSessionId');
+    if (!currentSessionId) {
+        currentSessionId = Date.now().toString();
+        try {
+            sessionStorage.setItem('pageSessionId', currentSessionId);
+        } catch (e) {
+            // SessionStorage可能不可用，使用临时ID
+        }
+    }
     if (cachedState.sessionId !== currentSessionId) {
-        lazyloadLogger.debug('懒加载缓存: 会话不匹配，跳过恢复', { pageKey });
+        lazyloadLogger.debug('懒加载缓存: 会话不匹配，跳过恢复', { pageKey, cached: cachedState.sessionId, current: currentSessionId });
         pageStateCache.delete(pageKey);
         return false;
     }
@@ -646,12 +816,18 @@ function getOrCreateImageObserver() {
 
 /**
  * 初始化懒加载功能
+ * @param {boolean} forceReobserve - 强制重新观察所有图片（用于页面切换时）
  * @returns {IntersectionObserver}
  */
-export function setupLazyLoading() {
+export function setupLazyLoading(forceReobserve = false) {
     const observer = getOrCreateImageObserver();
     document.querySelectorAll('.lazy-image').forEach(img => {
-        if (!img._observed) {
+        // 页面切换时强制重新观察，或者首次观察
+        if (forceReobserve || !img._observed) {
+            // 如果已经被观察，先取消观察再重新观察
+            if (img._observed) {
+                observer.unobserve(img);
+            }
             observer.observe(img);
             img._observed = true;
         }

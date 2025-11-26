@@ -263,10 +263,19 @@ function createLoginGuard() {
  * @route GET /api/auth/status
  */
 exports.getAuthStatus = async (req, res) => {
-    const { PASSWORD_ENABLED } = await getAllSettings({ preferFreshSensitive: true });
-    res.json({
-        passwordEnabled: PASSWORD_ENABLED === 'true'
-    });
+    try {
+        const { PASSWORD_ENABLED } = await getAllSettings({ preferFreshSensitive: true });
+        res.json({
+            passwordEnabled: PASSWORD_ENABLED === 'true'
+        });
+    } catch (error) {
+        // 如果数据库未初始化或查询失败，默认返回密码未启用
+        // 这样可以确保首次部署时不会显示登录页
+        logger.debug('获取认证状态失败，返回默认值（密码未启用）:', error && error.message);
+        res.json({
+            passwordEnabled: false
+        });
+    }
 };
 
 /**
@@ -297,7 +306,8 @@ exports.login = async (req, res) => {
     }
 
     const { password } = req.body;
-    const { PASSWORD_ENABLED, PASSWORD_HASH } = await getAllSettings();
+    // 修复：登录验证时使用 preferFreshSensitive，确保获取最新的密码设置，避免缓存导致的不一致
+    const { PASSWORD_ENABLED, PASSWORD_HASH } = await getAllSettings({ preferFreshSensitive: true });
 
     // 1. 优先检查是否匹配管理员密钥 (ADMIN_SECRET)
     // 这允许管理员使用 ADMIN_SECRET 直接登录，解决 RSS 下载等场景的认证问题
@@ -318,10 +328,11 @@ exports.login = async (req, res) => {
         }
 
         // 验证请求体和后端存储密码
-        if (!password || !PASSWORD_HASH) {
+        // 修复：严格检查 PASSWORD_HASH 是否存在且非空
+        if (!password || !PASSWORD_HASH || PASSWORD_HASH.trim() === '') {
             let failureStats = { fails: 0, lockSec: 0 };
             try {
-                failureStats = await guard.recordFailure(base, '登录失败计数(无密码)');
+                failureStats = await guard.recordFailure(base, '登录失败计数(无密码或密码未设置)');
             } catch (e) {
                 logger.debug('记录登录失败（无密码）时出错（已忽略）:', e && e.message);
             }
@@ -350,7 +361,7 @@ exports.login = async (req, res) => {
             const nextLock = computeLoginLockSeconds(failsNow + 1) || 0;
             return res.status(401).json({
                 code: 'INVALID_CREDENTIALS',
-                message: '密码错误',
+                message: '密码未设置或密码错误',
                 remainingAttempts: remaining,
                 nextLockSeconds: nextLock,
                 requestId: req.requestId
@@ -358,8 +369,46 @@ exports.login = async (req, res) => {
         }
     }
 
-    // 校验密码 (如果不是管理员密钥，则进行哈希比对)
-    const isMatch = isAdminSecretMatch || await bcrypt.compare(password, PASSWORD_HASH);
+    // 校验密码
+    let isMatch = false;
+    if (isAdminSecretMatch) {
+        // 管理员密钥已匹配，直接通过
+        isMatch = true;
+    } else {
+        // 修复：严格验证密码哈希格式，防止空字符串或无效哈希导致的异常
+        // bcrypt 哈希以 $2a$, $2b$, $2y$ 或 $2x$ 开头，长度至少 60 字符
+        const isValidHashFormat = PASSWORD_HASH && 
+                                  PASSWORD_HASH.trim().length >= 60 && 
+                                  /^\$2[aybx]\$/.test(PASSWORD_HASH);
+        
+        if (!isValidHashFormat) {
+            logger.warn(`[${req.requestId || '-'}] 密码哈希格式无效，拒绝登录`);
+            let failureStats = { fails: 0, lockSec: 0 };
+            try {
+                failureStats = await guard.recordFailure(base, '登录失败计数(密码哈希格式无效)');
+            } catch (e) {
+                logger.debug('记录登录失败时出错（已忽略）:', e && e.message);
+            }
+
+            const failsNow = Number(failureStats && failureStats.fails) || 0;
+            const remaining = Math.max(0, 5 - failsNow);
+            return res.status(401).json({
+                code: 'INVALID_CREDENTIALS',
+                message: '密码错误',
+                remainingAttempts: remaining,
+                requestId: req.requestId
+            });
+        }
+
+        // 使用 try-catch 包裹 bcrypt.compare，防止异常导致验证被跳过
+        try {
+            isMatch = await bcrypt.compare(password, PASSWORD_HASH);
+        } catch (bcryptError) {
+            logger.error(`[${req.requestId || '-'}] 密码验证过程出错:`, bcryptError && bcryptError.message);
+            // bcrypt.compare 失败，视为密码不匹配
+            isMatch = false;
+        }
+    }
 
     if (!isMatch) {
         let failureStats = { fails: 0, lockSec: 0 };

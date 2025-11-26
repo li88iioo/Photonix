@@ -17,7 +17,7 @@ const initializeMainDB = async () => {
         const mainMigrations = [
             {
                 key: 'create_items_table',
-                sql: `CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE, type TEXT NOT NULL, cover_path TEXT, last_viewed_at DATETIME, mtime INTEGER, width INTEGER, height INTEGER, status TEXT DEFAULT 'active' NOT NULL, processing_state TEXT DEFAULT 'completed' NOT NULL)`
+                sql: `CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE, type TEXT NOT NULL)`
             },
             {
                 key: 'add_status_column_to_items',

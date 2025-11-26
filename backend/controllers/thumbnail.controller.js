@@ -41,8 +41,8 @@ const requestCounter = new Map();
 /** 批量补全频率限制Map */
 const batchThrottleMap = new Map();
 const REQUEST_WINDOW_MS = 1000;                // 1秒时间窗口
-const BASE_REQUESTS_PER_WINDOW = 50;           // 默认单窗口最大请求数
-const BURST_MULTIPLIER = 2.0;                  // 突发流量允许倍数
+const BASE_REQUESTS_PER_WINDOW = 100;          // 默认单窗口最大请求数
+const BURST_MULTIPLIER = 3.0;                  // 突发流量允许倍数
 const NORMAL_BURST_DURATION = 5000;            // 突发时长(毫秒)
 let currentMaxRequests = BASE_REQUESTS_PER_WINDOW;
 let lastAdjustmentTime = 0;
@@ -214,13 +214,38 @@ async function getThumbnail(req, res) {
         // 按需生成缩略图
         const result = await ensureThumbnailExists(sourceAbsPath, normalizedPath);
 
-        if (result.status === 'exists') {
-            // 缩略图存在，直接返回对应文件
-            const isVideo = /\.(mp4|webm|mov)$/i.test(normalizedPath);
-            const extension = isVideo ? '.jpg' : '.webp';
-            const thumbRelPath = normalizedPath.replace(/\.[^.]+$/, extension);
-            const thumbAbsPath = path.join(THUMBS_DIR, thumbRelPath);
+        // 根据文件类型确定缩略图路径
+        const isVideo = /\.(mp4|webm|mov)$/i.test(normalizedPath);
+        const extension = isVideo ? '.jpg' : '.webp';
+        const thumbRelPath = normalizedPath.replace(/\.[^.]+$/, extension);
+        const thumbAbsPath = path.join(THUMBS_DIR, thumbRelPath);
 
+        if (result.status === 'exists') {
+            // 双重验证：确保文件真实存在（防止竞态条件）
+            try {
+                await fs.access(thumbAbsPath);
+            } catch (accessError) {
+                // 文件实际不存在，可能是刚生成但检查有延迟，再次检查一次
+                logger.debug(`[ThumbnailController] 缩略图文件不存在，重新验证: ${thumbAbsPath}`);
+                // 短暂延迟后再次检查（给文件系统时间同步）
+                await new Promise(resolve => setTimeout(resolve, 100));
+                try {
+                    await fs.access(thumbAbsPath);
+                } catch (secondAccessError) {
+                    // 仍然不存在，返回processing状态，让前端重试
+                    logger.debug(`[ThumbnailController] 缩略图文件仍不存在，返回processing状态`);
+                    const loadingSvg = generateLoadingSvg();
+                    res.set({
+                        'Content-Type': 'image/svg+xml',
+                        'Cache-Control': 'no-cache, no-store, must-revalidate',
+                        'X-Thumbnail-Status': 'processing',
+                        'X-Thumb-Status': 'processing'
+                    });
+                    return res.status(202).send(loadingSvg);
+                }
+            }
+
+            // 文件确认存在，直接返回
             try {
                 res.set({
                     'Cache-Control': 'public, max-age=2592000', // 30天
@@ -237,7 +262,8 @@ async function getThumbnail(req, res) {
             res.set({
                 'Content-Type': 'image/svg+xml',
                 'Cache-Control': 'no-cache, no-store, must-revalidate',
-                'X-Thumbnail-Status': 'processing'
+                'X-Thumbnail-Status': 'processing',
+                'X-Thumb-Status': 'processing'  // 兼容旧的响应头
             });
             return res.status(202).send(loadingSvg);
         } else {
@@ -246,7 +272,8 @@ async function getThumbnail(req, res) {
             res.set({
                 'Content-Type': 'image/svg+xml',
                 'Cache-Control': 'public, max-age=300',
-                'X-Thumbnail-Status': 'failed'
+                'X-Thumbnail-Status': 'failed',
+                'X-Thumb-Status': 'failed'  // 兼容旧的响应头
             });
             return res.status(404).send(errorSvg);
         }

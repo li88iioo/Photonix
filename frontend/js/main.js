@@ -148,7 +148,12 @@ async function initializeApp() {
         const authStatus = await checkAuthStatus();
         const token = getAuthToken();
 
-        if (authStatus.passwordEnabled && !token) {
+        // 如果 passwordEnabled 为 undefined 或 null，默认为 false（首次部署时）
+        const passwordEnabled = authStatus && typeof authStatus.passwordEnabled === 'boolean' 
+            ? authStatus.passwordEnabled 
+            : false;
+
+        if (passwordEnabled && !token) {
             setUIState('login');
             showLoginScreen();
         } else {
@@ -157,7 +162,23 @@ async function initializeApp() {
         }
     } catch (error) {
         mainLogger.error('应用初始化失败', error);
+        
+        // 首次部署时数据库可能还未初始化，如果认证检查失败，默认不显示登录页
+        // 而是尝试直接启动主应用（如果后端正常）
+        const token = getAuthToken();
+        if (!token) {
+            // 没有token且请求失败，可能是数据库未初始化，尝试直接启动应用
+            mainLogger.warn('认证状态检查失败，尝试直接启动应用（可能数据库未初始化）');
+            try {
+                setUIState('app');
+                startMainApp();
+                return; // 成功启动，退出错误处理
+            } catch (startError) {
+                mainLogger.error('启动主应用也失败', startError);
+            }
+        }
 
+        // 如果有token但检查失败，显示错误页面
         setUIState('error');
         const authContainer = safeGetElementById('auth-container');
         if (authContainer) {

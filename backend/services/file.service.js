@@ -24,98 +24,13 @@ const { isPathSafe } = require('../utils/path.utils');
 const { dbAll, dbGet, runAsync } = require('../db/multi-db');
 const { getVideoDimensions } = require('../utils/media.utils.js');
 
-// 限制重型尺寸探测的并发量，降低冷启动高 IO/CPU 冲击
-const DIMENSION_PROBE_CONCURRENCY = Number(process.env.DIMENSION_PROBE_CONCURRENCY || 4);
-function createConcurrencyLimiter(maxConcurrent) {
-    let activeCount = 0;
-    const pendingQueue = [];
-    const next = () => {
-        if (activeCount >= maxConcurrent) return;
-        const job = pendingQueue.shift();
-        if (!job) return;
-        activeCount++;
-        Promise.resolve()
-            .then(job.fn)
-            .then(job.resolve, job.reject)
-            .finally(() => { activeCount--; next(); });
-    };
-    return (fn) => new Promise((resolve, reject) => {
-        pendingQueue.push({ fn, resolve, reject });
-        next();
-    });
-}
-const limitDimensionProbe = createConcurrencyLimiter(DIMENSION_PROBE_CONCURRENCY);
+
 
 // 缓存配置
 const CACHE_DURATION = Number(process.env.FILE_CACHE_DURATION || 604800); // 7天缓存
 // 外部化缓存：移除进程内大 LRU，统一使用 Redis 作为封面缓存后端
 
-// 批量日志统计器
-class BatchLogStats {
-    constructor() {
-        this.reset();
-        this.flushInterval = Number(process.env.BATCH_LOG_FLUSH_INTERVAL || 5000); // 5秒刷新一次统计
-        this.lastFlush = Date.now();
-    }
 
-    reset() {
-        this.dbHitCount = 0;
-        this.dbMissCount = 0;
-        this.currentDir = '';
-        this.processedDirs = new Set();
-    }
-
-    recordDbHit(filePath) {
-        this.dbHitCount++;
-        const dir = path.dirname(filePath);
-        if (dir !== this.currentDir) {
-            this.currentDir = dir;
-            this.processedDirs.add(dir);
-        }
-        this.checkFlush();
-    }
-
-    recordDbMiss(filePath) {
-        this.dbMissCount++;
-        const dir = path.dirname(filePath);
-        if (dir !== this.currentDir) {
-            this.currentDir = dir;
-            this.processedDirs.add(dir);
-        }
-        this.checkFlush();
-    }
-
-    checkFlush() {
-        const now = Date.now();
-        if (now - this.lastFlush > this.flushInterval && (this.dbHitCount > 0 || this.dbMissCount > 0)) {
-            this.flush();
-        }
-    }
-
-    flush() {
-        if (this.dbHitCount > 0 || this.dbMissCount > 0) {
-            const dirCount = this.processedDirs.size;
-            const totalFiles = this.dbHitCount + this.dbMissCount;
-
-            if (this.dbHitCount > 0) {
-                logger.debug(`批量使用数据库预存储尺寸: ${this.dbHitCount} 个文件 (${dirCount} 个目录)`);
-            }
-            if (this.dbMissCount > 0) {
-                logger.debug(`动态获取尺寸: ${this.dbMissCount} 个文件 (${dirCount} 个目录)`);
-            }
-
-            this.reset();
-            this.lastFlush = Date.now();
-        }
-    }
-}
-
-const batchLogStats = new BatchLogStats();
-
-// 进程退出时刷新剩余统计
-process.on('exit', () => batchLogStats.flush());
-process.on('SIGINT', () => { batchLogStats.flush(); process.exit(); });
-process.on('SIGTERM', () => { batchLogStats.flush(); process.exit(); });
 
 
 // 确保用于浏览/封面的关键索引，仅执行一次
@@ -585,7 +500,6 @@ class MediaDimensionsManager {
     constructor() {
         this.redis = redis;
         this.logger = logger;
-        this.batchLogStats = batchLogStats;
     }
 
     /**
@@ -611,7 +525,6 @@ class MediaDimensionsManager {
         };
 
         if (this.isValidDbDimensions(dimensions)) {
-            this.batchLogStats.recordDbHit(entryRelativePath);
             return dimensions;
         }
 
@@ -651,14 +564,12 @@ class MediaDimensionsManager {
      * 计算媒体文件的实际尺寸
      */
     async calculateDimensions(fullAbsPath, isVideo) {
-        return await limitDimensionProbe(async () => {
-            if (isVideo) {
-                return await getVideoDimensions(fullAbsPath);
-            } else {
-                const metadata = await sharp(fullAbsPath).metadata();
-                return { width: metadata.width, height: metadata.height };
-            }
-        });
+        if (isVideo) {
+            return await getVideoDimensions(fullAbsPath);
+        } else {
+            const metadata = await sharp(fullAbsPath).metadata();
+            return { width: metadata.width, height: metadata.height };
+        }
     }
 
     /**
@@ -685,7 +596,7 @@ class MediaDimensionsManager {
         if (dimensions) return dimensions;
 
         // 2. 记录数据库未命中
-        this.batchLogStats.recordDbMiss(entryRelativePath);
+        // this.batchLogStats.recordDbMiss(entryRelativePath); // Removed debug bloat
 
         // 3. 尝试从缓存获取
         const cacheKey = this.generateCacheKey(entryRelativePath, mtime);

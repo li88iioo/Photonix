@@ -303,6 +303,8 @@ const createDBConnection = (dbPath, dbName) => {
                 db.pragma(`journal_mode = ${SQLITE_JOURNAL_MODE}`);
                 db.pragma(`mmap_size = ${SQLITE_MMAP_SIZE}`);
                 db.pragma('foreign_keys = ON');
+                db.pragma('busy_timeout = 10000'); // Wait up to 10s for locks (Replaces retry loop)
+
 
                 logger.debug(`${dbName} 数据库基础参数设置成功`);
             } catch (e) {

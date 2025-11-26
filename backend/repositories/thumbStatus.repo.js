@@ -4,7 +4,6 @@
  * 职责：封装thumb_status表的所有数据库操作
  */
 const { dbGet, dbAll, dbRun, runPreparedBatch } = require('../db/multi-db');
-const { runPreparedBatchWithRetry, writeThumbStatusWithRetry } = require('../db/sqlite-retry');
 const logger = require('../config/logger');
 
 const UPSERT_SQL = `INSERT INTO thumb_status(path, mtime, status, last_checked)
@@ -37,7 +36,7 @@ class ThumbStatusRepository {
      */
     async getByPaths(paths) {
         if (!Array.isArray(paths) || paths.length === 0) return [];
-        
+
         try {
             const placeholders = paths.map(() => '?').join(',');
             const rows = await dbAll('main', `SELECT * FROM thumb_status WHERE path IN (${placeholders})`, paths);
@@ -57,18 +56,29 @@ class ThumbStatusRepository {
     async getByStatus(status, limit = null) {
         try {
             let sql, params;
-            
+
             if (Array.isArray(status)) {
                 const placeholders = status.map(() => '?').join(',');
-                sql = `SELECT * FROM thumb_status WHERE status IN (${placeholders})`;
+                // LEFT JOIN album_covers to prioritize cover images
+                sql = `SELECT ts.* 
+                   FROM thumb_status ts
+                   LEFT JOIN album_covers ac ON ts.path = ac.cover_path
+                   WHERE ts.status IN (${placeholders})`;
                 params = status;
             } else {
-                sql = 'SELECT * FROM thumb_status WHERE status = ?';
+                sql = `SELECT ts.* 
+                   FROM thumb_status ts
+                   LEFT JOIN album_covers ac ON ts.path = ac.cover_path
+                   WHERE ts.status = ?`;
                 params = [status];
             }
 
             if (limit) {
-                sql += ' ORDER BY last_checked ASC LIMIT ?';
+                // ORDER BY: covers first (ac.album_path IS NOT NULL), then by last_checked
+                sql += ` ORDER BY 
+                        CASE WHEN ac.album_path IS NOT NULL THEN 0 ELSE 1 END,
+                        ts.last_checked ASC 
+                     LIMIT ?`;
                 params.push(limit);
             }
 
@@ -91,14 +101,15 @@ class ThumbStatusRepository {
      */
     async upsertBatch(rows, options = {}, redis = null) {
         if (!Array.isArray(rows) || rows.length === 0) return;
-        
+
         const opts = {
             manageTransaction: Boolean(options.manageTransaction),
             chunkSize: Math.max(1, Number(options.chunkSize || 400)),
         };
 
         try {
-            await runPreparedBatchWithRetry(runPreparedBatch, 'main', UPSERT_SQL, rows, opts, redis);
+            // Native DB handling (busy_timeout) replaces application-layer retry
+            await runPreparedBatch('main', UPSERT_SQL, rows, opts);
             logger.debug(`[ThumbStatusRepo] 批量upsert完成: ${rows.length}条`);
         } catch (error) {
             logger.error(`[ThumbStatusRepo] 批量upsert失败:`, error.message);
@@ -116,11 +127,12 @@ class ThumbStatusRepository {
      */
     async upsertSingle(path, mtime, status, redis = null) {
         try {
-            await writeThumbStatusWithRetry(dbRun, {
-                path: String(path || '').trim(),
-                mtime: Number(mtime) || Date.now(),
-                status: String(status || 'pending'),
-            }, redis);
+            // Native DB handling (busy_timeout) replaces application-layer retry
+            await dbRun('main', UPSERT_SQL, [
+                String(path || '').trim(),
+                Number(mtime) || Date.now(),
+                String(status || 'pending')
+            ]);
         } catch (error) {
             logger.warn(`[ThumbStatusRepo] upsert失败 (path=${path}):`, error.message);
             throw error;
@@ -135,7 +147,7 @@ class ThumbStatusRepository {
      */
     async updateStatus(path, status) {
         try {
-            await dbRun('main', 
+            await dbRun('main',
                 'UPDATE thumb_status SET status = ?, last_checked = strftime("%s","now")*1000 WHERE path = ?',
                 [status, path]
             );
@@ -198,8 +210,8 @@ class ThumbStatusRepository {
      */
     async deleteByDirectory(dirPath) {
         try {
-            await dbRun('main', 
-                `DELETE FROM thumb_status WHERE path LIKE ? || '/%'`, 
+            await dbRun('main',
+                `DELETE FROM thumb_status WHERE path LIKE ? || '/%'`,
                 [dirPath]
             );
             logger.debug(`[ThumbStatusRepo] 已删除目录下的thumb_status: ${dirPath}`);
@@ -262,10 +274,10 @@ class ThumbStatusRepository {
      */
     async getAll(fields = null, limit = null) {
         try {
-            const selectFields = Array.isArray(fields) && fields.length > 0 
-                ? fields.join(', ') 
+            const selectFields = Array.isArray(fields) && fields.length > 0
+                ? fields.join(', ')
                 : '*';
-            
+
             let sql = `SELECT ${selectFields} FROM thumb_status`;
             const params = [];
 

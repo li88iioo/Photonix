@@ -13,7 +13,6 @@ const { THUMBS_DIR, PHOTOS_DIR, MAX_THUMBNAIL_RETRIES, INITIAL_RETRY_DELAY, NUM_
 const workerManager = require('./worker.manager');
 const { idleThumbnailWorkers, ensureThumbnailWorkerPool, noteThumbnailUse, scaleThumbnailWorkerPool } = workerManager;
 const { getThumbMaxConcurrency } = require('./adaptive.service');
-const { writeThumbStatusWithRetry: writeThumbStatusWithRetryNew, runPreparedBatchWithRetry } = require('../db/sqlite-retry');
 const { dbRun } = require('../db/multi-db');
 const eventBus = require('./event.service');
 const { sanitizePath, isPathSafe } = require('../utils/path.utils');

@@ -162,6 +162,9 @@ exports.getSettingsUpdateStatus = async (req, res) => {
  */
 exports.updateSettingsStatus = (status, message = null, updateId = null) => {
   applyStatusUpdate(updateId, status, message);
+  if (status === 'success') {
+    settingsService.clearCache();
+  }
 };
 
 /**
