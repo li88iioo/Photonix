@@ -207,28 +207,51 @@ async function getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, 
     const whereParams = !prefix ? [] : [prefix, prefix];
     const mediaExclusionCondition = `NOT EXISTS (SELECT 1 FROM thumb_status ts WHERE ts.path = i.path AND ts.status = 'permanent_failed')`;
 
-    // 构建排序表达式
-    let orderBy = '';
+    // 构建排序表达式：目录按用户选择排序，媒体始终按时间倒序
+    let albumOrderValue = 'mtime';
+    let albumOrderDirection = 'DESC';
+    const mediaOrderValue = 'name COLLATE NOCASE';
+    const mediaOrderDirection = 'ASC';
 
     switch (sort) {
         case 'name_asc':
-            orderBy = `ORDER BY is_dir DESC, name COLLATE NOCASE ASC`;
+            albumOrderValue = 'name COLLATE NOCASE';
+            albumOrderDirection = 'ASC';
             break;
         case 'name_desc':
-            orderBy = `ORDER BY is_dir DESC, name COLLATE NOCASE DESC`;
+            albumOrderValue = 'name COLLATE NOCASE';
+            albumOrderDirection = 'DESC';
             break;
         case 'mtime_asc':
-            orderBy = `ORDER BY is_dir DESC, mtime ASC`;
+            albumOrderValue = 'mtime';
+            albumOrderDirection = 'ASC';
             break;
         case 'mtime_desc':
-            orderBy = `ORDER BY is_dir DESC, mtime DESC`;
+        case 'smart':
+        default:
+            albumOrderValue = 'mtime';
+            albumOrderDirection = 'DESC';
             break;
-        default: // smart 或其他未知值 -> 默认为 mtime_desc
-            orderBy = `ORDER BY is_dir DESC, mtime DESC`;
     }
 
+    const orderBy = `
+        ORDER BY
+            is_dir DESC,
+            CASE WHEN is_dir = 1 THEN ${albumOrderValue} END ${albumOrderDirection},
+            CASE WHEN is_dir = 0 THEN ${mediaOrderValue} END ${mediaOrderDirection},
+            name COLLATE NOCASE ASC
+    `;
+
     // albums 子查询（不跨库 JOIN）
-    const albumsSelect = `SELECT 1 AS is_dir, i.name, i.path, i.mtime, i.width, i.height, NULL AS last_viewed
+    const albumsSelect = `SELECT 1 AS is_dir, i.name, i.path,
+           COALESCE(
+               (SELECT MAX(child.mtime)
+                FROM items child
+                WHERE child.path LIKE i.path || '/%'
+                  AND child.type IN ('photo','video')),
+               i.mtime
+           ) AS mtime,
+           i.width, i.height, NULL AS last_viewed
            FROM items i
            WHERE i.type = 'album' AND (${whereClause})`;
 
