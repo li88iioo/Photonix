@@ -421,6 +421,44 @@ function handleImageError(event) {
 }
 
 /**
+ * 慢速轮询状态（用于 202 长时间未完成时）
+ * @param {HTMLImageElement} img
+ */
+function clearSlowRetrySchedule(img) {
+    if (!img) return;
+    const slowTimerId = img.dataset.slowRetryTimerId;
+    if (slowTimerId) {
+        clearTimeout(Number(slowTimerId));
+        delete img.dataset.slowRetryTimerId;
+    }
+    delete img.dataset.slowRetryAttempt;
+}
+
+function scheduleSlowProcessingRetry(img) {
+    if (!img || !img.isConnected) return;
+    const attempt = parseInt(img.dataset.slowRetryAttempt || '0', 10);
+    const MAX_SLOW_RETRIES = 30; // 最多 30 分钟轮询
+    if (attempt >= MAX_SLOW_RETRIES) {
+        lazyloadLogger.warn('缩略图长时间未就绪，转为失败', { src: img.dataset.src });
+        img.dataset.thumbStatus = 'failed';
+        clearSlowRetrySchedule(img);
+        return;
+    }
+    const delay = 60000; // 60 秒再次检查
+    img.dataset.slowRetryAttempt = String(attempt + 1);
+    const timerId = setTimeout(() => {
+        if (!img.isConnected) return;
+        lazyloadLogger.debug('慢速轮询缩略图状态', {
+            attempt: attempt + 1,
+            src: img.dataset.src
+        });
+        requestLazyImage(img);
+    }, delay);
+    img.dataset.slowRetryTimerId = String(timerId);
+    resourceCleanupManager.registerTimer(timerId);
+}
+
+/**
  * 将图片加入懒加载流程（兼容旧接口）
  * @param {HTMLImageElement} img
  */
@@ -456,6 +494,7 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
             img.dataset.thumbStatus = '';
             delete img.dataset.retryAttempt; // 重置重试计数器
             delete img.dataset.lastRetryTime; // 清除重试时间记录
+            clearSlowRetrySchedule(img);
             blobUrlManager.setBlobUrl(img, imageBlob);
             return;
         }
@@ -463,6 +502,7 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
         if (response.status === 202) {
             const imageBlob = await response.blob();
             img.dataset.thumbStatus = 'processing';
+            clearSlowRetrySchedule(img);
             blobUrlManager.setBlobUrl(img, imageBlob);
 
             // 持久化重试机制：使用指数退避，直到成功或达到最大尝试次数
@@ -502,9 +542,9 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
                     }, 30000); // 30秒间隔
                     resourceCleanupManager.registerTimer(finalRetryTimeoutId);
                 } else {
-                    img.dataset.thumbStatus = 'failed';
                     delete img.dataset.retryAttempt;
                     delete img.dataset.finalRetryAttempt;
+                    scheduleSlowProcessingRetry(img);
                 }
             }
             return;
@@ -542,6 +582,7 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
             } else {
                 lazyloadLogger.warn('缩略图未找到，已达最大重试次数', { thumbnailUrl });
                 img.dataset.thumbStatus = 'failed';
+                clearSlowRetrySchedule(img);
                 delete img.dataset.retryAttempt;
                 return;
             }
@@ -580,6 +621,7 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
             
             lazyloadLogger.error('服务器错误，已达最大重试次数', { thumbnailUrl });
             img.dataset.thumbStatus = 'failed';
+            clearSlowRetrySchedule(img);
             delete img.dataset.retryAttempt;
             return;
         }
@@ -623,6 +665,8 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
             }
             
             img.dispatchEvent(new Event('error'));
+        } else {
+            clearSlowRetrySchedule(img);
         }
     }
 }
@@ -862,4 +906,3 @@ export function reobserveImage(img) {
         globalImageObserver.observe(img);
     }
 }
-

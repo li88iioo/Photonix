@@ -20,6 +20,7 @@ import {
     clearSortCache,
     removeSortControls
 } from '../features/gallery/ui.js';
+import { scheduleThumbnailPreheat } from '../features/gallery/preheat.js';
 import { recordHierarchyView, loadRecentHistoryRecords } from '../features/history/history-service.js';
 import { AbortBus } from '../core/abort-bus.js';
 import { refreshPageEventListeners } from '../features/gallery/listeners.js';
@@ -551,6 +552,13 @@ export async function streamPath(path, signal) {
             elements.contentGrid.append(...contentElements);
         }
 
+        const viewKind = (!path || path === '') ? 'home' : (hasMediaFiles ? 'album' : 'directory');
+        scheduleThumbnailPreheat({
+            mode: hasMediaFiles ? 'media' : 'album',
+            container: elements.contentGrid,
+            reason: `${viewKind}-preheat`
+        });
+
         // 更新状态
         state.currentPhotos = newMediaUrls;
         state.currentBrowsePage++;
@@ -677,6 +685,12 @@ async function executeSearch(query, signal) {
             safeSetInnerHTML(elements.contentGrid, '');
             elements.contentGrid.append(...contentElements);
         }
+
+        scheduleThumbnailPreheat({
+            mode: 'media',
+            container: elements.contentGrid,
+            reason: 'search-preheat'
+        });
 
         // 更新状态
         state.currentPhotos = newMediaUrls;
