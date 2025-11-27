@@ -5,6 +5,7 @@
  */
 const { dbGet, dbAll, dbRun } = require('../db/multi-db');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 
 class AlbumCoversRepository {
     /**
@@ -17,7 +18,7 @@ class AlbumCoversRepository {
             const row = await dbGet('main', 'SELECT * FROM album_covers WHERE album_path = ?', [String(albumPath || '')]);
             return row || null;
         } catch (error) {
-            logger.warn(`[AlbumCoversRepo] 获取封面失败 (albumPath=${albumPath}):`, error.message);
+            logger.warn(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 获取封面失败 (albumPath=${albumPath}):`, error.message);
             return null;
         }
     }
@@ -29,13 +30,13 @@ class AlbumCoversRepository {
      */
     async getByAlbumPaths(albumPaths) {
         if (!Array.isArray(albumPaths) || albumPaths.length === 0) return [];
-        
+
         try {
             const placeholders = albumPaths.map(() => '?').join(',');
             const rows = await dbAll('main', `SELECT * FROM album_covers WHERE album_path IN (${placeholders})`, albumPaths);
             return rows || [];
         } catch (error) {
-            logger.warn(`[AlbumCoversRepo] 批量获取封面失败:`, error.message);
+            logger.warn(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 批量获取封面失败:`, error.message);
             return [];
         }
     }
@@ -51,7 +52,7 @@ class AlbumCoversRepository {
      */
     async upsert(albumPath, coverPath, width, height, mtime) {
         try {
-            await dbRun('main', 
+            await dbRun('main',
                 `INSERT INTO album_covers (album_path, cover_path, width, height, mtime)
                  VALUES (?, ?, ?, ?, ?)
                  ON CONFLICT(album_path) DO UPDATE SET
@@ -63,7 +64,7 @@ class AlbumCoversRepository {
             );
             return true;
         } catch (error) {
-            logger.warn(`[AlbumCoversRepo] upsert封面失败 (albumPath=${albumPath}):`, error.message);
+            logger.warn(`${LOG_PREFIXES.ALBUM_COVERS_REPO} upsert封面失败 (albumPath=${albumPath}):`, error.message);
             return false;
         }
     }
@@ -78,7 +79,7 @@ class AlbumCoversRepository {
             await dbRun('main', 'DELETE FROM album_covers WHERE album_path = ?', [String(albumPath || '')]);
             return true;
         } catch (error) {
-            logger.warn(`[AlbumCoversRepo] 删除封面失败 (albumPath=${albumPath}):`, error.message);
+            logger.warn(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 删除封面失败 (albumPath=${albumPath}):`, error.message);
             return false;
         }
     }
@@ -94,10 +95,10 @@ class AlbumCoversRepository {
         try {
             const placeholders = albumPaths.map(() => '?').join(',');
             await dbRun('main', `DELETE FROM album_covers WHERE album_path IN (${placeholders})`, albumPaths);
-            logger.debug(`[AlbumCoversRepo] 批量删除封面完成: ${albumPaths.length}个路径`);
+            logger.debug(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 批量删除封面完成: ${albumPaths.length}个路径`);
             return albumPaths.length;
         } catch (error) {
-            logger.error(`[AlbumCoversRepo] 批量删除封面失败:`, error.message);
+            logger.error(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 批量删除封面失败:`, error.message);
             throw error;
         }
     }
@@ -109,14 +110,14 @@ class AlbumCoversRepository {
      */
     async deleteByDirectory(dirPath) {
         try {
-            await dbRun('main', 
-                `DELETE FROM album_covers WHERE album_path = ? OR album_path LIKE ? || '/%'`, 
+            await dbRun('main',
+                `DELETE FROM album_covers WHERE album_path = ? OR album_path LIKE ? || '/%'`,
                 [dirPath, dirPath]
             );
-            logger.debug(`[AlbumCoversRepo] 已删除目录及子目录的封面: ${dirPath}`);
+            logger.debug(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 已删除目录及子目录的封面: ${dirPath}`);
             return true;
         } catch (error) {
-            logger.warn(`[AlbumCoversRepo] 删除目录封面失败 (dirPath=${dirPath}):`, error.message);
+            logger.warn(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 删除目录封面失败 (dirPath=${dirPath}):`, error.message);
             return false;
         }
     }
@@ -132,7 +133,7 @@ class AlbumCoversRepository {
         try {
             const conditions = [];
             const params = [];
-            
+
             dirPaths.forEach(dirPath => {
                 conditions.push('album_path = ?');
                 conditions.push('album_path LIKE ?');
@@ -142,11 +143,11 @@ class AlbumCoversRepository {
 
             const sql = `DELETE FROM album_covers WHERE ${conditions.join(' OR ')}`;
             await dbRun('main', sql, params);
-            
-            logger.debug(`[AlbumCoversRepo] 批量删除目录封面完成: ${dirPaths.length}个目录`);
+
+            logger.debug(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 批量删除目录封面完成: ${dirPaths.length}个目录`);
             return dirPaths.length;
         } catch (error) {
-            logger.error(`[AlbumCoversRepo] 批量删除目录封面失败:`, error.message);
+            logger.error(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 批量删除目录封面失败:`, error.message);
             throw error;
         }
     }
@@ -161,7 +162,7 @@ class AlbumCoversRepository {
             const row = await dbGet('main', 'SELECT COUNT(1) as count FROM album_covers INDEXED BY idx_album_covers_album_path');
             return row ? Number(row.count) || 0 : 0;
         } catch (error) {
-            logger.warn(`[AlbumCoversRepo] 统计album_covers失败:`, error.message);
+            logger.warn(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 统计album_covers失败:`, error.message);
             return 0;
         }
     }
@@ -173,8 +174,8 @@ class AlbumCoversRepository {
      */
     async getAll(limit = null) {
         try {
-            const sql = limit 
-                ? 'SELECT * FROM album_covers LIMIT ?' 
+            const sql = limit
+                ? 'SELECT * FROM album_covers LIMIT ?'
                 : 'SELECT * FROM album_covers';
             const params = limit ? [limit] : [];
             const rows = await dbAll('main', sql, params);

@@ -5,10 +5,12 @@
 const path = require('path');
 const { promises: fs } = require('fs');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { PHOTOS_DIR, THUMBS_DIR } = require('../config');
 const { ensureThumbnailExists, batchGenerateMissingThumbnails } = require('../services/thumbnail.service');
 const { getThumbStatusStats, getCount } = require('../repositories/stats.repo');
 const state = require('../services/state.manager');
+const { dbRun } = require('../db/multi-db');
 
 /**
  * 内存监控，仅在开发环境启用。
@@ -30,7 +32,7 @@ if (enableMemoryMonitoring) {
         );
 
         if (memUsageMB.heapUsed > 200) {
-            logger.warn(`[内存警告] 堆内存使用过高: ${memUsageMB.heapUsed}MB`);
+            logger.warn(`${LOG_PREFIXES.MEMORY_WARNING} 堆内存使用过高: ${memUsageMB.heapUsed}MB`);
         }
     }, 60000);
 }
@@ -93,10 +95,10 @@ function checkRequestRate(req = null) {
     if (recentRequests > burstThreshold && !isInBurstMode) {
         isInBurstMode = true;
         burstModeStartTime = now;
-        logger.debug(`[频率控制] 进入突发模式，最近5秒${recentRequests}请求 (阈值: ${burstThreshold})`);
+        logger.debug(`${LOG_PREFIXES.FREQUENCY_CONTROL} 进入突发模式，最近5秒${recentRequests}请求 (阈值: ${burstThreshold})`);
     } else if (isInBurstMode && (now - burstModeStartTime > NORMAL_BURST_DURATION)) {
         isInBurstMode = false;
-        logger.debug(`[频率控制] 退出突发模式`);
+        logger.debug(`${LOG_PREFIXES.FREQUENCY_CONTROL} 退出突发模式`);
     }
 
     // 限制计数器大小，防止内存泄漏
@@ -112,11 +114,11 @@ function checkRequestRate(req = null) {
         if (avgRequestsPerSecond > 30 && currentMaxRequests < BASE_REQUESTS_PER_WINDOW * 1.5) {
             currentMaxRequests = Math.min(currentMaxRequests + 10, BASE_REQUESTS_PER_WINDOW * 1.5);
             lastAdjustmentTime = now;
-            logger.debug(`[频率控制] 动态增加限制到: ${currentMaxRequests}`);
+            logger.debug(`${LOG_PREFIXES.FREQUENCY_CONTROL} 动态增加限制到: ${currentMaxRequests}`);
         } else if (avgRequestsPerSecond < 10 && currentMaxRequests > BASE_REQUESTS_PER_WINDOW * 0.8) {
             currentMaxRequests = Math.max(currentMaxRequests - 5, BASE_REQUESTS_PER_WINDOW * 0.8);
             lastAdjustmentTime = now;
-            logger.debug(`[频率控制] 动态减少限制到: ${currentMaxRequests}`);
+            logger.debug(`${LOG_PREFIXES.FREQUENCY_CONTROL} 动态减少限制到: ${currentMaxRequests}`);
         }
     }
 
@@ -138,7 +140,7 @@ function checkRequestRate(req = null) {
     if (currentRequests >= effectiveLimit) {
         const now = Date.now();
         if (now - lastRateLimitLogTime > LOG_SUPPRESSION_MS) {
-            logger.debug(`[频率控制] 请求频率较高: ${currentRequests}/${effectiveLimit} (${isInBurstMode ? '突发模式' : '正常模式'})`);
+            logger.debug(`${LOG_PREFIXES.FREQUENCY_CONTROL} 请求频率较高: ${currentRequests}/${effectiveLimit} (${isInBurstMode ? '突发模式' : '正常模式'})`);
             lastRateLimitLogTime = now;
         }
         if (isInBurstMode && currentRequests < effectiveLimit * 1.5) {
@@ -168,7 +170,7 @@ async function getThumbnail(req, res) {
         if (!checkRequestRate(req)) {
             const now = Date.now();
             if (now - lastRejectionLogTime > LOG_SUPPRESSION_MS) {
-                logger.debug('[缩略图请求] 请求频率过高，暂时拒绝');
+                logger.debug(`${LOG_PREFIXES.THUMB_REQUEST} 请求频率过高，暂时拒绝`);
                 lastRejectionLogTime = now;
             }
             const errorSvg = generateErrorSvg();
@@ -184,7 +186,7 @@ async function getThumbnail(req, res) {
 
         // 节流打印缩略图日志
         if (state.logThrottle.shouldLogThumb(5000)) {
-            logger.debug(`[缩略图请求] 收到请求: ${relativePath}`);
+            logger.debug(`${LOG_PREFIXES.THUMB_REQUEST} 收到请求: ${relativePath}`);
         }
 
         if (!relativePath) {
@@ -207,7 +209,8 @@ async function getThumbnail(req, res) {
         try {
             await fs.access(sourceAbsPath);
         } catch (error) {
-            logger.debug(`[ThumbnailController] 源文件缺失: ${sourceAbsPath} -> ${error && error.message}`);
+            logger.debug(`${LOG_PREFIXES.THUMB_REQUEST || '[缩略图请求]'} 源文件缺失: ${sourceAbsPath} -> ${error && error.message}`);
+            await purgeOrphanMedia(normalizedPath);
             return res.status(404).json({ error: '源文件不存在' });
         }
 
@@ -226,14 +229,14 @@ async function getThumbnail(req, res) {
                 await fs.access(thumbAbsPath);
             } catch (accessError) {
                 // 文件实际不存在，可能是刚生成但检查有延迟，再次检查一次
-                logger.debug(`[ThumbnailController] 缩略图文件不存在，重新验证: ${thumbAbsPath}`);
+                logger.debug(`${LOG_PREFIXES.THUMB_REQUEST || '[缩略图请求]'} 缩略图文件不存在，重新验证: ${thumbAbsPath}`);
                 // 短暂延迟后再次检查（给文件系统时间同步）
                 await new Promise(resolve => setTimeout(resolve, 100));
                 try {
                     await fs.access(thumbAbsPath);
                 } catch (secondAccessError) {
                     // 仍然不存在，返回processing状态，让前端重试
-                    logger.debug(`[ThumbnailController] 缩略图文件仍不存在，返回processing状态`);
+                    logger.debug(`${LOG_PREFIXES.THUMB_REQUEST || '[缩略图请求]'} 缩略图文件仍不存在，返回processing状态`);
                     const loadingSvg = generateLoadingSvg();
                     res.set({
                         'Content-Type': 'image/svg+xml',
@@ -305,7 +308,7 @@ async function batchGenerateThumbnails(req, res) {
 
         if (now - lastBatchTime < 30000) {
             const remaining = Math.ceil((30000 - (now - lastBatchTime)) / 1000);
-            logger.warn(`[批量补全] 频率过高，用户 ${userKey} 需等待 ${remaining} 秒`);
+            logger.warn(`${LOG_PREFIXES.BATCH_BACKFILL} 频率过高，用户 ${userKey} 需等待 ${remaining} 秒`);
             return res.status(429).json({
                 code: 'RATE_LIMIT_EXCEEDED',
                 message: `批量补全过于频繁，请等待 ${remaining} 秒后再试`,
@@ -330,10 +333,10 @@ async function batchGenerateThumbnails(req, res) {
         const processLimit = Math.min(Math.max(1, parseInt(limit) || 1000), 5000);
 
         // 日志调试信息
-        logger.debug(`[批量补全] 收到请求参数: limit=${limit}, loop=${req.body?.loop}, mode=${req.body?.mode}`);
-        logger.debug(`[批量补全] 请求体: ${JSON.stringify(req.body)}`);
-        logger.debug(`[批量补全] 请求体类型: ${typeof req.body}, 键: ${Object.keys(req.body || {})}`);
-        logger.debug(`[批量补全] req.body.loop 类型: ${typeof req.body?.loop}, 值: ${req.body?.loop}`);
+        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 收到请求参数: limit=${limit}, loop=${req.body?.loop}, mode=${req.body?.mode}`);
+        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 请求体: ${JSON.stringify(req.body)}`);
+        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 请求体类型: ${typeof req.body}, 键: ${Object.keys(req.body || {})}`);
+        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} req.body.loop 类型: ${typeof req.body?.loop}, 值: ${req.body?.loop}`);
 
         /**
          * 检查是否需要循环补全
@@ -345,10 +348,10 @@ async function batchGenerateThumbnails(req, res) {
             String(req.body?.mode ?? '').toLowerCase() === 'loop'
         );
 
-        logger.debug(`[批量补全] 循环标志判断结果: loopFlag=${loopFlag}`);
+        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 循环标志判断结果: loopFlag=${loopFlag}`);
 
         if (loopFlag) {
-            logger.debug(`[批量补全] 自动循环模式启动：单批限制 ${processLimit}`);
+            logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 自动循环模式启动：单批限制 ${processLimit}`);
             // 启动循环标记，防止任务池提前销毁
             state.thumbnail.setBatchLoopActive(true);
             setImmediate(async () => {
@@ -356,23 +359,23 @@ async function batchGenerateThumbnails(req, res) {
                     let rounds = 0;
                     let totalProcessed = 0, totalQueued = 0, totalSkipped = 0;
                     while (true) {
-                        logger.debug(`[批量补全] 开始第${rounds + 1}轮处理`);
+                        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 开始第${rounds + 1}轮处理`);
                         const r = await batchGenerateMissingThumbnails(processLimit);
                         rounds++;
                         totalProcessed += r?.processed || 0;
                         totalQueued += r?.queued || 0;
                         totalSkipped += r?.skipped || 0;
-                        logger.debug(`[批量补全] 第${rounds}轮完成: processed=${r?.processed || 0}, queued=${r?.queued || 0}, skipped=${r?.skipped || 0}, foundMissing=${r?.foundMissing || 0}`);
-                        logger.debug(`[批量补全] 累计统计: totalProcessed=${totalProcessed}, totalQueued=${totalQueued}, totalSkipped=${totalSkipped}`);
+                        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 第${rounds}轮完成: processed=${r?.processed || 0}, queued=${r?.queued || 0}, skipped=${r?.skipped || 0}, foundMissing=${r?.foundMissing || 0}`);
+                        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 累计统计: totalProcessed=${totalProcessed}, totalQueued=${totalQueued}, totalSkipped=${totalSkipped}`);
                         if (!r || (r.foundMissing || 0) === 0) {
-                            logger.debug(`[批量补全] 检测到无更多缺失任务，第${rounds}轮后退出循环`);
-                            logger.debug(`[批量补全] 退出时状态: r=${!!r}, foundMissing=${r?.foundMissing || 0}, queued=${r?.queued || 0}`);
+                            logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 检测到无更多缺失任务，第${rounds}轮后退出循环`);
+                            logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 退出时状态: r=${!!r}, foundMissing=${r?.foundMissing || 0}, queued=${r?.queued || 0}`);
                             break;
                         }
-                        logger.debug(`[批量补全] 第${rounds}轮后继续下一轮处理，等待2秒...`);
+                        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 第${rounds}轮后继续下一轮处理，等待2秒...`);
                         await new Promise(resolve => setTimeout(resolve, 2000));
                     }
-                    logger.info(`[批量补全] 自动循环完成：轮次=${rounds} processed=${totalProcessed} queued=${totalQueued} skipped=${totalSkipped}`);
+                    logger.info(`${LOG_PREFIXES.BATCH_BACKFILL} 自动循环完成：轮次=${rounds} processed=${totalProcessed} queued=${totalQueued} skipped=${totalSkipped}`);
                 } catch (e) {
                     logger.error('自动循环批量补全失败:', e);
                 } finally {
@@ -386,7 +389,7 @@ async function batchGenerateThumbnails(req, res) {
             });
         }
 
-        logger.debug(`[批量补全] 开始批量生成缩略图，限制: ${processLimit}`);
+        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 开始批量生成缩略图，限制: ${processLimit}`);
 
         const result = await batchGenerateMissingThumbnails(processLimit);
 
@@ -517,3 +520,17 @@ module.exports = {
     batchGenerateThumbnails,
     getThumbnailStats
 };
+async function purgeOrphanMedia(pathValue) {
+    const cleanPath = typeof pathValue === 'string' ? pathValue.trim() : '';
+    if (!cleanPath) return;
+    try {
+        const deleteItems = await dbRun('main', 'DELETE FROM items WHERE path = ?', [cleanPath]);
+        const deleteThumb = await dbRun('main', 'DELETE FROM thumb_status WHERE path = ?', [cleanPath]);
+        const removed = (deleteItems?.changes || 0) + (deleteThumb?.changes || 0);
+        if (removed > 0) {
+            logger.info(`${LOG_PREFIXES.THUMB_REQUEST || '[缩略图请求]'} 检测到孤立缩略图记录，已自动清理: ${cleanPath}`);
+        }
+    } catch (purgeError) {
+        logger.debug(`${LOG_PREFIXES.THUMB_REQUEST || '[缩略图请求]'} 自动清理孤立缩略图记录失败 (path=${cleanPath}): ${purgeError && purgeError.message}`);
+    }
+}

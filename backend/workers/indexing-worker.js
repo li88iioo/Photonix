@@ -17,7 +17,7 @@ try {
 } catch (sharpConfigError) {
     baseLogger.debug('[索引线程] 初始化 Sharp 配置失败，已使用默认设置', sharpConfigError && sharpConfigError.message ? { error: sharpConfigError.message } : sharpConfigError);
 }
-const { initializeConnections, getDB, dbRun, dbGet, runPreparedBatch, adaptDbTimeouts } = require('../db/multi-db');
+const { initializeConnections, getDB, dbRun, dbGet, runPreparedBatch } = require('../db/multi-db');
 const { tempFileManager } = require('../utils/tempFileManager');
 const { redis, getAvailability } = require('../config/redis');
 const { safeRedisGet, safeRedisSet, safeRedisDel } = require('../utils/helpers');
@@ -55,56 +55,23 @@ class DbTimeoutManager {
      * 提升数据库超时（用于高负载操作）
      */
     boostTimeouts() {
-        try {
-            const result = adaptDbTimeouts({
-                busyTimeoutDeltaMs: 20000,
-                queryTimeoutDeltaMs: 15000
-            });
-            this.logger.debug(`提升超时: busy=${result.busyTimeoutMs}ms, query=${result.queryTimeoutMs}ms`);
-            return result;
-        } catch (error) {
-            this.logger.debug(`提升超时失败: ${error.message}`);
-            return null;
-        }
+        // 简化版：不再动态调整超时，使用默认配置
+        return null;
     }
 
     /**
      * 恢复数据库超时到默认值
      */
     restoreTimeouts() {
-        try {
-            const result = adaptDbTimeouts({
-                busyTimeoutDeltaMs: -20000,
-                queryTimeoutDeltaMs: -15000
-            });
-            this.logger.debug(`恢复超时: busy=${result.busyTimeoutMs}ms, query=${result.queryTimeoutMs}ms`);
-            return result;
-        } catch (error) {
-            this.logger.debug(`恢复超时失败: ${error.message}`);
-            return null;
-        }
+        // 简化版：不再动态调整超时
+        return null;
     }
 
     /**
      * 在操作前自动提升超时，结束后自动恢复
      */
     async withBoostedTimeouts(operation) {
-        let originalTimeouts = null;
-
-        try {
-            // 提升超时
-            originalTimeouts = this.boostTimeouts();
-
-            // 执行操作
-            const result = await operation();
-
-            return result;
-        } finally {
-            // 恢复超时
-            if (originalTimeouts) {
-                this.restoreTimeouts();
-            }
-        }
+        return operation();
     }
 }
 
@@ -214,7 +181,7 @@ const dbTimeoutManager = new DbTimeoutManager();
                     await this.readyPromise;
                 }
             } catch (redisAvailabilityError) {
-                logger.debug(`[索引线程] Redis 可用性检测失败（忽略）: ${redisAvailabilityError && redisAvailabilityError.message}`);
+                logger.debug(`${LOG_PREFIXES.INDEXING_WORKER} Redis 可用性检测失败（忽略）: ${redisAvailabilityError && redisAvailabilityError.message}`);
             }
 
             return this.redis && !this.redis.isNoRedis;

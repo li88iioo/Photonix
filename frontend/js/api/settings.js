@@ -197,6 +197,28 @@ export async function verifyAdminSecret(adminSecret) {
 }
 
 /**
+ * 使用管理员密钥重置访问密码
+ * @param {string} adminSecret 管理员密钥
+ * @param {string} newPassword 新的访问密码
+ * @returns {Promise<object>} 重置结果
+ */
+export async function resetPasswordViaAdminSecret(adminSecret, newPassword) {
+    const response = await fetch('/api/settings/reset-password', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ adminSecret, newPassword })
+    });
+
+    if (!response.ok) {
+        const message = await buildErrorMessage(response, '重置访问密码失败');
+        throw new Error(message);
+    }
+    return await response.json().catch(() => ({}));
+}
+
+/**
  * 切换相册删除功能
  * @param {boolean} enabled 是否启用删除功能
  * @param {string} adminSecret 管理员密钥

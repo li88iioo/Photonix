@@ -109,39 +109,39 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
             // 限流：只每分钟记录一次内存压力警告
             const now = Date.now();
             if (now - lastMemoryWarningTime > 60000) {
-                logger.warn(`[VIDEO-PROCESSOR] 检测到内存压力 - 堆使用: ${heapUsedMB}/${heapTotalMB}MB, RSS: ${rssMB}MB`);
+                logger.warn(`${LOG_PREFIXES.VIDEO_PROCESSOR} 检测到内存压力 - 堆使用: ${heapUsedMB}/${heapTotalMB}MB, RSS: ${rssMB}MB`);
                 lastMemoryWarningTime = now;
             }
 
             // 尝试垃圾回收（如果可用）
             if (global.gc) {
                 global.gc();
-                logger.debug('[VIDEO-PROCESSOR] 已触发垃圾回收');
+                logger.debug(`${LOG_PREFIXES.VIDEO_PROCESSOR} 已触发垃圾回收`);
             }
 
             // 如果队列严重积压，暂停队列处理
             if (severeBacklog) {
-                logger.warn(`[VIDEO-PROCESSOR] 内存压力+队列积压，暂停队列处理: ${queueSize} 个任务`);
+                logger.warn(`${LOG_PREFIXES.VIDEO_PROCESSOR} 内存压力+队列积压，暂停队列处理: ${queueSize} 个任务`);
                 return; // 跳过本次队列处理
             }
         }
 
         // 队列状态处理
         if (isStuck) {
-            logger.warn(`[VIDEO-PROCESSOR] 检测到队列可能卡住，当前队列长度: ${queueSize}，重新调度处理`);
+            logger.warn(`${LOG_PREFIXES.VIDEO_PROCESSOR} 检测到队列可能卡住，当前队列长度: ${queueSize}，重新调度处理`);
             isProcessingQueue = false;
             setImmediate(() => processTaskQueue());
         }
 
         if (severeBacklog) {
-            logger.error(`[VIDEO-PROCESSOR] 任务队列严重积压: ${queueSize} 个任务 - 可能需要重启服务`);
+            logger.error(`${LOG_PREFIXES.VIDEO_PROCESSOR} 任务队列严重积压: ${queueSize} 个任务 - 可能需要重启服务`);
         } else if (moderateBacklog) {
-            logger.warn(`[VIDEO-PROCESSOR] 任务队列积压: ${queueSize} 个任务`);
+            logger.warn(`${LOG_PREFIXES.VIDEO_PROCESSOR} 任务队列积压: ${queueSize} 个任务`);
         }
 
         // 定期内存报告
         if (heapUsedMB > 100) { // 只有在堆使用超过100MB时才报告
-            logger.debug(`[VIDEO-PROCESSOR] 内存状态 - 堆使用: ${heapUsedMB}/${heapTotalMB}MB, RSS: ${rssMB}MB, 队列: ${queueSize}, 活跃: ${activeTaskCount}`);
+            logger.debug(`${LOG_PREFIXES.VIDEO_PROCESSOR} 内存状态 - 堆使用: ${heapUsedMB}/${heapTotalMB}MB, RSS: ${rssMB}MB, 队列: ${queueSize}, 活跃: ${activeTaskCount}`);
         }
     }
 
@@ -149,7 +149,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
     function updateActivity() {
         if (!isShuttingDown) {
             lastActivityTime = Date.now();
-            logger.debug('[VIDEO-PROCESSOR] 活动时间已更新');
+            logger.debug(`${LOG_PREFIXES.VIDEO_PROCESSOR} 活动时间已更新`);
             idleNotified = false;
         }
     }
@@ -164,7 +164,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
         if (!hasActiveTasks && idleTime > IDLE_TIMEOUT_MS) {
             if (!idleNotified) {
                 idleNotified = true;
-                logger.info(`[VIDEO-PROCESSOR] 空闲超时 (${Math.round(idleTime / 1000)}秒)，通知主进程可释放线程`);
+                logger.info(`${LOG_PREFIXES.VIDEO_PROCESSOR} 空闲超时 (${Math.round(idleTime / 1000)}秒)，通知主进程可释放线程`);
                 parentPort.postMessage(createWorkerResult({
                     type: 'WORKER_IDLE',
                     idleForMs: idleTime,
@@ -181,7 +181,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
         if (isShuttingDown) return;
 
         isShuttingDown = true;
-        logger.info(`[VIDEO-PROCESSOR] 开始优雅关闭 (原因: ${reason})`);
+        logger.info(`${LOG_PREFIXES.VIDEO_PROCESSOR} 开始优雅关闭 (原因: ${reason})`);
 
         // 清理定时器
         if (healthCheckTimer) {
@@ -210,14 +210,14 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
 
         // 等待当前任务完成（最多30秒）
         const shutdownTimeout = setTimeout(() => {
-            logger.warn('[VIDEO-PROCESSOR] 关闭超时，强制退出');
+            logger.warn(`${LOG_PREFIXES.VIDEO_PROCESSOR} 关闭超时，强制退出`);
             process.exit(0);
         }, 30000);
 
         // 如果队列为空且没有处理中的任务，立即退出
         if (taskQueue.length === 0 && activeTaskCount === 0) {
             clearTimeout(shutdownTimeout);
-            logger.info('[VIDEO-PROCESSOR] 队列为空，立即退出');
+            logger.info(`${LOG_PREFIXES.VIDEO_PROCESSOR} 队列为空，立即退出`);
             process.exit(0);
         }
 
@@ -225,7 +225,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
         const checkShutdown = () => {
             if (taskQueue.length === 0 && activeTaskCount === 0) {
                 clearTimeout(shutdownTimeout);
-                logger.info('[VIDEO-PROCESSOR] 所有任务完成，退出');
+                logger.info(`${LOG_PREFIXES.VIDEO_PROCESSOR} 所有任务完成，退出`);
                 process.exit(0);
             }
         };
@@ -285,7 +285,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
 
         isProcessingQueue = true;
         logger.info(
-            `[VIDEO-PROCESSOR] 调度任务 (active:${activeTaskCount}, queued:${taskQueue.length}, max:${MAX_CONCURRENT_TASKS}${memoryPressure ? ', 内存压力' : ''}${highLoad ? ', 高负载' : ''})`
+            `${LOG_PREFIXES.VIDEO_PROCESSOR} 调度任务 (active:${activeTaskCount}, queued:${taskQueue.length}, max:${MAX_CONCURRENT_TASKS}${memoryPressure ? ', 内存压力' : ''}${highLoad ? ', 高负载' : ''})`
         );
 
         const launchCount = Math.min(availableSlots, taskQueue.length);
@@ -333,7 +333,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
 
         executeTaskWithTimeout(task)
             .catch((error) => {
-                logger.error(`[VIDEO-PROCESSOR] 队列任务处理失败:`, error);
+                logger.error(`${LOG_PREFIXES.VIDEO_PROCESSOR} 队列任务处理失败:`, error);
             })
             .finally(async () => {
                 try {
@@ -342,14 +342,14 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
                         await new Promise((resolve) => setTimeout(resolve, delayMs));
                     }
                 } catch (delayError) {
-                    logger.debug('[VIDEO-PROCESSOR] 延迟执行失败（忽略）:', delayError && delayError.message);
+                    logger.debug(`${LOG_PREFIXES.VIDEO_PROCESSOR} 延迟执行失败（忽略）:`, delayError && delayError.message);
                 } finally {
                     activeTaskCount = Math.max(0, activeTaskCount - 1);
                     isProcessingQueue = activeTaskCount > 0;
                     if (taskQueue.length > 0) {
                         setImmediate(processTaskQueue);
                     } else if (!isProcessingQueue) {
-                        logger.debug('[VIDEO-PROCESSOR] 任务队列处理完成');
+                        logger.debug(`${LOG_PREFIXES.VIDEO_PROCESSOR} 任务队列处理完成`);
                     }
                 }
             });
@@ -406,7 +406,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
             let norm = ((Math.round(angle) % 360) + 360) % 360;
             return norm; // 0/90/180/270
         } catch (rotationErr) {
-            logger.debug('[VIDEO-PROCESSOR] 读取视频旋转信息失败，使用默认角度0:', rotationErr && rotationErr.message);
+            logger.debug(`${LOG_PREFIXES.VIDEO_PROCESSOR} 读取视频旋转信息失败，使用默认角度0:`, rotationErr && rotationErr.message);
             return 0;
         }
     }
@@ -422,7 +422,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
             const presetFinal = (preset || process.env.FFMPEG_PRESET || 'veryfast');
             return { threads, preset: presetFinal };
         } catch (ffmpegCfgErr) {
-            logger.debug('[VIDEO-PROCESSOR] 获取 FFmpeg 自适应配置失败，使用默认值:', ffmpegCfgErr && ffmpegCfgErr.message);
+            logger.debug(`${LOG_PREFIXES.VIDEO_PROCESSOR} 获取 FFmpeg 自适应配置失败，使用默认值:`, ffmpegCfgErr && ffmpegCfgErr.message);
             const cpus = Math.max(1, Number(process.env.DETECTED_CPU_COUNT) || ((os.cpus && os.cpus().length) || 1));
             const defaultThreads = Math.max(1, Math.floor(cpus / 2));
             const finalThreads = Math.max(1, parseInt(process.env.FFMPEG_THREADS || String(defaultThreads), 10));
@@ -683,7 +683,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
                 }));
             }
         } catch (e) {
-            logger.error(`[VIDEO-PROCESSOR] 处理任务时发生致命错误 ${filePath}:`, e);
+            logger.error(`${LOG_PREFIXES.VIDEO_PROCESSOR} 处理任务时发生致命错误 ${filePath}:`, e);
             parentPort.postMessage(createWorkerError({
                 type: 'video_task_failed',
                 path: filePath,
@@ -696,7 +696,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
     // 全局临时文件清理函数 - 清理残留的孤立临时文件
     async function cleanupOrphanedTempFiles() {
         try {
-            logger.info('[VIDEO-PROCESSOR] 开始清理残留的临时文件...');
+            logger.info(`${LOG_PREFIXES.VIDEO_PROCESSOR} 开始清理残留的临时文件...`);
             let cleanedCount = 0;
 
             // 递归查找并清理 .tmp 目录
@@ -735,15 +735,15 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
                         }
                     }
                 } catch (e) {
-                    logger.debug(`[VIDEO-PROCESSOR] 临时目录扫描失败（忽略）: ${dirPath} -> ${e && e.message}`);
+                    logger.debug(`${LOG_PREFIXES.VIDEO_PROCESSOR} 临时目录扫描失败（忽略）: ${dirPath} -> ${e && e.message}`);
                 }
             }
 
             await cleanupDir(PHOTOS_DIR);
-            logger.info(`[VIDEO-PROCESSOR] 临时文件清理完成，共清理 ${cleanedCount} 个目录`);
+            logger.info(`${LOG_PREFIXES.VIDEO_PROCESSOR} 临时文件清理完成，共清理 ${cleanedCount} 个目录`);
 
         } catch (error) {
-            logger.error('[VIDEO-PROCESSOR] 清理临时文件时出错:', error);
+            logger.error(`${LOG_PREFIXES.VIDEO_PROCESSOR} 清理临时文件时出错:`, error);
         }
     }
 
@@ -767,7 +767,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
             updateActivity();
 
             if (task.type === 'backfill') {
-                logger.info('[VIDEO-PROCESSOR] 收到 HLS 回填任务，开始扫描数据库...');
+                logger.info(`${LOG_PREFIXES.VIDEO_PROCESSOR} 收到 HLS 回填任务，开始扫描数据库...`);
                 try {
                     // 先清理残留的临时文件
                     await cleanupOrphanedTempFiles();
@@ -777,11 +777,11 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
                     try {
                         const disableBackfill = await safeRedisGet(redis, 'adaptive:disable_hls_backfill', '禁用HLS回填标记');
                         if (disableBackfill === '1') {
-                            logger.warn('[VIDEO-PROCESSOR] 自适应模式：已禁用 HLS 回填。本轮跳过。');
+                            logger.warn(`${LOG_PREFIXES.VIDEO_PROCESSOR} 自适应模式：已禁用 HLS 回填。本轮跳过。`);
                             return;
                         }
                     } catch (disableCheckErr) {
-                        logger.debug('[VIDEO-PROCESSOR] 检查 HLS 回填禁用标记失败（忽略）:', disableCheckErr && disableCheckErr.message);
+                        logger.debug(`${LOG_PREFIXES.VIDEO_PROCESSOR} 检查 HLS 回填禁用标记失败（忽略）:`, disableCheckErr && disableCheckErr.message);
                     }
                     logger.info(`发现 ${videos.length} 个视频需要检查 HLS 状态`);
                     for (const video of videos) {
@@ -792,11 +792,11 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
                         try {
                             const stopNow = await safeRedisGet(redis, 'adaptive:disable_hls_backfill', '检查HLS回填停止');
                             if (stopNow === '1') {
-                                logger.warn('[VIDEO-PROCESSOR] 自适应模式切换为低负载，已中断剩余回填任务。');
+                                logger.warn(`${LOG_PREFIXES.VIDEO_PROCESSOR} 自适应模式切换为低负载，已中断剩余回填任务。`);
                                 break;
                             }
                         } catch (stopCheckErr) {
-                            logger.debug('[VIDEO-PROCESSOR] 检查中止标记失败（忽略）:', stopCheckErr && stopCheckErr.message);
+                            logger.debug(`${LOG_PREFIXES.VIDEO_PROCESSOR} 检查中止标记失败（忽略）:`, stopCheckErr && stopCheckErr.message);
                         }
                         // 依次处理，避免并发过高，增加处理间隔
                         await handleTask({
@@ -812,9 +812,9 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
                         const delayMs = highLoad ? Math.max(VIDEO_TASK_DELAY_MS, 2000) : VIDEO_TASK_DELAY_MS;
                         await new Promise(resolve => setTimeout(resolve, delayMs));
                     }
-                    logger.info('[VIDEO-PROCESSOR] HLS 回填任务检查完成。');
+                    logger.info(`${LOG_PREFIXES.VIDEO_PROCESSOR} HLS 回填任务检查完成。`);
                 } catch (e) {
-                    logger.error('[VIDEO-PROCESSOR] HLS 回填任务失败:', e);
+                    logger.error(`${LOG_PREFIXES.VIDEO_PROCESSOR} HLS 回填任务失败:`, e);
                 }
             } else if (task.type === 'cleanup') {
                 // 手动触发清理任务
@@ -827,7 +827,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
             } else {
                 // 将任务添加到队列而不是直接处理
                 taskQueue.push(task);
-                logger.debug(`[VIDEO-PROCESSOR] 任务已添加到队列，当前队列长度: ${taskQueue.length}`);
+                logger.debug(`${LOG_PREFIXES.VIDEO_PROCESSOR} 任务已添加到队列，当前队列长度: ${taskQueue.length}`);
                 // 异步启动队列处理
                 setImmediate(() => processTaskQueue());
             }
@@ -852,28 +852,28 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
         if (schedulerBackoffTimer) {
             clearTimeout(schedulerBackoffTimer);
         }
-        logger.debug('[VIDEO-PROCESSOR] 工作进程退出，清理完成');
+        logger.debug(`${LOG_PREFIXES.VIDEO_PROCESSOR} 工作进程退出，清理完成`);
     });
 
     // 处理未捕获的异常
     process.on('uncaughtException', (error) => {
-        logger.error('[VIDEO-PROCESSOR] 未捕获的异常:', error);
+        logger.error(`${LOG_PREFIXES.VIDEO_PROCESSOR} 未捕获的异常:`, error);
         gracefulShutdown('uncaught_exception');
     });
 
     process.on('unhandledRejection', (reason, promise) => {
-        logger.error('[VIDEO-PROCESSOR] 未处理的Promise拒绝:', reason);
+        logger.error(`${LOG_PREFIXES.VIDEO_PROCESSOR} 未处理的Promise拒绝:`, reason);
         gracefulShutdown('unhandled_rejection');
     });
 
     // 处理系统信号
     process.on('SIGTERM', () => {
-        logger.info('[VIDEO-PROCESSOR] 收到SIGTERM信号，开始优雅关闭');
+        logger.info(`${LOG_PREFIXES.VIDEO_PROCESSOR} 收到SIGTERM信号，开始优雅关闭`);
         gracefulShutdown('sigterm');
     });
 
     process.on('SIGINT', () => {
-        logger.info('[VIDEO-PROCESSOR] 收到SIGINT信号，开始优雅关闭');
+        logger.info(`${LOG_PREFIXES.VIDEO_PROCESSOR} 收到SIGINT信号，开始优雅关闭`);
         gracefulShutdown('sigint');
     });
 })();

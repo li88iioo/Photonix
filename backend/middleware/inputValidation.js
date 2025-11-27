@@ -5,6 +5,7 @@
  */
 
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 
 /**
  * @const {RegExp[]} DANGEROUS_PATTERNS
@@ -193,7 +194,7 @@ function validateFilePath(filePath) {
     };
     const isDebugMode = process.env.NODE_ENV === 'development' || process.env.DEBUG_VALIDATION === 'true';
     if (isDebugMode) {
-        logger.debug(`[路径验证] 开始验证路径: "${filePath}"`);
+        logger.debug(`${LOG_PREFIXES.PATH_VALIDATION} 开始验证路径: "${filePath}"`);
     }
 
     if (!isSafeFilePath(filePath)) {
@@ -202,7 +203,7 @@ function validateFilePath(filePath) {
         if (isDebugMode) {
             for (const pattern of DANGEROUS_PATTERNS) {
                 if (pattern.test(filePath)) {
-                    logger.debug(`[路径验证] 危险模式匹配: ${pattern} 在路径 "${filePath}"`);
+                    logger.debug(`${LOG_PREFIXES.PATH_VALIDATION} 危险模式匹配: ${pattern} 在路径 "${filePath}"`);
                 }
             }
         }
@@ -224,7 +225,7 @@ function validateFilePath(filePath) {
     result.sanitized = sanitized;
 
     if (isDebugMode) {
-        logger.debug(`[路径验证] 路径验证通过: "${filePath}" -> "${sanitized}"`);
+        logger.debug(`${LOG_PREFIXES.PATH_VALIDATION} 路径验证通过: "${filePath}" -> "${sanitized}"`);
     }
 
     return result;
@@ -240,7 +241,7 @@ function validateInput(validationRules) {
         try {
             const errors = [];
             const sanitized = {};
-            
+
             // 查询参数校验
             if (validationRules.query) {
                 const queryValidation = validateSearchQuery(req.query);
@@ -324,9 +325,9 @@ const VALIDATION_RULES = {
     filePath: { params: { filePath: true } },
     settingsUpdate: {
         body: {
-            PASSWORD_ENABLED:    { required: false, maxLength: 10 },
+            PASSWORD_ENABLED: { required: false, maxLength: 10 },
             ALLOW_PUBLIC_ACCESS: { required: false, maxLength: 10 },
-            THUMBNAIL_QUALITY:   { required: false, allowedChars: '0-9', maxLength: 3 }
+            THUMBNAIL_QUALITY: { required: false, allowedChars: '0-9', maxLength: 3 }
         }
     }
 };

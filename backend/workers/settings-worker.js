@@ -1,5 +1,4 @@
 const { parentPort } = require('worker_threads');
-/* BullMQ 已移除 */
 const winston = require('winston');
 const { TraceManager } = require('../utils/trace');
 const { initializeConnections, getDB, runPreparedBatch } = require('../db/multi-db');
@@ -12,7 +11,8 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
 (async () => {
     await initializeConnections();
     // --- 日志配置 ---
-    const { formatLog, LOG_PREFIXES, normalizeMessagePrefix } = require('../config/logger');
+    const loggerModule = require('../config/logger');
+    const { formatLog, LOG_PREFIXES, normalizeMessagePrefix } = loggerModule;
     const logger = winston.createLogger({
         level: process.env.LOG_LEVEL || 'info',
         format: winston.format.combine(
@@ -49,7 +49,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
             try {
                 if (updateId) await safeRedisSet(redis, `settings_update_status:${updateId}`, JSON.stringify({ status: 'processing', updatedKeys: Object.keys(settingsToUpdate || {}), ts: Date.now() }), 'EX', 60, '设置更新状态-处理中');
             } catch (err) {
-                logger.debug(`[SettingsWorker] 设置Redis处理中状态失败: ${err.message}`);
+                logger.debug(`${LOG_PREFIXES.SETTINGS_WORKER} 设置Redis处理中状态失败: ${err.message}`);
             }
 
             try {
@@ -80,7 +80,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
                 try {
                     if (updateId) await safeRedisSet(redis, `settings_update_status:${updateId}`, JSON.stringify({ status: 'success', updatedKeys: Object.keys(settingsToUpdate || {}), ts: Date.now() }), 'EX', 300, '设置更新状态-成功');
                 } catch (err) {
-                    logger.debug(`[SettingsWorker] 设置Redis成功状态失败: ${err.message}`);
+                    logger.debug(`${LOG_PREFIXES.SETTINGS_WORKER} 设置Redis成功状态失败: ${err.message}`);
                 }
 
             } catch (error) {
@@ -94,7 +94,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
                 try {
                     if (updateId) await safeRedisSet(redis, `settings_update_status:${updateId}`, JSON.stringify({ status: 'failed', message: error.message, updatedKeys: Object.keys(settingsToUpdate || {}), ts: Date.now() }), 'EX', 300, '设置更新状态-失败');
                 } catch (err) {
-                    logger.debug(`[SettingsWorker] 设置Redis失败状态失败: ${err.message}`);
+                    logger.debug(`${LOG_PREFIXES.SETTINGS_WORKER} 设置Redis失败状态失败: ${err.message}`);
                 }
             }
         }

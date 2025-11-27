@@ -50,8 +50,14 @@ const verifySecretSchema = Joi.object({
   adminSecret: Joi.string().min(4).max(256).required()
 }).unknown(false);
 
+const resetPasswordSchema = Joi.object({
+  adminSecret: Joi.string().min(4).max(256).required(),
+  newPassword: Joi.string().min(4).max(256).required()
+}).unknown(false);
+
 router.post('/', validate(updateSettingsSchema), asyncHandler(settingsController.updateSettings));          // 更新系统设置
 router.get('/status', asyncHandler(settingsController.getSettingsUpdateStatus)); // 获取设置更新状态
+router.post('/reset-password', validate(resetPasswordSchema), asyncHandler(settingsController.resetPasswordViaAdminSecret));
 
 // 状态表相关接口
 router.get('/status-tables', asyncHandler(settingsController.getStatusTables));          // 获取状态表信息

@@ -12,10 +12,32 @@
 
 const bcrypt = require('bcryptjs');
 const logger = require('../../config/logger');
+const { LOG_PREFIXES } = logger;
 const { TraceManager } = require('../../utils/trace');
 const settingsService = require('../settings.service');
-const { settingsWorker } = require('../worker.manager');
+const { getSettingsWorker } = require('../worker.manager');
 const { redis } = require('../../config/redis');
+const { applyStatusUpdate } = require('./status.service');
+
+const SETTINGS_ASYNC_MODE = (process.env.SETTINGS_ASYNC_MODE || 'auto').toLowerCase();
+const SETTINGS_AUTH_ASYNC = (process.env.SETTINGS_AUTH_ASYNC || 'auto').toLowerCase();
+
+function shouldPreferSync(hasAuthChanges) {
+  const redisUnavailable = !redis || redis.isNoRedis === true;
+  if (SETTINGS_ASYNC_MODE === 'sync') {
+    return true;
+  }
+  if (SETTINGS_ASYNC_MODE === 'async') {
+    return false;
+  }
+  if (redisUnavailable) {
+    return true;
+  }
+  if (hasAuthChanges && SETTINGS_AUTH_ASYNC !== 'async' && SETTINGS_AUTH_ASYNC !== 'true') {
+    return true;
+  }
+  return false;
+}
 
 /**
  * 创建认证错误对象
@@ -110,7 +132,7 @@ async function handlePasswordOperations(settingsToUpdate, newPassword, allSettin
     passwordIsCurrentlySet,
     isTryingToSetOrChangePassword,
     isTryingToDisablePassword,
-    isSensitiveOperation: (isTryingToSetOrChangePassword || isTryingToDisablePassword) && passwordIsCurrentlySet
+    isSensitiveOperation: (isTryingToSetOrChangePassword || isTryingToDisablePassword)
   };
 }
 
@@ -219,34 +241,39 @@ async function verifySensitiveOperations(isSensitiveOperation, adminSecret, audi
  * @returns {Object} 分发结果
  */
 async function dispatchUpdateTask(settingsToUpdate, updateId, hasAuthChanges, buildAuditContext) {
-  try {
-    // 判断是否使用同步路径（无Redis或Redis不可用）
-    const useSyncPath = (redis && redis.isNoRedis === true);
-
-    // 如果有认证更改且使用同步路径，直接同步更新
-    if (hasAuthChanges && useSyncPath) {
-      await settingsService.updateSettings(settingsToUpdate);
-      return { type: 'sync_success', updateId };
+  const runSyncUpdate = async (reason = 'auto') => {
+    logger.info(`${LOG_PREFIXES.SETTINGS_UPDATE} 使用同步路径 (${reason})`);
+    await settingsService.updateSettings(settingsToUpdate);
+    try {
+      applyStatusUpdate(updateId, 'success', '配置已同步更新');
+    } catch (statusError) {
+      logger.debug('同步状态写入失败（忽略）:', statusError && statusError.message);
     }
-  } catch (e) {
-    logger.debug('同步更新失败，继续异步处理:', e && e.message);
+    return { type: 'sync_success', updateId };
+  };
+
+  if (shouldPreferSync(hasAuthChanges)) {
+    return runSyncUpdate(redis && redis.isNoRedis ? 'redis_unavailable' : 'pref_sync');
   }
 
   try {
-    // 直接使用工作线程处理
-    try {
-      const message = TraceManager.injectToWorkerMessage({ type: 'update_settings', payload: { settingsToUpdate, updateId } });
-      settingsWorker.postMessage(message);
-      logger.info('设置更新任务已发送至工作线程');
-    } catch (e) {
-      logger.error('线程消息发送失败:', e && e.message);
-      throw e; // 重新抛出以便上层处理
+    const worker = getSettingsWorker();
+    if (!worker) {
+      logger.warn('设置 worker 不可用，回退同步执行');
+      return runSyncUpdate('worker_missing');
     }
-
+    const message = TraceManager.injectToWorkerMessage({ type: 'update_settings', payload: { settingsToUpdate, updateId } });
+    worker.postMessage(message);
+    try {
+      applyStatusUpdate(updateId, 'processing', '任务已提交至后台');
+    } catch (statusErr) {
+      logger.debug('标记后台处理状态失败（忽略）:', statusErr && statusErr.message);
+    }
+    logger.info('设置更新任务已发送至工作线程');
     return { type: 'async_success', updateId };
-  } catch (e) {
-    logger.error('分发设置更新任务失败:', e && e.message);
-    throw e;
+  } catch (workerError) {
+    logger.error('分发设置更新任务失败，回退到同步路径:', workerError && workerError.message);
+    return runSyncUpdate('dispatch_failed');
   }
 }
 

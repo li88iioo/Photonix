@@ -5,6 +5,7 @@
 
 const { dbAll, dbGet } = require('../db/multi-db');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { safeRedisGet, safeRedisSet } = require('../utils/helpers');
 
 /**
@@ -45,7 +46,7 @@ class QueryPerformanceAnalyzer {
 
         // 记录慢查询详情
         if (duration > this.slowQueryThreshold) {
-            logger.warn(`[慢查询] ${queryId}: ${duration}ms`, metadata);
+            logger.warn(`${LOG_PREFIXES.SLOW_QUERY} ${queryId}: ${duration}ms`, metadata);
         }
     }
 

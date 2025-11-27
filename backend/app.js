@@ -288,7 +288,7 @@ app.get('/health', async (req, res) => {
         const workerStatus = performWorkerHealthCheck();
         summary.dependencies.workers = workerStatus;
         const unhealthyWorkers = [];
-        ['indexing', 'settings', 'history', 'video'].forEach((key) => {
+        ['indexing', 'settings', 'video'].forEach((key) => {
             const stateInfo = workerStatus[key];
             if (!stateInfo) {
                 unhealthyWorkers.push(key);

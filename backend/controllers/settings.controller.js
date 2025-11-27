@@ -3,6 +3,7 @@
  * @description 负责处理与系统设置相关的所有 HTTP 接口，包括客户端设置信息获取、系统设置更新、更新状态查询、系统维护操作等。
  */
 
+const bcrypt = require('bcryptjs');
 const logger = require('../config/logger');
 const settingsService = require('../services/settings.service');
 const albumManagementService = require('../services/albumManagement.service');
@@ -259,14 +260,24 @@ exports.triggerSync = async (req, res) => {
 exports.resyncThumbnails = async (_req, res) => {
   try {
     logger.info('手动触发缩略图状态重同步请求');
-    const result = await thumbnailSyncService.resyncThumbnailStatus({ trigger: 'manual-api', waitForCompletion: true });
-    const syncedCount = Number(result?.syncedCount || 0);
-    res.json({
-      success: true,
-      message: `缩略图状态重同步完成，共同步 ${syncedCount} 个文件`,
-      data: { syncedCount, details: result },
-      timestamp: new Date().toISOString()
-    });
+    const result = await thumbnailSyncService.resyncThumbnailStatus({ trigger: 'manual-api', waitForCompletion: false });
+
+    if (result.started) {
+      res.json({
+        success: true,
+        message: '缩略图状态重同步已在后台启动',
+        data: { status: 'started' },
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      const syncedCount = Number(result?.syncedCount || 0);
+      res.json({
+        success: true,
+        message: `缩略图状态重同步完成，共同步 ${syncedCount} 个文件`,
+        data: { syncedCount, details: result },
+        timestamp: new Date().toISOString()
+      });
+    }
   } catch (error) {
     logger.error('手动触发缩略图状态重同步请求失败:', error);
     if (error instanceof AppError) throw error;
@@ -339,7 +350,7 @@ exports.manualAlbumSync = async (req, res) => {
           addedVideos,
           removed: removalList,
           trigger: 'manual-sync',
-          waitForCompletion: true
+          waitForCompletion: false
         });
       } catch (syncError) {
         logger.warn('缩略图增量更新失败，降级为后台全量重建:', syncError && syncError.message ? syncError.message : syncError);
@@ -395,6 +406,45 @@ exports.verifyAdminSecretOnly = async (req, res) => {
     } else {
       logger.error('管理员密钥单独验证失败:', error);
     }
+    throw error;
+  }
+};
+
+/**
+ * 通过管理员密钥重置访问密码
+ * @function resetPasswordViaAdminSecret
+ * @param {Express.Request} req
+ * @param {Express.Response} res
+ * @returns {Promise<void>}
+ */
+exports.resetPasswordViaAdminSecret = async (req, res) => {
+  try {
+    const adminSecret = req.body?.adminSecret;
+    const newPassword = req.body?.newPassword;
+    const buildCtx = (extra) => buildAuditContext(req, {
+      action: 'reset_password_via_admin',
+      sensitive: true,
+      ...extra
+    });
+
+    const verified = await verifySensitiveOperations(true, adminSecret, buildCtx);
+    if (!verified.ok) throw mapAdminSecretError(verified, '管理员密钥验证失败');
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(newPassword, salt);
+
+    await settingsService.updateSettings({
+      PASSWORD_ENABLED: 'true',
+      PASSWORD_HASH: passwordHash
+    });
+
+    logger.info(JSON.stringify(buildCtx({ status: 'approved', message: '访问密码已通过管理员密钥重置' })));
+    res.json({
+      success: true,
+      message: '访问密码已重置，请使用新密码登录'
+    });
+  } catch (error) {
+    logger.error('管理员密钥重置访问密码失败:', error);
     throw error;
   }
 };

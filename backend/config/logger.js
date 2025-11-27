@@ -95,19 +95,42 @@ const LOG_PREFIXES = {
     THUMB: '[缩略图]',
     MEMORY_MONITOR: '[内存监控]',
     FREQUENCY_CONTROL: '[频率控制]',
-    缩略图请求: '[缩略图请求]',
-    批量补全: '[批量补全]',
-    手动补全: '[手动补全]',
-    按需队列: '[按需队列]',
-    按需生成: '[按需生成]',
-    频率控制: '[频率控制]',
-    HISTORY_WORKER: '[历史线程]',
+    THUMB_REQUEST: '[缩略图请求]',
+    BATCH_BACKFILL: '[批量补全]',
+    MANUAL_BACKFILL: '[手动补全]',
+    ONDEMAND_QUEUE: '[按需队列]',
+    ONDEMAND_GENERATE: '[按需生成]',
+    RATE_CONTROL: '[频率控制]',
     SETTINGS_WORKER: '[设置线程]',
     VIDEO_WORKER: '[视频线程]',
     TEMP_FILE_MANAGER: '[临时文件管理]',
     DB_TIMEOUT_MANAGER: '[数据库超时]',
     ORCHESTRATOR: '[调度器]',
     HARDWARE: '[硬件]',
+    PATH_VALIDATION: '[路径验证]',
+    CONFIG_VALIDATION: '[配置校验]',
+    SEARCH: '[搜索]',
+    THUMB_BACKFILL_DISPATCH: '[缩略图补全派发]',
+    SLOW_QUERY: '[慢查询]',
+    MEMORY_WARNING: '[内存警告]',
+    DOWNLOADER: '[下载器]',
+    AUTO_SYNC: '[自动同步]',
+    THUMBNAIL_SYNC: '[缩略图同步]',
+    THUMB_STATUS_REPO: '[缩略图状态仓库]',
+    VIDEO_PROCESSOR: '[视频处理器]',
+    ALBUM_COVERS_REPO: '[相册封面]',
+    STARTUP_BACKFILL: '启动回填',
+    DB_MAINTENANCE: '数据库维护',
+    SYSTEM_MAINTENANCE: '[系统维护]',
+    HLS_CLEANUP: '[HLS清理]',
+    SETTINGS_UPDATE: '[设置更新]',
+};
+
+/**
+ * 日志中用到的表名/资源名标签
+ */
+const LOG_TABLE_LABELS = {
+    THUMB_STATUS: '缩略图状态表',
 };
 
 /**
@@ -206,3 +229,4 @@ function normalizeMessagePrefix(message) {
 module.exports.LOG_PREFIXES = LOG_PREFIXES;
 module.exports.formatLog = formatLog;
 module.exports.normalizeMessagePrefix = normalizeMessagePrefix;
+module.exports.LOG_TABLE_LABELS = LOG_TABLE_LABELS;

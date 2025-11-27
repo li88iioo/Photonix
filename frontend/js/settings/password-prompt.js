@@ -14,7 +14,14 @@ import { safeGetElementById, safeClassList, safeSetStyle, safeGetStyle } from '.
  * @param {boolean} [options.useAdminSecret=false] - 是否使用管理员密钥提示语
  * @returns {void}
  */
-export function showPasswordPrompt({ onConfirm, onCancel, useAdminSecret = false }) {
+export function showPasswordPrompt({
+  onConfirm,
+  onCancel,
+  useAdminSecret = false,
+  titleText,
+  descriptionText,
+  placeholderText
+}) {
   const template = safeGetElementById('password-prompt-template');
   if (!template) return;
 
@@ -25,15 +32,13 @@ export function showPasswordPrompt({ onConfirm, onCancel, useAdminSecret = false
   const description = promptElement.querySelector('.password-prompt-description');
   const input = promptElement.querySelector('#prompt-password-input');
 
-  if (useAdminSecret) {
-    title.textContent = '需要管理员权限';
-    description.textContent = '请输入管理员密钥以继续操作。';
-    input.placeholder = '管理员密钥';
-  } else {
-    title.textContent = '身份验证';
-    description.textContent = '请输入您的密码以继续操作。';
-    input.placeholder = '密码';
-  }
+  const resolvedTitle = titleText || (useAdminSecret ? '需要管理员权限' : '身份验证');
+  const resolvedDescription = descriptionText || (useAdminSecret ? '请输入管理员密钥以继续操作。' : '请输入您的密码以继续操作。');
+  const resolvedPlaceholder = placeholderText || (useAdminSecret ? '管理员密钥' : '密码');
+
+  title.textContent = resolvedTitle;
+  description.textContent = resolvedDescription;
+  input.placeholder = resolvedPlaceholder;
 
   const cardEl = promptElement.querySelector('.password-prompt-card');
   const inputGroup = promptElement.querySelector('.input-group');

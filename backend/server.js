@@ -25,7 +25,7 @@ const { normalizeWorkerMessage } = require('./utils/workerMessage');
 const { validateCriticalConfig } = require('./config/validator');
 const { handleUncaughtException, handleUnhandledRejection } = require('./middleware/errorHandler');
 // 延后加载 Redis，避免无 Redis 环境下启动即触发连接
-const { PORT, THUMBS_DIR, DB_FILE, SETTINGS_DB_FILE, HISTORY_DB_FILE, INDEX_DB_FILE, PHOTOS_DIR, DATA_DIR } = require('./config');
+const { PORT, THUMBS_DIR, DB_FILE, SETTINGS_DB_FILE, PHOTOS_DIR, DATA_DIR } = require('./config');
 const { initializeConnections, closeAllConnections } = require('./db/multi-db');
 const { initializeAllDBs, ensureCoreTables } = require('./db/migrations');
 const { migrateToMultiDB } = require('./db/migrate-to-multi-db');
@@ -278,7 +278,7 @@ async function performDatabaseSampleCheck(sampleSize = 50) {
         // 兼容旧表不存在
         const message = err && err.message ? err.message : '';
         if (/no such table/i.test(message)) {
-            logger.debug('[Startup] thumb_status 表不存在，跳过缩略图采样检查');
+            logger.debug('[Startup] 缩略图状态表不存在，跳过缩略图采样检查');
             return true;
         }
         logger.debug(`[Startup] 数据库采样检查失败: ${message}`);
@@ -350,9 +350,9 @@ async function healThumbnailsIfInconsistent() {
         const { dbAll, runAsync } = require('./db/multi-db');
         const existsCount = await getCount('thumb_status', 'main', "status='exists'");
         if (existsCount > 100) {
-            logger.warn('检测到缩略图目录几乎为空，但数据库中存在大量已存在标记，正在自动重置 thumb_status 为 pending 以触发自愈重建...');
+            logger.warn('检测到缩略图目录几乎为空，但数据库中存在大量已存在标记，正在自动重置缩略图状态为 pending 以触发自愈重建...');
             await runAsync('main', "UPDATE thumb_status SET status='pending', mtime=0 WHERE status='exists'");
-            logger.info('已重置 thumb_status（exists -> pending）。后台生成将自动开始补齐缩略图。');
+            logger.info('已重置缩略图状态（exists → pending）。后台生成将自动开始补齐缩略图。');
         }
     } catch (e) {
         logger.debug('缩略图自愈检查失败（忽略）：', e && e.message);
@@ -511,7 +511,7 @@ async function startServices() {
         (async () => {
             try {
                 const { getAvailability } = require('./config/redis');
-                logger.info(`[启动] Redis 可用性: ${getAvailability()}`);
+                logger.info(`Redis 可用性: ${getAvailability()}`);
             } catch (e) {
                 logger.warn('Redis 可用性检查失败，已使用降级配置继续启动。', e && e.message ? { error: e.message } : undefined);
             }
@@ -596,14 +596,14 @@ async function setupIndexingAndMonitoring() {
         // 启动期自动回填任务（runWhenIdle触发）
         try {
             const { runWhenIdle } = require('./services/orchestrator');
-            runWhenIdle('startup-backfill', async () => {
+            runWhenIdle(LOG_PREFIXES.STARTUP_BACKFILL, async () => {
                 const integrityStats = await getDataIntegrityStats();
                 const needM = integrityStats.missingMtime > 0;
                 const needD = integrityStats.missingDimensions > 0;
                 if (!needM && !needD) return;
 
                 const { createDisposableWorker } = require('./services/worker.manager');
-                const w = createDisposableWorker('indexing', { reason: 'startup-backfill' });
+                const w = createDisposableWorker('indexing', { reason: LOG_PREFIXES.STARTUP_BACKFILL });
                 const photosDir = PHOTOS_DIR;
                 const TIMEOUT_MS = 20 * 60 * 1000;
 
@@ -723,7 +723,7 @@ async function setupIndexingAndMonitoring() {
  * @async
  */
 async function startServer() {
-    logger.info(`后端服务正在启动...`);
+    logger.info('后端服务正在启动...');
 
     try {
         // 1. 初始化目录结构

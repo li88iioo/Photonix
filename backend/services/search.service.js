@@ -5,6 +5,7 @@
 const path = require('path');
 const { dbAll } = require('../db/multi-db');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { createNgrams } = require('../utils/search.utils');
 const { findCoverPhotosBatch } = require('./file.service');
 const { PHOTOS_DIR, API_BASE } = require('../config');
@@ -145,7 +146,7 @@ async function performSearch(query, page, limit) {
         };
     } catch (error) {
         if (isFtsSyntaxError(error)) {
-            logger.warn('[搜索] FTS 查询包含不安全输入，已回退为空结果', {
+            logger.warn(`${LOG_PREFIXES.SEARCH} FTS 查询包含不安全输入，已回退为空结果`, {
                 originalQuery: query,
                 sanitizedQuery,
                 message: error.message

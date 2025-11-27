@@ -34,7 +34,6 @@ const DATA_DIR = resolveDir('DATA_DIR', '/app/data', 'data');       // 数据存
 // --- 数据库配置 ---
 const DB_FILE = path.resolve(DATA_DIR, 'gallery.db');         // 主数据库
 const SETTINGS_DB_FILE = path.resolve(DATA_DIR, 'settings.db'); // 设置数据库
-const HISTORY_DB_FILE = path.resolve(DATA_DIR, 'history.db');   // 历史记录数据库
 const INDEX_DB_FILE = path.resolve(DATA_DIR, 'index.db');       // 索引数据库
 const THUMBS_DIR = path.resolve(DATA_DIR, 'thumbnails');        // 缩略图存储目录
 
@@ -108,65 +107,9 @@ const TASK_SCHEDULER_CONCURRENCY = Math.max(1, Number(process.env.TASK_SCHEDULER
 
 // --- HLS视频配置 ---
 const USE_FILE_SYSTEM_HLS_CHECK = (process.env.USE_FILE_SYSTEM_HLS_CHECK || 'true').toLowerCase() === 'true'; // 使用文件系统检查HLS
-
-/**
- * 动态调整HLS性能参数，根据系统负载优化配置
- */
-function getAdaptiveHlsConfig() {
-  const { cpuCount, totalMemoryGB } = detectHardwareConfig();
-
-  // 获取系统负载指标
-  let systemLoad = 0;
-  try {
-    const loadAvg = require('os').loadavg && require('os').loadavg();
-    systemLoad = loadAvg ? loadAvg[0] : 0;
-  } catch (error) {
-    logger.silly(formatLog(LOG_PREFIXES.CONFIG, `获取系统负载失败，采用默认配置: ${error && error.message}`));
-  }
-
-  // 计算负载因子 (0-1之间)
-  const loadFactor = Math.min(1, Math.max(0, systemLoad / (cpuCount * 1.5)));
-
-  // 基础配置值
-  const baseCacheTtl = parseInt(process.env.HLS_CACHE_TTL_MS) || 300000; // 5分钟
-  const baseCheckInterval = parseInt(process.env.HLS_MIN_CHECK_INTERVAL_MS) || 1000; // 1秒
-  const baseBatchDelay = parseInt(process.env.HLS_BATCH_DELAY_MS) || 100; // 100ms
-
-  // 根据负载动态调整
-  let cacheTtlMs, minCheckIntervalMs, batchDelayMs;
-
-  if (loadFactor > 0.8) {
-    // 高负载：减少检查频率，增加缓存时间，减少批处理频率
-    cacheTtlMs = Math.max(baseCacheTtl * 2, 600000); // 最少10分钟
-    minCheckIntervalMs = Math.max(baseCheckInterval * 5, 5000); // 最少5秒
-    batchDelayMs = Math.max(baseBatchDelay * 10, 2000); // 最少2秒
-  } else if (loadFactor > 0.5) {
-    // 中等负载：适度调整
-    cacheTtlMs = Math.max(baseCacheTtl * 1.5, 450000); // 最少7.5分钟
-    minCheckIntervalMs = Math.max(baseCheckInterval * 2, 2000); // 最少2秒
-    batchDelayMs = Math.max(baseBatchDelay * 3, 500); // 最少500ms
-  } else {
-    // 低负载：保持基础配置或稍微优化
-    cacheTtlMs = baseCacheTtl;
-    minCheckIntervalMs = Math.max(baseCheckInterval, 500); // 最少500ms
-    batchDelayMs = baseBatchDelay;
-  }
-
-  // 确保配置值合理
-  const HLS_CACHE_TTL_MS = Math.max(60000, cacheTtlMs); // 最少1分钟
-  const HLS_MIN_CHECK_INTERVAL_MS = Math.max(100, minCheckIntervalMs); // 最少100ms
-  const HLS_BATCH_DELAY_MS = Math.max(10, batchDelayMs); // 最少10ms
-
-  return {
-    HLS_CACHE_TTL_MS,
-    HLS_MIN_CHECK_INTERVAL_MS,
-    HLS_BATCH_DELAY_MS,
-    loadFactor,
-    adaptive: true
-  };
-}
-
-const { HLS_CACHE_TTL_MS, HLS_MIN_CHECK_INTERVAL_MS, HLS_BATCH_DELAY_MS } = getAdaptiveHlsConfig();
+const HLS_CACHE_TTL_MS = Math.max(60000, parseInt(process.env.HLS_CACHE_TTL_MS, 10) || 300000);
+const HLS_MIN_CHECK_INTERVAL_MS = Math.max(100, parseInt(process.env.HLS_MIN_CHECK_INTERVAL_MS, 10) || 1000);
+const HLS_BATCH_DELAY_MS = Math.max(10, parseInt(process.env.HLS_BATCH_DELAY_MS, 10) || 100);
 
 // HLS批次大小配置（相对固定，不需要动态调整）
 const HLS_CHECK_BATCH_SIZE = parseInt(process.env.HLS_CHECK_BATCH_SIZE) || 10; // HLS检查批次大小
@@ -185,7 +128,6 @@ module.exports = {
     // 数据库配置
     DB_FILE,
     SETTINGS_DB_FILE,
-    HISTORY_DB_FILE,
     INDEX_DB_FILE,
 
     // Redis配置
@@ -251,9 +193,6 @@ module.exports = {
 
     // 硬件检测函数
     detectHardwareConfig,
-
-    // HLS自适应配置
-    getAdaptiveHlsConfig,
 
     // 日志开关
     ENABLE_AUTH_DEBUG_LOGS,

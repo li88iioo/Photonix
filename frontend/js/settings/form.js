@@ -486,20 +486,12 @@ async function handleSave() {
   const isPasswordEnabled = card.querySelector('#password-enabled').checked;
   const newPasswordValue = newPassInput.value;
 
-  const isChangingPassword = isPasswordEnabled && newPasswordValue.trim() !== '' && initialSettings.hasPassword;
+  const hasNewPasswordValue = newPasswordValue.trim() !== '';
+  const isSettingOrChangingPassword = isPasswordEnabled && hasNewPasswordValue;
   const isDisablingPassword = !isPasswordEnabled && initialSettings.hasPassword;
-  const needsAdmin = isChangingPassword || isDisablingPassword;
+  const needsAdmin = isSettingOrChangingPassword || isDisablingPassword;
 
   if (needsAdmin) {
-    if (!initialSettings.isAdminSecretConfigured) {
-      showNotification('操作失败：未配置超级管理员密码', 'error');
-      saveButtons.forEach(btn => {
-        safeClassList(btn, 'remove', 'loading');
-        btn.disabled = false;
-      });
-      return;
-    }
-
     const shouldDisableAlbumDeletion = isDisablingPassword && initialSettings.albumDeletionEnabled;
 
     showPasswordPrompt({

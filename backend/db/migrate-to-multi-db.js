@@ -2,7 +2,6 @@ const Database = require('better-sqlite3');
 const {
     DB_FILE,
     SETTINGS_DB_FILE,
-    HISTORY_DB_FILE,
     INDEX_DB_FILE
 } = require('../config');
 const logger = require('../config/logger');
@@ -42,7 +41,6 @@ async function migrateToMultiDB() {
         logger.info('新的数据库文件如下所示：');
         logger.info(`- 主数据库（图片/视频索引）: ${DB_FILE}`);
         logger.info(`- 设置数据库: ${SETTINGS_DB_FILE}`);
-        logger.info(`- 历史记录数据库: ${HISTORY_DB_FILE}`);
         logger.info(`- 索引数据库: ${INDEX_DB_FILE}`);
 
     } catch (error) {
@@ -165,7 +163,7 @@ async function backupOriginalDB() {
 function isOldStructure() {
     return (
         fs.existsSync(DB_FILE) &&
-        (!fs.existsSync(SETTINGS_DB_FILE) || !fs.existsSync(HISTORY_DB_FILE) || !fs.existsSync(INDEX_DB_FILE))
+        (!fs.existsSync(SETTINGS_DB_FILE) || !fs.existsSync(INDEX_DB_FILE))
     );
 }
 

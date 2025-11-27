@@ -4,7 +4,7 @@
  * 职责：封装thumb_status表的所有数据库操作
  */
 const { dbGet, dbAll, dbRun, runPreparedBatch } = require('../db/multi-db');
-const logger = require('../config/logger');
+const { LOG_PREFIXES, LOG_TABLE_LABELS } = require('../config/logger');
 
 const UPSERT_SQL = `INSERT INTO thumb_status(path, mtime, status, last_checked)
                     VALUES(?, ?, ?, strftime('%s','now')*1000)
@@ -12,6 +12,8 @@ const UPSERT_SQL = `INSERT INTO thumb_status(path, mtime, status, last_checked)
                       mtime=excluded.mtime,
                       status=excluded.status,
                       last_checked=excluded.last_checked`;
+const LOG_LABEL = LOG_PREFIXES.THUMB_STATUS_REPO || '[缩略图状态仓库]';
+const TABLE_LABEL = LOG_TABLE_LABELS.THUMB_STATUS || '缩略图状态表';
 
 class ThumbStatusRepository {
     /**
@@ -24,7 +26,7 @@ class ThumbStatusRepository {
             const row = await dbGet('main', 'SELECT * FROM thumb_status WHERE path = ?', [String(path || '')]);
             return row || null;
         } catch (error) {
-            logger.warn(`[ThumbStatusRepo] 获取thumb_status失败 (path=${path}):`, error.message);
+            logger.warn(`${LOG_LABEL} 获取${TABLE_LABEL}记录失败 (path=${path}):`, error.message);
             return null;
         }
     }
@@ -42,7 +44,7 @@ class ThumbStatusRepository {
             const rows = await dbAll('main', `SELECT * FROM thumb_status WHERE path IN (${placeholders})`, paths);
             return rows || [];
         } catch (error) {
-            logger.warn(`[ThumbStatusRepo] 批量获取thumb_status失败:`, error.message);
+            logger.warn(`${LOG_LABEL} 批量获取${TABLE_LABEL}记录失败:`, error.message);
             return [];
         }
     }
@@ -85,7 +87,7 @@ class ThumbStatusRepository {
             const rows = await dbAll('main', sql, params);
             return rows || [];
         } catch (error) {
-            logger.warn(`[ThumbStatusRepo] 获取thumb_status失败 (status=${status}):`, error.message);
+            logger.warn(`${LOG_LABEL} 获取${TABLE_LABEL}记录失败 (status=${status}):`, error.message);
             return [];
         }
     }
@@ -110,9 +112,9 @@ class ThumbStatusRepository {
         try {
             // Native DB handling (busy_timeout) replaces application-layer retry
             await runPreparedBatch('main', UPSERT_SQL, rows, opts);
-            logger.debug(`[ThumbStatusRepo] 批量upsert完成: ${rows.length}条`);
+            logger.debug(`${LOG_LABEL} 批量写入${TABLE_LABEL}完成: ${rows.length}条`);
         } catch (error) {
-            logger.error(`[ThumbStatusRepo] 批量upsert失败:`, error.message);
+            logger.error(`${LOG_LABEL} 批量写入${TABLE_LABEL}失败:`, error.message);
             throw error;
         }
     }
@@ -134,7 +136,7 @@ class ThumbStatusRepository {
                 String(status || 'pending')
             ]);
         } catch (error) {
-            logger.warn(`[ThumbStatusRepo] upsert失败 (path=${path}):`, error.message);
+            logger.warn(`${LOG_LABEL} 写入${TABLE_LABEL}失败 (path=${path}):`, error.message);
             throw error;
         }
     }
@@ -153,7 +155,7 @@ class ThumbStatusRepository {
             );
             return true;
         } catch (error) {
-            logger.warn(`[ThumbStatusRepo] 更新status失败 (path=${path}):`, error.message);
+            logger.warn(`${LOG_LABEL} 更新${TABLE_LABEL}失败 (path=${path}):`, error.message);
             return false;
         }
     }
@@ -168,7 +170,7 @@ class ThumbStatusRepository {
             await dbRun('main', 'DELETE FROM thumb_status WHERE path = ?', [String(path || '')]);
             return true;
         } catch (error) {
-            logger.warn(`[ThumbStatusRepo] 删除thumb_status失败 (path=${path}):`, error.message);
+            logger.warn(`${LOG_LABEL} 删除${TABLE_LABEL}记录失败 (path=${path}):`, error.message);
             return false;
         }
     }
@@ -195,10 +197,10 @@ class ThumbStatusRepository {
             }
 
             await dbRun('main', sql, params);
-            logger.debug(`[ThumbStatusRepo] 批量删除thumb_status完成: ${paths.length}个路径`);
+            logger.debug(`${LOG_LABEL} 批量删除${TABLE_LABEL}记录完成: ${paths.length}个路径`);
             return paths.length;
         } catch (error) {
-            logger.error(`[ThumbStatusRepo] 批量删除thumb_status失败:`, error.message);
+            logger.error(`${LOG_LABEL} 批量删除${TABLE_LABEL}记录失败:`, error.message);
             throw error;
         }
     }
@@ -214,10 +216,10 @@ class ThumbStatusRepository {
                 `DELETE FROM thumb_status WHERE path LIKE ? || '/%'`,
                 [dirPath]
             );
-            logger.debug(`[ThumbStatusRepo] 已删除目录下的thumb_status: ${dirPath}`);
+            logger.debug(`${LOG_LABEL} 已删除目录 ${dirPath} 下的${TABLE_LABEL}记录`);
             return true;
         } catch (error) {
-            logger.warn(`[ThumbStatusRepo] 删除目录thumb_status失败 (dirPath=${dirPath}):`, error.message);
+            logger.warn(`${LOG_LABEL} 删除目录 ${dirPath} 的${TABLE_LABEL}记录失败:`, error.message);
             return false;
         }
     }
@@ -242,7 +244,7 @@ class ThumbStatusRepository {
             const row = await dbGet('main', sql, params);
             return row ? Number(row.count) || 0 : 0;
         } catch (error) {
-            logger.warn(`[ThumbStatusRepo] 统计thumb_status失败:`, error.message);
+            logger.warn(`${LOG_LABEL} 统计${TABLE_LABEL}失败:`, error.message);
             return 0;
         }
     }
@@ -261,7 +263,7 @@ class ThumbStatusRepository {
             });
             return stats;
         } catch (error) {
-            logger.warn(`[ThumbStatusRepo] 获取状态统计失败:`, error.message);
+            logger.warn(`${LOG_LABEL} 获取${TABLE_LABEL}状态统计失败:`, error.message);
             return {};
         }
     }
@@ -289,7 +291,7 @@ class ThumbStatusRepository {
             const rows = await dbAll('main', sql, params);
             return rows || [];
         } catch (error) {
-            logger.warn(`[ThumbStatusRepo] 获取所有thumb_status失败:`, error.message);
+            logger.warn(`${LOG_LABEL} 获取全部${TABLE_LABEL}记录失败:`, error.message);
             return [];
         }
     }

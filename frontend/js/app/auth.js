@@ -9,9 +9,13 @@ import { initializeRouter } from './router.js';
 import { clearAuthHeadersCache } from './api.js';
 import { createModuleLogger } from '../core/logger.js';
 import { safeSetInnerHTML, safeGetElementById, safeSetStyle, safeClassList, safeQuerySelector } from '../shared/dom-utils.js';
+import { resolveMessage } from '../shared/utils.js';
 import { AUTH, SW_MESSAGE } from '../core/constants.js';
+import { showPasswordPrompt } from '../settings/password-prompt.js';
+import { resetPasswordViaAdminSecret } from '../api/settings.js';
 
 const authLogger = createModuleLogger('Auth');
+const PROMPT_CANCELLED = 'PROMPT_CANCELLED';
 
 /**
  * 通知 Service Worker 执行相关操作
@@ -185,6 +189,10 @@ export function showLoginScreen() {
                     <path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
                 </svg>
             </button>
+
+            <button type="button" id="forgot-password-btn" class="w-full text-[0.85rem] text-white/70 hover:text-white transition-colors duration-300 focus:outline-none">
+                忘记密码？
+            </button>
             
             <p id="login-error" class="text-red-300 text-center text-xs min-h-[1.25rem] font-medium drop-shadow-md animate-pulse"></p>
         </form>
@@ -209,6 +217,7 @@ export function showLoginScreen() {
 
     safeGetElementById('login-form').addEventListener('submit', handleLogin);
     setupPasswordToggle();
+    setupForgotPasswordHandler();
 }
 
 /**
@@ -358,6 +367,78 @@ function setupPasswordToggle() {
             safeSetStyle(icon, 'color', originalColor || '');
         }, 200);
     });
+}
+
+function promptForValue(options) {
+    return new Promise((resolve, reject) => {
+        showPasswordPrompt({
+            ...options,
+            onConfirm: async (value) => {
+                resolve(value);
+                return true;
+            },
+            onCancel: () => reject(new Error(PROMPT_CANCELLED))
+        });
+    });
+}
+
+async function handleForgotPasswordClick(event) {
+    event.preventDefault();
+    const errorEl = safeGetElementById('login-error');
+    if (!errorEl) return;
+
+    try {
+        const adminSecret = await promptForValue({
+            useAdminSecret: true,
+            titleText: '验证管理员身份',
+            descriptionText: '请输入管理员密钥以重置访问密码。'
+        });
+
+        const newPassword = await promptForValue({
+            titleText: '设置新的访问密码',
+            descriptionText: '请输入新的访问密码。',
+            placeholderText: '新密码'
+        });
+
+        const confirmPassword = await promptForValue({
+            titleText: '确认新的访问密码',
+            descriptionText: '请再次输入新的访问密码以确认。',
+            placeholderText: '再次输入新密码'
+        });
+
+        if (newPassword !== confirmPassword) {
+            errorEl.classList.remove('text-green-200');
+            errorEl.classList.add('text-red-300');
+            errorEl.textContent = '两次输入的密码不一致';
+            return;
+        }
+
+        await resetPasswordViaAdminSecret(adminSecret, newPassword);
+        errorEl.classList.remove('text-red-300');
+        errorEl.classList.add('text-green-200');
+        errorEl.textContent = '访问密码已重置，请使用新密码登录';
+
+        setTimeout(() => {
+            if (errorEl.classList.contains('text-green-200')) {
+                errorEl.classList.remove('text-green-200');
+                errorEl.classList.add('text-red-300');
+                errorEl.textContent = '';
+            }
+        }, 6000);
+    } catch (error) {
+        if (error?.message === PROMPT_CANCELLED) {
+            return;
+        }
+        errorEl.classList.remove('text-green-200');
+        errorEl.classList.add('text-red-300');
+        errorEl.textContent = resolveMessage(error, '重置访问密码失败');
+    }
+}
+
+function setupForgotPasswordHandler() {
+    const btn = safeGetElementById('forgot-password-btn');
+    if (!btn) return;
+    btn.addEventListener('click', handleForgotPasswordClick);
 }
 
 /**

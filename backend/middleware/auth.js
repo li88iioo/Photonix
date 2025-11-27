@@ -53,6 +53,7 @@ module.exports = async function (req, res, next) {
 
         // 登录接口 (必须始终放行，否则无法登录)
         const isLoginRequest = req.method === 'POST' && req.path === '/auth/login';
+        const isPasswordResetRequest = req.method === 'POST' && req.path === '/settings/reset-password';
 
         // 允许公开访问的资源接口 (仅在 ALLOW_PUBLIC_ACCESS 为 true 时放行)
         const isPublicResource =
@@ -61,7 +62,7 @@ module.exports = async function (req, res, next) {
             (req.method === 'GET' && req.path === '/events');
 
         // 4. 优先处理绝对放行的接口
-        if (isPublicReadonly || isLoginRequest) {
+        if (isPublicReadonly || isLoginRequest || isPasswordResetRequest) {
             logger.debug(`[Auth] 绝对放行接口: ${req.method} ${req.path}`);
             return next();
         }
