@@ -4,7 +4,8 @@
  * 职责：封装thumb_status表的所有数据库操作
  */
 const { dbGet, dbAll, dbRun, runPreparedBatch } = require('../db/multi-db');
-const { LOG_PREFIXES, LOG_TABLE_LABELS } = require('../config/logger');
+const logger = require('../config/logger');
+const { LOG_PREFIXES, LOG_TABLE_LABELS } = logger;
 
 const UPSERT_SQL = `INSERT INTO thumb_status(path, mtime, status, last_checked)
                     VALUES(?, ?, ?, strftime('%s','now')*1000)

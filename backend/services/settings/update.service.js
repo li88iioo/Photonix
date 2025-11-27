@@ -169,6 +169,63 @@ function buildAuditContext(req, extra = {}) {
   };
 }
 
+const AUDIT_FIELD_LABELS = {
+  requestId: '请求ID',
+  ip: '客户端IP',
+  userId: '用户ID',
+  action: '操作',
+  sensitive: '敏感操作',
+  type: '类型',
+  summary: '摘要',
+  schedule: '原始计划',
+  normalizedSchedule: '解析后计划',
+  status: '状态',
+  message: '说明',
+  updatedKeys: '更新字段'
+};
+
+const AUDIT_ACTION_LABELS = {
+  update_manual_sync_schedule: '更新手动同步计划',
+  manual_album_sync: '手动相册同步',
+  verify_admin_secret: '验证管理员密钥',
+  rebuild_index: '重建索引',
+  toggle_album_delete: '切换相册删除开关',
+  update_settings: '更新系统设置',
+  trigger_sync: '触发同步任务'
+};
+
+const AUDIT_STATUS_LABELS = {
+  approved: '已通过',
+  submitted: '已提交',
+  pending: '处理中',
+  denied: '已拒绝',
+  failed: '失败'
+};
+
+function translateAuditLog(ctx = {}) {
+  const translated = {};
+  Object.entries(ctx || {}).forEach(([key, value]) => {
+    const label = AUDIT_FIELD_LABELS[key] || key;
+    let formatted = value;
+    if (key === 'action' && typeof value === 'string') {
+      formatted = AUDIT_ACTION_LABELS[value] || value;
+    } else if (key === 'status' && typeof value === 'string') {
+      formatted = AUDIT_STATUS_LABELS[value] || value;
+    } else if (key === 'sensitive') {
+      formatted = value ? '是' : '否';
+    }
+    if (formatted && typeof formatted === 'object') {
+      try {
+        formatted = JSON.stringify(formatted);
+      } catch (e) {
+        formatted = String(formatted);
+      }
+    }
+    translated[label] = formatted;
+  });
+  return translated;
+}
+
 /**
  * 验证管理员密钥
  * 
@@ -305,12 +362,12 @@ function buildUpdateResponse(dispatchResult, hasAuthChanges, settingsToUpdate, b
   // 如果有认证更改，返回202状态码表示已接受处理
   if (hasAuthChanges) {
     logger.info('检测到认证相关设置变更，任务已提交到后台处理...');
-    logger.info(JSON.stringify(buildAuditContext({
+    logger.info(JSON.stringify(translateAuditLog(buildAuditContext({
       action: 'update_settings',
       sensitive: true,
       status: 'submitted',
       updatedKeys: Object.keys(settingsToUpdate)
-    })));
+    }))));
 
     return {
       statusCode: 202,
@@ -325,12 +382,12 @@ function buildUpdateResponse(dispatchResult, hasAuthChanges, settingsToUpdate, b
 
   // 非认证相关更改，返回200状态码
   logger.info('非认证相关设置变更，立即返回成功');
-  logger.info(JSON.stringify(buildAuditContext({
+  logger.info(JSON.stringify(translateAuditLog(buildAuditContext({
     action: 'update_settings',
     sensitive: false,
     status: 'submitted',
     updatedKeys: Object.keys(settingsToUpdate)
-  })));
+  }))));
 
   return {
     statusCode: 200,
@@ -356,6 +413,7 @@ module.exports = {
   handlePasswordOperations,     // 处理密码相关操作
   detectAuthChanges,            // 检测认证相关更改
   buildAuditContext,            // 构建审计上下文
+  translateAuditLog,            // 审计日志中文映射
   verifySensitiveOperations,    // 验证敏感操作
   dispatchUpdateTask,           // 分发更新任务
   buildUpdateResponse,          // 构建更新响应

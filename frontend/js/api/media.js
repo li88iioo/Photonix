@@ -107,6 +107,7 @@ function normalizeServerSort(sort) {
  * @param {AbortSignal} signal 中止信号
  * @param {object} [options]
  * @param {string} [options.sortOverride] 指定服务端排序
+ * @param {number} [options.limitOverride] 指定分页大小（1-200）
  * @returns {Promise<object|null>} 浏览结果对象，失败时返回 null
  * @throws {Error} 网络或认证等错误
  */
@@ -124,7 +125,12 @@ export async function fetchBrowseResults(path, page, signal, options = {}) {
             apiLogger.debug('排序值不受后端支持，自动回退', { requestedSort, fallback: sort });
         }
 
-        const url = `/api/browse/${encodedPath}?page=${page}&limit=50&sort=${sort}`;
+        const limitOverride = Number(options.limitOverride);
+        const limit = Number.isFinite(limitOverride)
+            ? Math.min(Math.max(Math.trunc(limitOverride), 1), 200)
+            : 50;
+
+        const url = `/api/browse/${encodedPath}?page=${page}&limit=${limit}&sort=${sort}`;
         const performRequest = () => requestJSONWithDedup(url, {
             method: 'GET',
             headers,

@@ -8,7 +8,7 @@ import { settingsLogger } from './logger.js';
 import { fetchSettings } from '../app/api.js';
 import { safeClassList, safeSetInnerHTML } from '../shared/dom-utils.js';
 import { populateForm, setupListeners } from './form.js';
-import { setupSyncButtonListeners, loadStatusTables, triggerSync, showPodLoading } from './status.js';
+import { setupSyncButtonListeners, loadStatusTables, triggerSync, showPodLoading, startPersistentAutoRefresh } from './status.js';
 import { getLocalAISettings, setLocalAISettings } from './storage.js';
 import { state } from '../core/state.js';
 import { SETTINGS } from '../core/constants.js';
@@ -55,8 +55,8 @@ export async function showSettingsModal() {
       combined.manualSyncSchedule === 'off'
         ? 'off'
         : combined.manualSyncSchedule.includes(' ')
-        ? 'cron'
-        : 'interval';
+          ? 'cron'
+          : 'interval';
 
     // 填充同步任务状态
     combined.manualSyncStatus =
@@ -97,6 +97,7 @@ export async function showSettingsModal() {
       setupListeners();
       setupSyncButtonListeners();
       loadStatusTables({ silent: true });
+      startPersistentAutoRefresh();
     });
   } catch (error) {
     // 加载异常处理

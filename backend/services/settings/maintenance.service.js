@@ -97,7 +97,7 @@ class ThumbnailSyncService {
    */
   async resyncThumbnailStatus(options = {}) {
     const {
-      trigger = 'unknown',
+      trigger = '系统内部',
       waitForCompletion = true,
       skipIfRunning = false
     } = options;
@@ -215,11 +215,12 @@ class ThumbnailSyncService {
   }
 
   _scheduleThumbnailTask(options, taskFactory) {
-    const { trigger = 'unknown', waitForCompletion = true, skipIfRunning = false } = options || {};
+    const { trigger = '系统内部', waitForCompletion = true, skipIfRunning = false } = options || {};
 
     const inProgress = this._resyncActive || this._resyncPending > 0;
     if (skipIfRunning && inProgress) {
-      logger.info(`${LOG_PREFIXES.THUMBNAIL_SYNC} 当前已有任务运行中（触发源：${this._currentTrigger || '未知'}），跳过来自 ${trigger} 的请求`);
+      const current = this._currentTrigger || '系统内部';
+      logger.info(`${LOG_PREFIXES.THUMBNAIL_SYNC} 当前已有任务运行中（触发源：${current}），跳过来自 ${trigger} 的请求`);
       return {
         inProgress: true,
         skipped: true,
@@ -228,7 +229,8 @@ class ThumbnailSyncService {
     }
 
     if (inProgress && !skipIfRunning) {
-      logger.debug(`${LOG_PREFIXES.THUMBNAIL_SYNC} 将任务排队执行（当前运行：${this._currentTrigger || '无'}，新触发源：${trigger}）`);
+      const running = this._currentTrigger || '系统内部';
+      logger.debug(`${LOG_PREFIXES.THUMBNAIL_SYNC} 将任务排队执行（当前运行：${running}，新触发源：${trigger}）`);
     }
 
     this._resyncPending += 1;

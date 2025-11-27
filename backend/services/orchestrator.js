@@ -10,26 +10,60 @@ const { redis } = require('../config/redis');
 const { safeRedisSet, safeRedisDel } = require('../utils/helpers');
 const { hasResourceBudget } = require('./adaptive.service');
 
-let loopTimer = null;
-let lastLagMs = 0;
 let __heavyCache = { at: 0, val: false };
-const localLocks = new Map();
 const HEAVY_CACHE_TTL_MS = Number(process.env.HEAVY_CACHE_TTL_MS || 3000);
+const MAX_IDLE_JOB_CONCURRENCY = Math.max(1, Number(process.env.IDLE_JOB_MAX_CONCURRENCY || 1));
+const DEFAULT_RETRY_MS = Number(process.env.IDLE_JOB_RETRY_MS || 30000);
+const DEFAULT_IDLE_WAIT_MS = Number(process.env.IDLE_JOB_MAX_WAIT_MS || (5 * 60 * 1000));
+const LOCAL_LOCK_CLEANUP_MS = Number(process.env.LOCAL_LOCK_CLEANUP_MS || 60000);
+const DB_MAINT_DB_DELAY_STEP_MS = Number(process.env.DB_MAINT_DB_DELAY_STEP_MS || 500);
+const DB_MAINT_INITIAL_DELAY_MS = Number(process.env.DB_MAINT_INITIAL_DELAY_MS || 30000);
+
+class LocalLockManager {
+    constructor(cleanupIntervalMs = LOCAL_LOCK_CLEANUP_MS) {
+        this.cleanupIntervalMs = cleanupIntervalMs;
+        this.locks = new Map();
+        this.lastCleanupAt = 0;
+    }
+
+    acquire(key, ttlMs) {
+        const now = Date.now();
+        this.cleanup(now);
+        const expiresAt = this.locks.get(key);
+        if (expiresAt && expiresAt > now) {
+            return false;
+        }
+        this.locks.set(key, now + ttlMs);
+        return true;
+    }
+
+    release(key) {
+        this.locks.delete(key);
+        this.cleanup();
+    }
+
+    cleanup(now = Date.now()) {
+        if (now - this.lastCleanupAt < this.cleanupIntervalMs) {
+            return;
+        }
+        for (const [lockKey, expiresAt] of this.locks.entries()) {
+            if (expiresAt <= now) {
+                this.locks.delete(lockKey);
+            }
+        }
+        this.lastCleanupAt = now;
+    }
+}
+
+const localLockManager = new LocalLockManager();
+
+const idleJobQueue = [];
+const jobStates = new Map();
+let activeIdleJobs = 0;
 
 function logSoftIgnore(scope, error) {
     if (!error) return;
     logger.silly(`[Orchestrator] ${scope} 忽略异常: ${error.message}`);
-}
-
-function startEventLoopLagSampler(intervalMs = Number(process.env.EVENT_LOOP_SAMPLE_INTERVAL || 1000)) {
-    if (loopTimer) return;
-    let last = process.hrtime.bigint();
-    loopTimer = setInterval(() => {
-        const now = process.hrtime.bigint();
-        const diffMs = Number(now - last) / 1e6;
-        lastLagMs = Math.max(0, diffMs - intervalMs);
-        last = now;
-    }, intervalMs);
 }
 
 async function isHeavy() {
@@ -55,7 +89,7 @@ async function isHeavy() {
     }
 
     const { loadOk, memOk } = hasResourceBudget();
-    if (!loadOk || !memOk || lastLagMs > 150) {
+    if (!loadOk || !memOk) {
         __heavyCache = { at: now, val: true };
         return true;
     }
@@ -65,90 +99,165 @@ async function isHeavy() {
 }
 
 async function runWhenIdle(jobName, fn, opts = {}) {
-    const startDelayMs = Number(opts.startDelayMs || 8000);
-    const retryIntervalMs = Number(opts.retryIntervalMs || 30000);
-    const lockTtlSec = Number(opts.lockTtlSec || 7200); // 默认2小时锁
-    const lockKey = `lock:job:${jobName}`;
+    if (typeof fn !== 'function') {
+        throw new Error(`runWhenIdle("${jobName}") requires a function`);
+    }
 
-    // 初始延迟
-    await sleep(startDelayMs);
+    const existing = jobStates.get(jobName);
+    if (existing) {
+        logger.debug(`[Orchestrator] 任务 "${jobName}" 已在排队或执行中，跳过重复安排`);
+        return;
+    }
 
-    const execute = async () => {
-        // 1. 检查系统负载
-        if (await isHeavy()) {
-            logger.debug(`[Orchestrator] 系统负载高，推迟任务 "${jobName}"`);
-            setTimeout(execute, retryIntervalMs);
-            return;
-        }
-
-        // 2. 尝试获取锁（Redis 或 本地）
-        let locked = false;
-        try {
-            if (redis && redis.status === 'ready') {
-                // NX: 仅当键不存在时设置; EX: 过期时间
-                locked = await safeRedisSet(
-                    redis,
-                    lockKey,
-                    'LOCKED',
-                    'EX',
-                    lockTtlSec,
-                    `获取任务锁 ${jobName}`,
-                    'NX'
-                );
-            } else {
-                // 降级：无Redis时的简单内存锁（仅限单实例）
-                locked = acquireLocalLock(lockKey, lockTtlSec * 1000);
-            }
-        } catch (e) {
-            logger.warn(`[Orchestrator] 获取锁失败 "${jobName}": ${e.message}`);
-            // 锁获取出错时，安全起见推迟执行
-            setTimeout(execute, retryIntervalMs);
-            return;
-        }
-
-        if (!locked) {
-            logger.debug(`[Orchestrator] 任务 "${jobName}" 已在运行中（未获取到锁），跳过本次执行`);
-            setTimeout(execute, retryIntervalMs);
-            return;
-        }
-
-        // 3. 执行任务
-        try {
-            logger.info(`[Orchestrator] 开始执行任务 "${jobName}"`);
-            await fn();
-        } catch (error) {
-            logger.error(`[Orchestrator] Job "${jobName}" 执行失败: ${error && error.message}`);
-            setTimeout(execute, retryIntervalMs);
-        } finally {
-            // 4. 释放锁
-            try {
-                if (redis && redis.status === 'ready') {
-                    await safeRedisDel(redis, lockKey, `释放任务锁 ${jobName}`);
-                } else {
-                    releaseLocalLock(lockKey);
-                }
-            } catch (e) {
-                logger.warn(`[Orchestrator] 释放锁失败 "${jobName}": ${e.message}`);
-            }
-        }
+    const job = {
+        name: jobName,
+        fn,
+        startDelayMs: Number(opts.startDelayMs || 8000),
+        retryIntervalMs: Number(opts.retryIntervalMs || DEFAULT_RETRY_MS),
+        lockTtlSec: Number(opts.lockTtlSec || 7200),
+        idleCheckIntervalMs: Number(opts.idleCheckIntervalMs || 1500),
+        maxIdleWaitMs: Number(opts.maxIdleWaitMs || DEFAULT_IDLE_WAIT_MS),
+        lockKey: `lock:job:${jobName}`,
+        timeout: null,
+        inQueue: false,
     };
-
-    // 启动执行循环
-    execute();
+    jobStates.set(jobName, job);
+    scheduleJob(job, job.startDelayMs);
 }
 
-function acquireLocalLock(key, ttlMs) {
-    const now = Date.now();
-    const expiresAt = localLocks.get(key);
-    if (expiresAt && expiresAt > now) {
-        return false;
+function scheduleJob(job, delayMs) {
+    if (job.timeout) {
+        clearTimeout(job.timeout);
+        job.timeout = null;
     }
-    localLocks.set(key, now + ttlMs);
+    job.timeout = setTimeout(() => {
+        job.timeout = null;
+        enqueueIdleJob(job);
+    }, Math.max(0, delayMs));
+}
+
+function enqueueIdleJob(job) {
+    if (job.inQueue) return;
+    job.inQueue = true;
+    idleJobQueue.push(job);
+    processIdleJobQueue();
+}
+
+function processIdleJobQueue() {
+    while (activeIdleJobs < MAX_IDLE_JOB_CONCURRENCY && idleJobQueue.length > 0) {
+        const job = idleJobQueue.shift();
+        if (!job) continue;
+        job.inQueue = false;
+        activeIdleJobs += 1;
+        runIdleJob(job).finally(() => {
+            activeIdleJobs = Math.max(0, activeIdleJobs - 1);
+            processIdleJobQueue();
+        });
+    }
+}
+
+async function runIdleJob(job) {
+    const { name, fn, retryIntervalMs } = job;
+    try {
+        const ready = await waitForIdleWindow(job);
+        if (!ready) {
+            logger.debug(`[Orchestrator] 任务 "${name}" 等待空闲超时，${retryIntervalMs}ms 后重试`);
+            scheduleJob(job, retryIntervalMs);
+            return;
+        }
+
+        const lockSource = await acquireJobLock(job.lockKey, job.lockTtlSec);
+        if (!lockSource) {
+            logger.debug(`[Orchestrator] 任务 "${name}" 未获取到锁，${retryIntervalMs}ms 后再试`);
+            scheduleJob(job, retryIntervalMs);
+            return;
+        }
+
+        try {
+            logger.info(`[Orchestrator] 开始执行任务 "${name}"`);
+            await fn();
+            cleanupJob(job);
+        } catch (error) {
+            logger.error(`[Orchestrator] Job "${name}" 执行失败: ${error && error.message}`);
+            scheduleJob(job, retryIntervalMs);
+        } finally {
+            await releaseJobLock(job.lockKey, lockSource);
+        }
+    } catch (error) {
+        logger.warn(`[Orchestrator] 任务 "${name}" 调度异常: ${error && error.message}`);
+        scheduleJob(job, retryIntervalMs);
+    }
+}
+
+async function waitForIdleWindow(opts = {}) {
+    const checkIntervalMs = Math.max(250, Number(opts.idleCheckIntervalMs || 1500));
+    const maxWaitMs = Math.max(checkIntervalMs, Number(opts.maxIdleWaitMs || DEFAULT_IDLE_WAIT_MS));
+    const started = Date.now();
+
+    while (await isHeavy()) {
+        if (Date.now() - started >= maxWaitMs) {
+            return false;
+        }
+        await sleep(checkIntervalMs);
+    }
     return true;
 }
 
+async function acquireJobLock(lockKey, ttlSec) {
+    // 优先使用 Redis 锁，降级到进程内锁
+    if (redis && redis.status === 'ready') {
+        try {
+            const ok = await safeRedisSet(
+                redis,
+                lockKey,
+                'LOCKED',
+                'EX',
+                ttlSec,
+                `获取任务锁 ${lockKey}`,
+                'NX'
+            );
+            if (ok) {
+                return 'redis';
+            }
+        } catch (error) {
+            logger.warn(`[Orchestrator] 获取 Redis 锁失败 "${lockKey}": ${error.message}`);
+        }
+    }
+
+    const localOk = acquireLocalLock(lockKey, ttlSec * 1000);
+    return localOk ? 'local' : null;
+}
+
+async function releaseJobLock(lockKey, source) {
+    if (source === 'redis' && redis && redis.status === 'ready') {
+        try {
+            await safeRedisDel(redis, lockKey, `释放任务锁 ${lockKey}`);
+            return;
+        } catch (error) {
+            logger.warn(`[Orchestrator] 释放 Redis 锁失败 "${lockKey}": ${error.message}`);
+        }
+    }
+    if (source === 'local') {
+        releaseLocalLock(lockKey);
+    }
+}
+
+function cleanupJob(job) {
+    if (!job) return;
+    if (job.timeout) {
+        clearTimeout(job.timeout);
+        job.timeout = null;
+    }
+    job.inQueue = false;
+    jobStates.delete(job.name);
+}
+
+function acquireLocalLock(key, ttlMs) {
+    return localLockManager.acquire(key, ttlMs);
+}
+
 function releaseLocalLock(key) {
-    localLocks.delete(key);
+    localLockManager.release(key);
 }
 
 function sleep(ms) {
@@ -156,13 +265,12 @@ function sleep(ms) {
 }
 
 async function gate(kind, opts = {}) {
-    const checkIntervalMs = Number(opts.checkIntervalMs || 1500);
-    const maxWaitMs = Number(opts.maxWaitMs || (5 * 60 * 1000));
-    let waited = 0;
-    while (await isHeavy()) {
-        await sleep(checkIntervalMs);
-        waited += checkIntervalMs;
-        if (waited >= maxWaitMs) break;
+    const ok = await waitForIdleWindow({
+        idleCheckIntervalMs: opts.checkIntervalMs,
+        maxIdleWaitMs: opts.maxWaitMs,
+    });
+    if (!ok) {
+        logger.debug(`[Orchestrator] gate("${kind || 'unknown'}") 等待超时，继续执行`);
     }
 }
 
@@ -178,7 +286,7 @@ async function performDbMaintenance() {
         const db = dbs[i];
         try {
             if (i > 0) {
-                await new Promise(r => setTimeout(r, 500 * i));
+                await new Promise(r => setTimeout(r, DB_MAINT_DB_DELAY_STEP_MS * i));
             }
             await dbRun(db, 'PRAGMA wal_checkpoint(TRUNCATE)').catch(err => logger.debug(`操作失败: ${err.message}`));
             await dbRun(db, 'ANALYZE').catch(err => logger.debug(`操作失败: ${err.message}`));
@@ -198,12 +306,11 @@ function scheduleDbMaintenance() {
         runWhenIdle(LOG_PREFIXES.DB_MAINTENANCE, performDbMaintenance, { startDelayMs: 0, retryIntervalMs: retryMs });
     };
 
-    setTimeout(enqueueMaintenance, 30000);
+    setTimeout(enqueueMaintenance, DB_MAINT_INITIAL_DELAY_MS);
     setInterval(enqueueMaintenance, intervalMs);
 }
 
 function start() {
-    startEventLoopLagSampler();
     try {
         scheduleDbMaintenance();
     } catch (error) {

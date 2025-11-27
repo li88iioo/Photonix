@@ -19,7 +19,7 @@ async function getIndexStatus() {
 
 async function setIndexStatus(status) {
   try {
-    await dbRun('index', "INSERT INTO index_status(id, status) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET status=excluded.status", [String(status || '')]);
+    await dbRun('index', "INSERT INTO index_status(id, status, last_updated) VALUES(1, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET status=excluded.status, last_updated=CURRENT_TIMESTAMP", [String(status || '')]);
   } catch (err) {
     logger.debug(`[IndexStatusRepo] 设置索引状态失败 (status=${status}): ${err.message}`);
   }
@@ -40,20 +40,39 @@ async function setProcessedFiles(count) {
   try {
     const n = Math.max(0, parseInt(count || 0, 10));
     // 先尝试UPDATE，如果记录不存在则INSERT（避免覆盖已有的status）
-    const result = await dbRun('index', 
-      "UPDATE index_status SET processed_files = ? WHERE id = 1", 
+    const result = await dbRun('index',
+      "UPDATE index_status SET processed_files = ?, last_updated = CURRENT_TIMESTAMP WHERE id = 1",
       [n]
     );
-    
+
     // 如果UPDATE没有影响任何行（记录不存在），则INSERT新记录
     if (!result || result.changes === 0) {
-      await dbRun('index', 
-        "INSERT OR IGNORE INTO index_status(id, status, processed_files) VALUES(1, 'idle', ?)", 
+      await dbRun('index',
+        "INSERT OR IGNORE INTO index_status(id, status, processed_files, last_updated) VALUES(1, 'idle', ?, CURRENT_TIMESTAMP)",
         [n]
       );
     }
   } catch (err) {
     logger.debug(`[IndexStatusRepo] 设置已处理文件数失败 (count=${count}): ${err.message}`);
+  }
+}
+
+async function setTotalFiles(count) {
+  try {
+    const n = Math.max(0, parseInt(count || 0, 10));
+    const result = await dbRun('index',
+      "UPDATE index_status SET total_files = ?, last_updated = CURRENT_TIMESTAMP WHERE id = 1",
+      [n]
+    );
+
+    if (!result || result.changes === 0) {
+      await dbRun('index',
+        "INSERT OR IGNORE INTO index_status(id, status, total_files, last_updated) VALUES(1, 'idle', ?, CURRENT_TIMESTAMP)",
+        [n]
+      );
+    }
+  } catch (err) {
+    logger.debug(`[IndexStatusRepo] 设置总文件数失败 (count=${count}): ${err.message}`);
   }
 }
 
@@ -98,6 +117,7 @@ module.exports = {
   setIndexStatus,
   getProcessedFiles,
   setProcessedFiles,
+  setTotalFiles,
   getResumeValue,
   setResumeValue,
   deleteResumeKey,

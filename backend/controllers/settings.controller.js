@@ -50,6 +50,7 @@ const {
   handlePasswordOperations,
   detectAuthChanges,
   buildAuditContext,
+  translateAuditLog,
   verifySensitiveOperations,
   dispatchUpdateTask,
   buildUpdateResponse
@@ -218,9 +219,7 @@ exports.triggerSync = async (req, res) => {
         throw new AuthorizationError('需要先设置访问密码才能重建索引');
       }
       const adminSecret = req.headers['x-admin-secret'] || req.body?.adminSecret;
-      const buildCtx = (extra) => ({
-        requestId: req.requestId || '-',
-        userId: (req.user && req.user.id) ? String(req.user.id) : 'anonymous',
+      const buildCtx = (extra) => buildAuditContext(req, {
         action: 'trigger_sync',
         type: 'index',
         sensitive: true,
@@ -230,7 +229,7 @@ exports.triggerSync = async (req, res) => {
       if (!verifyResult.ok) {
         throw mapAdminSecretError(verifyResult, '重建索引验证失败');
       }
-      logger.info(JSON.stringify(buildCtx({ status: 'approved', message: '重建索引管理员密钥验证成功' })));
+      logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved', message: '重建索引管理员密钥验证成功' }))));
     }
     const syncResult = await triggerSyncOperation(type);
     res.json({
@@ -369,7 +368,7 @@ exports.manualAlbumSync = async (req, res) => {
       }
     }
     const message = summary.totalChanges > 0 ? '手动同步完成' : '没有检测到需要同步的内容';
-    logger.info(JSON.stringify(buildCtx({ status: 'approved', summary })));
+    logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved', summary }))));
 
     res.json({
       success: true,
@@ -398,7 +397,7 @@ exports.verifyAdminSecretOnly = async (req, res) => {
     const verified = await verifySensitiveOperations(true, adminSecret, buildCtx);
     if (!verified.ok) throw mapAdminSecretError(verified);
 
-    logger.info(JSON.stringify(buildCtx({ status: 'approved' })));
+    logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved' }))));
     res.json({ success: true });
   } catch (error) {
     if (error instanceof AuthorizationError || error instanceof ValidationError || error instanceof ConfigurationError) {
@@ -438,7 +437,7 @@ exports.resetPasswordViaAdminSecret = async (req, res) => {
       PASSWORD_HASH: passwordHash
     });
 
-    logger.info(JSON.stringify(buildCtx({ status: 'approved', message: '访问密码已通过管理员密钥重置' })));
+    logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved', message: '访问密码已通过管理员密钥重置' }))));
     res.json({
       success: true,
       message: '访问密码已重置，请使用新密码登录'
@@ -472,7 +471,7 @@ exports.toggleAlbumDeletion = async (req, res) => {
     if (!verified.ok) throw mapAdminSecretError(verified);
 
     await settingsService.updateSettings({ ALBUM_DELETE_ENABLED: desired ? 'true' : 'false' });
-    logger.info(JSON.stringify(buildCtx({ status: 'approved' })));
+    logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved' }))));
 
     res.json({
       success: true,
@@ -514,7 +513,7 @@ exports.updateManualSyncSchedule = async (req, res) => {
     } catch (error) {
       throw mapScheduleUpdateError(error);
     }
-    logger.info(JSON.stringify(buildCtx({ status: 'approved', normalizedSchedule: normalized.raw })));
+    logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved', normalizedSchedule: normalized.raw }))));
 
     const status = manualSyncScheduler.getStatus();
     res.json({

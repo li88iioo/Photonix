@@ -3238,9 +3238,10 @@ body.settings-open {
     /* slate-50 */
     border: 1px solid rgba(203, 213, 225, 0.6);
     /* slate-300 */
-    border-radius: 0.65rem;
+    border-radius: 0.75rem;
     overflow: hidden;
     box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
+    transition: all 0.2s ease;
 }
 
 .manage-input-group .form-input {
@@ -3253,11 +3254,16 @@ body.settings-open {
     font-size: 0.9rem;
 }
 
+.manage-input-group:focus-within {
+    background-color: #fff;
+    border-color: #e5e7eb;
+    box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.02);
+}
+
 .manage-input-group .form-input:focus {
     border: none;
     outline: none;
-    box-shadow: inset 0 0 0 2px rgba(59, 130, 246, 0.3);
-    /* blue-500 */
+    box-shadow: none;
 }
 
 .manage-input-btn {

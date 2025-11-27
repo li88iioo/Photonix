@@ -1,6 +1,6 @@
 /**
  * @file frontend/js/settings/status.js
- * @description 管理设置页同步任务状态、实时监控与补全操作
+ * @description 管理设置页同步任务状态、实时监控与补全操作。
  */
 
 import settingsContext from './context.js';
@@ -12,6 +12,40 @@ import { UI, NETWORK } from '../core/constants.js';
 import { generateStatusCardHTML, generateDetailItemHTML } from '../features/gallery/ui-components.js';
 import { safeSetInnerHTML, safeSetStyle, safeClassList, safeGetElementById, safeQuerySelector } from '../shared/dom-utils.js';
 import { showPasswordPrompt } from './password-prompt.js';
+
+let autoRefreshIntervalId = null;
+const AUTO_REFRESH_INTERVAL_MS = 10000; // 10秒自动刷新间隔
+
+/**
+ * 启动自动刷新机制，每10秒刷新状态卡片。
+ */
+export function startPersistentAutoRefresh() {
+  if (autoRefreshIntervalId) {
+    clearInterval(autoRefreshIntervalId);
+  }
+  loadStatusTables({ silent: true }).catch(() => { });
+
+  autoRefreshIntervalId = setInterval(async () => {
+    try {
+      await loadStatusTables({ silent: true });
+    } catch (error) {
+      settingsLogger.debug('自动刷新失败（已忽略）', error);
+    }
+  }, AUTO_REFRESH_INTERVAL_MS);
+
+  settingsLogger.debug(`已启动自动刷新，间隔 ${AUTO_REFRESH_INTERVAL_MS / 1000} 秒`);
+}
+
+/**
+ * 停止自动刷新机制。
+ */
+export function stopPersistentAutoRefresh() {
+  if (autoRefreshIntervalId) {
+    clearInterval(autoRefreshIntervalId);
+    autoRefreshIntervalId = null;
+    settingsLogger.debug('已停止自动刷新');
+  }
+}
 
 const ongoingRequests = new Map();
 
@@ -27,7 +61,7 @@ async function fetchStatusTables() {
 
     const response = await fetch('/api/settings/status-tables', {
       method: 'GET',
-      headers
+      headers,
     });
 
     if (!response.ok) {
@@ -44,8 +78,8 @@ async function fetchStatusTables() {
 
 /**
  * 启动指定类型的同步/补全任务并显示进度。
- * @param {'index'|'thumbnail'|'hls'} type - 同步任务类型
- * @param {{ loop?: boolean, silent?: boolean }} [options={}] - 执行配置
+ * @param {'index'|'thumbnail'|'hls'} type 同步任务类型
+ * @param {{ loop?: boolean, silent?: boolean }} [options={}] 执行配置参数
  * @returns {Promise<Record<string, any>>} 后端返回的任务结果
  */
 export async function triggerSync(type, options = {}) {
@@ -82,8 +116,8 @@ export async function triggerSync(type, options = {}) {
       headers,
       body: JSON.stringify({
         loop: options.loop || false,
-        silent: syncState.isSilent || false
-      })
+        silent: syncState.isSilent || false,
+      }),
     });
 
     if (!response.ok) {
@@ -92,7 +126,7 @@ export async function triggerSync(type, options = {}) {
         type,
         status: response.status,
         statusText: response.statusText,
-        error: errorData
+        error: errorData,
       });
       throw new Error(errorData.message || `补全失败: ${response.status}`);
     }
@@ -100,7 +134,10 @@ export async function triggerSync(type, options = {}) {
     const data = await response.json();
 
     if (!syncState.isSilent) {
-      showNotification(`补全${type === 'index' ? '索引' : type === 'thumbnail' ? '缩略图' : 'HLS'}成功`, 'success');
+      showNotification(
+        `补全${type === 'index' ? '索引' : type === 'thumbnail' ? '缩略图' : 'HLS'} 成功`,
+        'success',
+      );
     } else if (type === 'thumbnail') {
       showNotification('缩略图后台补全已启动，将自动补全所有缺失文件', 'info');
     }
@@ -122,8 +159,8 @@ export async function triggerSync(type, options = {}) {
 
 /**
  * 触发缓存或资源的清理任务。
- * @param {'index'|'thumbnail'|'hls'} type - 清理任务类型
- * @returns {Promise<void>} 清理流程完成的 Promise
+ * @param {'index'|'thumbnail'|'hls'} type 清理任务类型
+ * @returns {Promise<void>} 清理操作完成
  */
 export async function triggerCleanup(type) {
   try {
@@ -135,7 +172,7 @@ export async function triggerCleanup(type) {
 
     const response = await fetch(`/api/settings/cleanup/${type}`, {
       method: 'POST',
-      headers
+      headers,
     });
 
     if (!response.ok) {
@@ -148,7 +185,7 @@ export async function triggerCleanup(type) {
     if (data.data && data.data.skipped) {
       showNotification(data.data.message, 'info');
     } else {
-      showNotification(`同步${type === 'thumbnail' ? '缩略图' : 'HLS'}成功`, 'success');
+      showNotification(`同步${type === 'thumbnail' ? '缩略图' : 'HLS'} 成功`, 'success');
     }
 
     await loadStatusTables();
@@ -161,7 +198,7 @@ export async function triggerCleanup(type) {
 
 /**
  * 启动缩略图批量补全任务。
- * @param {{ silent?: boolean }} [options={}] - 执行配置
+ * @param {{ silent?: boolean }} [options={}] 参数
  * @returns {Promise<Record<string, any>>} 后端返回的执行结果
  */
 export async function triggerThumbnailBatchSync(options = {}) {
@@ -175,13 +212,13 @@ export async function triggerThumbnailBatchSync(options = {}) {
     const requestBody = {
       limit: (NETWORK.MAX_RETRY_ATTEMPTS || 0) * 1000,
       loop: options.loop || false,
-      silent: options.silent || false
+      silent: options.silent || false,
     };
 
     const response = await fetch('/api/thumbnail/batch', {
       method: 'POST',
       headers,
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
@@ -207,7 +244,7 @@ export async function triggerThumbnailBatchSync(options = {}) {
 
 /**
  * 重新同步缩略图状态以纠正异常。
- * @returns {Promise<void>} 同步完成的 Promise
+ * @returns {Promise<void>} 同步完成
  */
 export async function resyncThumbnails() {
   try {
@@ -216,7 +253,7 @@ export async function resyncThumbnails() {
 
     const response = await fetch('/api/settings/resync/thumbnails', {
       method: 'POST',
-      headers
+      headers,
     });
 
     if (!response.ok) {
@@ -236,10 +273,9 @@ export async function resyncThumbnails() {
 }
 
 /**
- * 控制对应任务类型的加载动画显示。
- * @param {'index'|'thumbnail'|'hls'} type - 同步任务类型
- * @param {boolean} show - 是否展示加载动画
- * @returns {void}
+ * 控制指定类型的加载动画显示。
+ * @param {'index'|'thumbnail'|'hls'} type 任务类型
+ * @param {boolean} show 是否显示动画
  */
 export function showPodLoading(type, show) {
   const loadingElement = safeGetElementById(`${type}-loading`);
@@ -250,9 +286,8 @@ export function showPodLoading(type, show) {
 
 /**
  * 控制进度提示条的展示与隐藏。
- * @param {'index'|'thumbnail'|'hls'} type - 任务类型
- * @param {boolean} show - 是否展示进度提示
- * @returns {void}
+ * @param {'index'|'thumbnail'|'hls'} type 任务类型
+ * @param {boolean} show 是否显示进度
  */
 export function showProgressUpdate(type, show) {
   const updateElement = safeGetElementById(`${type}-progress-update`);
@@ -261,14 +296,19 @@ export function showProgressUpdate(type, show) {
   }
 }
 
+/**
+ * 实时更新状态卡片。
+ * @param {'index'|'thumbnail'|'hls'} type 状态类型
+ * @param {Object} data 状态数据
+ */
 function updateStatusRealtime(type, data) {
   const prefix = type;
 
-  const percentElement = safeGetElementById(`${prefix}-percent`);
+  const percentElement = safeGetElementById(`${prefix} -percent`);
   if (percentElement && data.percent !== undefined) {
-    percentElement.textContent = `${data.percent}%`;
+    percentElement.textContent = `${data.percent}% `;
 
-    const progressCircle = safeQuerySelector(`[data-type="${type}"] .status-chart-progress-front`);
+    const progressCircle = safeQuerySelector(`[data - type="${type}"] .status - chart - progress - front`);
     if (progressCircle) {
       const progressOffset = 329 - (329 * data.percent / 100);
       safeSetStyle(progressCircle, 'strokeDashoffset', progressOffset);
@@ -303,14 +343,14 @@ function updateStatusRealtime(type, data) {
   }
 
   if (data.lastUpdated) {
-    const timeElement = safeGetElementById(`${prefix}-last-updated`);
+    const timeElement = safeGetElementById(`${prefix} -last - updated`);
     if (timeElement) {
       timeElement.textContent = new Date(data.lastUpdated).toLocaleString();
     }
   }
 
   if (data.lastSync) {
-    const syncElement = safeGetElementById(`${prefix}-last-sync`);
+    const syncElement = safeGetElementById(`${prefix} -last - sync`);
     if (syncElement) {
       syncElement.textContent = new Date(data.lastSync).toLocaleString();
     }
@@ -319,8 +359,7 @@ function updateStatusRealtime(type, data) {
 
 /**
  * 开启指定任务的实时状态监听。
- * @param {'index'|'thumbnail'|'hls'} type - 任务类型
- * @returns {void}
+ * @param {'index'|'thumbnail'|'hls'} type 任务类型
  */
 export function startRealtimeMonitoring(type) {
   syncState.startMonitoring(type);
@@ -380,12 +419,12 @@ export function startRealtimeMonitoring(type) {
 
           updateStatusRealtime(type, {
             ...statusData,
-            percent
+            percent,
           });
         }
       }
     } catch (error) {
-      // ignore
+      // 忽略错误
     }
   }, type === 'index' ? 2000 : 10000);
 
@@ -401,6 +440,11 @@ export function startRealtimeMonitoring(type) {
   syncState.setMonitoringTimers(intervalId, timeoutId);
 }
 
+/**
+ * 获取指定名称的SVG图标字符串。
+ * @param {string} iconName 图标名
+ * @returns {string} SVG字符串
+ */
 function getIconSVG(iconName) {
   const icons = {
     paperclip: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><title>补全</title><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>`,
@@ -411,6 +455,12 @@ function getIconSVG(iconName) {
   return icons[iconName] || '';
 }
 
+/**
+ * 计算索引进度百分比。
+ * @param {Object} statusData 索引状态
+ * @param {number} totalItems 总项目数
+ * @returns {number} 百分比
+ */
 function calculateIndexProgress(statusData, totalItems) {
   if (totalItems === 0) {
     return statusData.processedFiles > 0 ? 100 : 0;
@@ -422,6 +472,12 @@ function calculateIndexProgress(statusData, totalItems) {
   return Math.round((processed / totalItems) * 100);
 }
 
+/**
+ * 生成索引详情的HTML内容。
+ * @param {Object} statusData 状态数据
+ * @param {Object} computedData 计算数据
+ * @returns {string} HTML字符串
+ */
 function generateIndexDetailsHTML(statusData, computedData) {
   const { statusClass, totalItems } = computedData;
 
@@ -433,6 +489,10 @@ function generateIndexDetailsHTML(statusData, computedData) {
   ].join('');
 }
 
+/**
+ * 渲染索引状态卡片。
+ * @param {Object} statusData 索引状态数据
+ */
 function renderIndexStatus(statusData) {
   const container = safeGetElementById('index-status');
   if (!container) return;
@@ -466,7 +526,7 @@ function renderIndexStatus(statusData) {
   const normalizedStatusData = {
     ...statusData,
     status: normalizedStatus,
-    processedFiles
+    processedFiles,
   };
 
   const statusClass = getStatusClass(normalizedStatus);
@@ -493,12 +553,17 @@ function renderIndexStatus(statusData) {
     timestampId: 'index-last-updated',
     timestampLabel: '最后更新',
     timestamp: statusData.lastUpdated,
-    actions
+    actions,
   });
 
   safeSetInnerHTML(container, html);
 }
 
+/**
+ * 计算缩略图已处理(success)数量。
+ * @param {Object} statusData 缩略图状态
+ * @returns {number} 已处理数量
+ */
 function calculateThumbnailSuccessCount(statusData) {
   const stats = statusData.stats || [];
   const successStates = ['exists', 'complete'];
@@ -511,7 +576,7 @@ function calculateThumbnailSuccessCount(statusData) {
 
   if (statusData.fileSystemStats?.actualFiles) {
     settingsLogger.debug('使用文件系统统计作为fallback', {
-      actualFiles: statusData.fileSystemStats.actualFiles
+      actualFiles: statusData.fileSystemStats.actualFiles,
     });
     return statusData.fileSystemStats.actualFiles;
   }
@@ -519,6 +584,11 @@ function calculateThumbnailSuccessCount(statusData) {
   return 0;
 }
 
+/**
+ * 生成状态卡片上的额外状态标识。
+ * @param {Object} statusData 状态数据
+ * @returns {string} HTML内容
+ */
 function generateStatusIndicator(statusData) {
   if (statusData.autoFixed) {
     return '<span class="status-indicator status-success">已自动修复</span>';
@@ -532,6 +602,12 @@ function generateStatusIndicator(statusData) {
   return '';
 }
 
+/**
+ * 生成缩略图详情HTML内容。
+ * @param {Object} statusData 状态数据
+ * @param {Object} computedData 计算数据
+ * @returns {string} HTML字符串
+ */
 function generateThumbnailDetailsHTML(statusData, computedData) {
   const { stats, sourceTotal, total, actualSuccessCount } = computedData;
 
@@ -557,6 +633,10 @@ function generateThumbnailDetailsHTML(statusData, computedData) {
   return detailItems.join('');
 }
 
+/**
+ * 渲染缩略图状态卡片。
+ * @param {Object} statusData 缩略图状态数据
+ */
 function renderThumbnailStatus(statusData) {
   const container = safeGetElementById('thumbnail-status');
   if (!container) return;
@@ -581,20 +661,20 @@ function renderThumbnailStatus(statusData) {
       action: 'sync',
       type: 'thumbnail',
       label: '补全',
-      icon: getIconSVG('paperclip')
+      icon: getIconSVG('paperclip'),
     },
     {
       action: 'resync',
       type: 'thumbnails',
       label: '同步',
-      icon: getIconSVG('sync')
+      icon: getIconSVG('sync'),
     },
     {
       action: 'cleanup',
       type: 'thumbnail',
       label: '清理',
-      icon: getIconSVG('trash')
-    }
+      icon: getIconSVG('trash'),
+    },
   ];
 
   const html = generateStatusCardHTML({
@@ -608,12 +688,16 @@ function renderThumbnailStatus(statusData) {
     timestampId: 'thumbnail-last-sync',
     timestampLabel: '最后同步',
     timestamp: statusData.lastSync,
-    actions
+    actions,
   });
 
   safeSetInnerHTML(container, html);
 }
 
+/**
+ * 渲染 HLS 状态卡片。
+ * @param {Object} statusData HLS 状态数据
+ */
 function renderHlsStatus(statusData) {
   const container = safeGetElementById('hls-status');
   if (!container) return;
@@ -628,7 +712,7 @@ function renderHlsStatus(statusData) {
   const statusClass = getStatusClass(statusData.status || 'complete');
 
   const html = `
-        <div class="status-card-new">
+  <div class="status-card-new">
             <div class="card-header-new">
                 <h3 class="card-title-new">HLS详细信息</h3>
                 <span class="status-badge-new ${statusClass}" id="hls-percent">${completedPercent}%</span>
@@ -676,15 +760,15 @@ function renderHlsStatus(statusData) {
                 </div>
             </div>
         </div>
-    `;
+  `;
 
   safeSetInnerHTML(container, html);
 }
 
 /**
- * 将任务状态转换为对应的 CSS 类名。
- * @param {string} status - 状态字符串
- * @returns {string} 匹配的 CSS 类名
+ * 将任务状态字符串转换为 CSS 类名。
+ * @param {string} status 状态字符串
+ * @returns {string} 对应的 CSS 类名
  */
 export function getStatusClass(status) {
   switch (status) {
@@ -708,8 +792,8 @@ export function getStatusClass(status) {
 }
 
 /**
- * 提供状态的中文可读名称。
- * @param {string} status - 状态字符串
+ * 获取状态对应的中文可读名称。
+ * @param {string} status 状态字符串
  * @returns {string} 中文描述
  */
 export function getStatusDisplayName(status) {
@@ -728,15 +812,15 @@ export function getStatusDisplayName(status) {
     idle: '空闲',
     running: '运行中',
     stopped: '已停止',
-    ready: '就绪'
+    ready: '就绪',
   };
   return names[status] || status;
 }
 
 /**
  * 加载并渲染设置页的状态表。
- * @param {{ silent?: boolean }} [options={}] - 控制是否静默刷新
- * @returns {Promise<void>} 渲染完成的 Promise
+ * @param {{ silent?: boolean }} [options={}] 是否静默刷新
+ * @returns {Promise<void>} 渲染完成
  */
 export async function loadStatusTables(options = {}) {
   const { silent = false } = options;
@@ -779,8 +863,7 @@ export async function loadStatusTables(options = {}) {
 }
 
 /**
- * 绑定状态页内的同步按钮事件。
- * @returns {void}
+ * 绑定设置页同步按钮事件。
  */
 export function setupSyncButtonListeners() {
   const { card } = settingsContext;
@@ -790,6 +873,12 @@ export function setupSyncButtonListeners() {
   card.addEventListener('click', handleStatusButtonClick);
 }
 
+/**
+ * 处理带认证的索引重建逻辑。
+ * @param {string} type 任务类型
+ * @param {string} action 动作名
+ * @returns {Promise<boolean|void>}
+ */
 async function handleIndexRebuildWithAuth(type, action) {
   const { initialSettings } = settingsContext;
   const hasPassword = initialSettings?.hasPassword || false;
@@ -806,6 +895,7 @@ async function handleIndexRebuildWithAuth(type, action) {
     return;
   }
 
+  // 管理员密码验证
   return new Promise((resolve) => {
     showPasswordPrompt({
       useAdminSecret: true,
@@ -828,6 +918,13 @@ async function handleIndexRebuildWithAuth(type, action) {
   });
 }
 
+/**
+ * 通过管理员密码请求补全或重建。
+ * @param {string} type 任务类型
+ * @param {string} action 动作
+ * @param {string} adminSecret 管理员密钥
+ * @returns {Promise<Object>} 响应对象
+ */
 async function triggerSyncWithAuth(type, action, adminSecret) {
   const response = await fetch(`/api/settings/sync/${type}`, {
     method: 'POST',
@@ -851,6 +948,10 @@ async function triggerSyncWithAuth(type, action, adminSecret) {
   return payload;
 }
 
+/**
+ * 处理设置页状态卡操作按钮的点击事件。
+ * @param {MouseEvent} event 事件对象
+ */
 async function handleStatusButtonClick(event) {
   const button = event.target.closest('.sync-btn[data-action]');
   if (!button) return;
@@ -897,7 +998,7 @@ async function handleStatusButtonClick(event) {
           button.disabled = true;
           button.classList.add('loading');
           const loadingLabel = `${originalLabel}中...`;
-          safeSetInnerHTML(button, `<span class="btn-spinner"></span><span>${loadingLabel}</span>`);
+          safeSetInnerHTML(button, `<span class="btn-spinner"></span> <span>${loadingLabel}</span>`);
         }
 
         try {
@@ -936,7 +1037,7 @@ async function handleStatusButtonClick(event) {
         if (!cleanupOriginalDisabled) {
           button.disabled = true;
           button.classList.add('loading');
-          safeSetInnerHTML(button, `<span class="btn-spinner"></span><span>${cleanupLabel}中...</span>`);
+          safeSetInnerHTML(button, `<span class="btn-spinner"></span> <span>${cleanupLabel}中...</span>`);
         }
 
         try {
@@ -960,7 +1061,7 @@ async function handleStatusButtonClick(event) {
           if (!resyncOriginalDisabled) {
             button.disabled = true;
             button.classList.add('loading');
-            safeSetInnerHTML(button, `<span class="btn-spinner"></span><span>${resyncLabel}中...</span>`);
+            safeSetInnerHTML(button, `<span class="btn-spinner"></span> <span>${resyncLabel}中...</span>`);
           }
 
           try {

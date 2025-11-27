@@ -31,7 +31,6 @@ const { initializeAllDBs, ensureCoreTables } = require('./db/migrations');
 const { migrateToMultiDB } = require('./db/migrate-to-multi-db');
 const { createThumbnailWorkerPool, ensureCoreWorkers } = require('./services/worker.manager');
 const { startAdaptiveScheduler } = require('./services/adaptive.service');
-const { setupThumbnailWorkerListeners, startIdleThumbnailGeneration } = require('./services/thumbnail.service');
 const { setupWorkerListeners, buildSearchIndex } = require('./services/indexer.service');
 const { withTimeout, dbAllOnPath } = require('./db/multi-db');
 const { timeUtils, TIME_CONSTANTS } = require('./utils/time.utils');

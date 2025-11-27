@@ -332,6 +332,27 @@
 - 代码引用：backend/services/adaptive.service.js
 - 示例：THUMB_POOL_MAX=8
 
+6) THUMB_TARGET_WIDTH / THUMB_QUALITY_*
+- 作用：控制缩略图生成的尺寸与动态质量（基于像素量自动降质以平衡体积与画质）
+- 默认值：
+  - THUMB_TARGET_WIDTH=500
+  - THUMB_PIXEL_THRESHOLD_HIGH=8000000 (800万像素)
+  - THUMB_PIXEL_THRESHOLD_MEDIUM=2000000 (200万像素)
+  - THUMB_QUALITY_LOW=65 (大图质量)
+  - THUMB_QUALITY_MEDIUM=70 (中图质量)
+  - THUMB_QUALITY_HIGH=80 (小图质量)
+  - THUMB_SAFE_MODE_QUALITY=60 (安全模式质量)
+- 取值/格式：整数
+- 推荐配置方案：
+  - 追求画质：调高 QUALITY_*（如 80/85/90），调大 TARGET_WIDTH（如 800）
+  - 追求速度/存储：保持默认或适当降低 QUALITY
+  - 移动端优化：TARGET_WIDTH=360 或 480
+- 风险：质量过高显著增加缩略图体积与带宽占用；尺寸过大增加生成耗时
+- 代码引用：backend/workers/thumbnail-worker.js
+- 示例：
+  THUMB_TARGET_WIDTH=800
+  THUMB_QUALITY_HIGH=85
+
 2) USE_FILE_SYSTEM_HLS_CHECK / HLS_*（TTL/批次/间隔/延迟）
 - 作用：基于文件系统检查 HLS 就绪与缓存
 - 默认值：true / 300000 / 10 / 1000 / 100

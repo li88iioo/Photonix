@@ -452,7 +452,38 @@ const dbTimeoutManager = new DbTimeoutManager();
         }
     }
 
+    /**
+     * 递归统计指定目录下的媒体文件和相册总数，仅用于预扫描。
+     * 
+     * @param {string} dir - 需要遍历的目录的绝对路径
+     * @param {string} [relativePath=''] - 当前递归相对路径（默认为空）
+     * @returns {Promise<number>} - 文件及相册的总数
+     */
+    async function countFilesOnly(dir, relativePath = '') {
+        let count = 0;
+        try {
+            const entries = await fs.readdir(dir, { withFileTypes: true });
+            for (const entry of entries) {
+                // 跳过系统目录、隐藏目录及临时目录
+                if (entry.name === '@eaDir' || entry.name === '.tmp' || entry.name.startsWith('.')) continue;
+
+                if (entry.isDirectory()) {
+                    count++; // 相册目录计为1
+                    count += await countFilesOnly(path.join(dir, entry.name), path.join(relativePath, entry.name));
+                } else if (/\.(jpe?g|png|webp|gif|mp4|webm|mov)$/i.test(entry.name)) {
+                    // 跳过临时文件
+                    if (tempFileManager.isTempFile(entry.name)) continue;
+                    count++;
+                }
+            }
+        } catch (e) {
+            logger.debug(`[INDEXING-WORKER] 预扫描目录失败: ${dir}, ${e.message}`);
+        }
+        return count;
+    }
+
     const tasks = {
+
         async get_all_media_items() {
             try {
                 // 仅返回必要字段，降低消息体体积
@@ -479,6 +510,13 @@ const dbTimeoutManager = new DbTimeoutManager();
                 if (lastProcessedPath) {
                     logger.debug(`[INDEXING-WORKER] 检测到上次索引断点，将从 ${lastProcessedPath} 继续`);
                 } else {
+                    logger.info('[INDEXING-WORKER] 开始统计文件总数（预扫描）...');
+                    const t0 = Date.now();
+                    const totalFiles = await countFilesOnly(photosDir);
+                    const dt = ((Date.now() - t0) / 1000).toFixed(1);
+                    await idxRepo.setTotalFiles(totalFiles);
+                    logger.info(`[INDEXING-WORKER] 预扫描完成，共发现 ${totalFiles} 个条目，用时 ${dt}s`);
+
                     logger.debug('[INDEXING-WORKER] 未发现索引断点，将从头开始');
                     await idxRepo.setIndexStatus('building');
                     await idxRepo.setProcessedFiles(0);
@@ -568,8 +606,8 @@ const dbTimeoutManager = new DbTimeoutManager();
                     try {
                         logger.info('[INDEXING-WORKER] 开始同步缩略图状态（手动触发）...');
                         const { thumbnailSyncService } = require('../services/settings/maintenance.service');
-                        const syncedCount = await thumbnailSyncService.resyncThumbnailStatus();
-                        logger.info(`[INDEXING-WORKER] 缩略图状态同步完成，同步了 ${syncedCount} 个文件`);
+                        const { syncedCount, existsCount, missingCount } = await thumbnailSyncService.resyncThumbnailStatus();
+                        logger.info(`[INDEXING-WORKER] 缩略图状态同步完成: 总计=${syncedCount}, 存在=${existsCount}, 缺失=${missingCount}`);
                     } catch (syncError) {
                         logger.warn('[INDEXING-WORKER] 缩略图状态同步失败（不影响索引）:', syncError.message);
                     }

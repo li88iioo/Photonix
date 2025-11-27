@@ -1,10 +1,11 @@
 const { Worker } = require('worker_threads');
 const path = require('path');
 const logger = require('../config/logger');
+const Piscina = require('piscina');
+const state = require('./state.manager');
 const { NUM_WORKERS } = require('../config');
 
 const WORKER_MEMORY_MB = Number(process.env.WORKER_MEMORY_MB || 256);
-const THUMB_WORKER_MEMORY_MB = Number(process.env.THUMB_WORKER_MEMORY_MB || 512);
 const INITIAL_THUMB_WORKERS = (() => {
     const envValue = Number(process.env.THUMB_INITIAL_WORKERS);
     if (Number.isFinite(envValue) && envValue > 0) {
@@ -13,14 +14,33 @@ const INITIAL_THUMB_WORKERS = (() => {
     return Math.max(1, NUM_WORKERS || 1);
 })();
 
-let indexingWorker = null;
-let settingsWorker = null;
-let videoWorker = null;
-
-const thumbnailWorkers = [];
-const idleThumbnailWorkers = [];
 let desiredThumbnailSize = INITIAL_THUMB_WORKERS;
 let lastThumbnailUseAt = 0;
+let thumbnailPool = null;
+
+class CoreWorkerRegistry {
+    constructor() {
+        this.instances = new Map();
+    }
+
+    get(name, workerData = {}) {
+        if (!this.instances.has(name)) {
+            const worker = spawnCoreWorker(name, workerData);
+            this.instances.set(name, worker);
+        }
+        return this.instances.get(name);
+    }
+
+    getExisting(name) {
+        return this.instances.get(name) || null;
+    }
+
+    clear(name) {
+        this.instances.delete(name);
+    }
+}
+
+const coreWorkerRegistry = new CoreWorkerRegistry();
 
 const workerScripts = {
     indexing: path.resolve(__dirname, '..', 'workers', 'indexing-worker.js'),
@@ -31,25 +51,13 @@ const workerScripts = {
 
 function attachCoreWorkerLogging(worker, name) {
     worker.on('error', (error) => {
-        logger.error(`[WorkerManager] ${name} worker error:`, error);
+        logger.error(`[工作线程管理] ${name} worker 发生错误:`, error);
     });
     worker.once('exit', (code) => {
         if (code !== 0 && !worker.__expectedTermination) {
-            logger.warn(`[WorkerManager] ${name} worker exited with code ${code}`);
+            logger.warn(`[工作线程管理] ${name} worker 非正常退出，代码=${code}`);
         }
-        switch (name) {
-            case 'indexing':
-                indexingWorker = null;
-                break;
-            case 'settings':
-                settingsWorker = null;
-                break;
-            case 'video':
-                videoWorker = null;
-                break;
-            default:
-                break;
-        }
+        coreWorkerRegistry.clear(name);
     });
 }
 
@@ -67,28 +75,19 @@ function spawnCoreWorker(name, workerData = {}) {
 }
 
 function getIndexingWorker() {
-    if (!indexingWorker) {
-        indexingWorker = spawnCoreWorker('indexing');
-    }
-    return indexingWorker;
+    return coreWorkerRegistry.get('indexing');
 }
 
 function getSettingsWorker() {
-    if (!settingsWorker) {
-        settingsWorker = spawnCoreWorker('settings');
-    }
-    return settingsWorker;
+    return coreWorkerRegistry.get('settings');
 }
 
 function startVideoWorker() {
-    if (!videoWorker) {
-        videoWorker = spawnCoreWorker('video');
-    }
-    return videoWorker;
+    return coreWorkerRegistry.get('video');
 }
 
 function getVideoWorker() {
-    return videoWorker;
+    return coreWorkerRegistry.getExisting('video');
 }
 
 function ensureCoreWorkers() {
@@ -116,124 +115,94 @@ function createDisposableWorker(kind, workerData = {}) {
     });
 }
 
-function removeThumbnailWorkerFromQueues(worker) {
-    const idx = thumbnailWorkers.indexOf(worker);
-    if (idx > -1) {
-        thumbnailWorkers.splice(idx, 1);
-    }
-    const idleIdx = idleThumbnailWorkers.indexOf(worker);
-    if (idleIdx > -1) {
-        idleThumbnailWorkers.splice(idleIdx, 1);
-    }
+function createPiscinaPool(size) {
+    const threads = Math.max(1, Math.floor(size));
+    const pool = new Piscina({
+        filename: workerScripts.thumbnail,
+        minThreads: threads,
+        maxThreads: threads,
+        idleTimeout: Number(process.env.THUMB_POOL_IDLE_TIMEOUT_MS || 30000),
+        concurrentTasksPerWorker: 1,
+    });
+    pool.on('error', (error) => logger.warn(`[工作线程管理] 缩略图池错误: ${error && error.message}`));
+    logger.info(`[工作线程管理] 已启动 ${threads} 个缩略图 Piscina worker`);
+    return pool;
 }
 
-function spawnThumbnailWorker(id) {
-    const worker = new Worker(workerScripts.thumbnail, {
-        workerData: { workerId: id },
-        resourceLimits: { maxOldGenerationSizeMb: THUMB_WORKER_MEMORY_MB }
-    });
-
-    worker.on('error', (error) => {
-        logger.error('[WorkerManager] 缩略图 worker 错误:', error);
-    });
-
-    worker.once('exit', (code) => {
-        removeThumbnailWorkerFromQueues(worker);
-        if (!worker.__expectedTermination) {
-            logger.warn(`[WorkerManager] 缩略图 worker 意外退出 (code ${code})，将尝试补充`);
-            if (thumbnailWorkers.length < desiredThumbnailSize) {
-                spawnThumbnailWorker(thumbnailWorkers.length + 1);
-            }
-        }
-    });
-
-    thumbnailWorkers.push(worker);
-    idleThumbnailWorkers.push(worker);
-    notifyThumbnailService();
-    return worker;
-}
-
-function notifyThumbnailService() {
-    try {
-        const service = require('./thumbnail.service');
-        if (service && typeof service.setupThumbnailWorkerListeners === 'function') {
-            service.setupThumbnailWorkerListeners();
-        }
-    } catch (error) {
-        logger.debug('[WorkerManager] 安装缩略图监听器失败（忽略）:', error.message);
+function ensureThumbnailWorkerPool(size = desiredThumbnailSize) {
+    const target = Math.max(1, Math.floor(size || desiredThumbnailSize));
+    desiredThumbnailSize = target;
+    if (!thumbnailPool) {
+        thumbnailPool = createPiscinaPool(target);
+        return thumbnailPool;
     }
-}
-
-function ensureThumbnailWorkerPool() {
-    if (thumbnailWorkers.length > 0) {
-        return;
+    if (thumbnailPool.options.maxThreads !== target) {
+        thumbnailPool.destroy().catch((error) => logger.debug(`[工作线程管理] 销毁旧缩略图池失败: ${error && error.message}`));
+        thumbnailPool = createPiscinaPool(target);
     }
-    desiredThumbnailSize = Math.max(1, desiredThumbnailSize);
-    for (let i = 0; i < desiredThumbnailSize; i += 1) {
-        spawnThumbnailWorker(i + 1);
-    }
-    logger.info(`[WorkerManager] 已启动 ${thumbnailWorkers.length} 个缩略图 worker`);
+    return thumbnailPool;
 }
 
 function createThumbnailWorkerPool(size = INITIAL_THUMB_WORKERS) {
     desiredThumbnailSize = Math.max(1, Math.floor(size));
-    ensureThumbnailWorkerPool();
+    ensureThumbnailWorkerPool(desiredThumbnailSize);
 }
 
 function destroyThumbnailWorkerPool() {
     desiredThumbnailSize = 0;
-    thumbnailWorkers.forEach((worker) => {
-        try {
-            worker.__expectedTermination = true;
-            worker.terminate();
-        } catch (error) {
-            logger.warn('[WorkerManager] 终止缩略图 worker 失败:', error.message);
-        }
-    });
-    thumbnailWorkers.length = 0;
-    idleThumbnailWorkers.length = 0;
-    logger.info('[WorkerManager] 缩略图 worker 池已销毁');
+    if (thumbnailPool) {
+        const pool = thumbnailPool;
+        thumbnailPool = null;
+        pool.destroy().catch((error) => logger.debug(`[工作线程管理] 销毁缩略图池失败: ${error && error.message}`));
+    }
+    logger.info('[工作线程管理] 缩略图 worker 池已销毁');
 }
 
 function noteThumbnailUse() {
     lastThumbnailUseAt = Date.now();
 }
 
+function runThumbnailTask(payload) {
+    const pool = ensureThumbnailWorkerPool(desiredThumbnailSize);
+    return pool.run(payload);
+}
+
 function scaleThumbnailWorkerPool(targetSize) {
-    const target = Math.max(0, Math.floor(targetSize));
-    desiredThumbnailSize = target;
-    if (target === 0) {
+    const normalized = Math.floor(targetSize);
+    if (!Number.isFinite(normalized) || normalized <= 0) {
         destroyThumbnailWorkerPool();
         return 0;
     }
-    ensureThumbnailWorkerPool();
-    while (thumbnailWorkers.length < target) {
-        spawnThumbnailWorker(thumbnailWorkers.length + 1);
+    desiredThumbnailSize = Math.max(1, normalized);
+    ensureThumbnailWorkerPool(desiredThumbnailSize);
+    return desiredThumbnailSize;
+}
+
+function getThumbnailPoolStats() {
+    if (!thumbnailPool) {
+        return { total: 0, active: 0, idle: 0, lastUseAt: lastThumbnailUseAt };
     }
-    while (thumbnailWorkers.length > target && idleThumbnailWorkers.length > 0) {
-        const worker = idleThumbnailWorkers.pop();
-        if (!worker) break;
-        removeThumbnailWorkerFromQueues(worker);
-        try {
-            worker.__expectedTermination = true;
-            worker.terminate();
-        } catch (error) {
-            logger.warn('[WorkerManager] 缩容 worker 失败:', error.message);
-        }
-    }
-    return thumbnailWorkers.length;
+    const total = thumbnailPool.options.maxThreads;
+    const active = Math.min(total, state.thumbnail.getActiveCount());
+    return {
+        total,
+        active,
+        idle: Math.max(0, total - active),
+        lastUseAt: lastThumbnailUseAt
+    };
 }
 
 function performWorkerHealthCheck() {
+    const thumbStats = getThumbnailPoolStats();
     return {
         indexing: { active: !!indexingWorker },
         settings: { active: !!settingsWorker },
         video: { active: !!videoWorker },
         thumbnail: {
-            total: thumbnailWorkers.length,
-            idle: idleThumbnailWorkers.length,
-            active: Math.max(0, thumbnailWorkers.length - idleThumbnailWorkers.length),
-            lastUseAt: lastThumbnailUseAt
+            total: thumbStats.total,
+            idle: thumbStats.idle,
+            active: thumbStats.active,
+            lastUseAt: thumbStats.lastUseAt
         }
     };
 }
@@ -278,13 +247,13 @@ module.exports = {
     startVideoWorker,
     ensureCoreWorkers,
     createDisposableWorker,
-    thumbnailWorkers,
-    idleThumbnailWorkers,
     createThumbnailWorkerPool,
     ensureThumbnailWorkerPool,
     destroyThumbnailWorkerPool,
     noteThumbnailUse,
+    runThumbnailTask,
     scaleThumbnailWorkerPool,
+    getThumbnailPoolStats,
     performWorkerHealthCheck,
     getTaskSchedulerMetrics,
     getVideoTaskMetrics,

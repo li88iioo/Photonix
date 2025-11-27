@@ -13,6 +13,8 @@ const historyLogger = createModuleLogger('RecentHistory');
 const CACHE_TTL_MS = 30 * 1000;
 const MAX_HISTORY_LIMIT = 1000;
 const MAX_HYDRATION_PAGES = 5;
+const HISTORY_HYDRATION_PAGE_SIZE = 200;
+const MAX_FALLBACK_HYDRATIONS = 20;
 
 const historyCache = new Map();
 
@@ -100,7 +102,10 @@ async function hydrateHistoryRecords(parentPath, records, signal) {
     try {
         for (let page = 1; page <= MAX_HYDRATION_PAGES && pending.size; page++) {
             if (signal?.aborted) break;
-            const data = await fetchBrowseResults(parentPath, page, signal, { sortOverride: 'mtime_desc' });
+            const data = await fetchBrowseResults(parentPath, page, signal, {
+                sortOverride: 'mtime_desc',
+                limitOverride: HISTORY_HYDRATION_PAGE_SIZE
+            });
             if (!data || !Array.isArray(data.items)) break;
             for (const item of data.items) {
                 const itemPath = extractItemPath(item);
@@ -113,6 +118,12 @@ async function hydrateHistoryRecords(parentPath, records, signal) {
             }
             if (!data.totalPages || page >= data.totalPages) break;
         }
+
+        if (pending.size) {
+            const fallbackHydrated = await hydrateRecordsIndividually(pending, signal);
+            fallbackHydrated.forEach(entry => hydratedEntries.add(entry));
+        }
+
         if (pending.size) {
             pending.forEach(entry => {
                 entry.needsHydration = true;
@@ -139,6 +150,43 @@ async function hydrateHistoryRecords(parentPath, records, signal) {
         }
     }
     return records;
+}
+
+async function hydrateRecordsIndividually(pendingMap, signal) {
+    if (!pendingMap || pendingMap.size === 0) return new Set();
+    const hydrated = new Set();
+    let processed = 0;
+    for (const [path, entry] of pendingMap.entries()) {
+        if (signal?.aborted) break;
+        if (processed >= MAX_FALLBACK_HYDRATIONS) break;
+        processed += 1;
+        const success = await hydrateSingleRecord(entry, signal);
+        if (success) {
+            hydrated.add(entry);
+            pendingMap.delete(path);
+        }
+    }
+    return hydrated;
+}
+
+async function hydrateSingleRecord(entry, signal) {
+    if (!entry || !entry.path || entry.entryType !== 'album') return false;
+    try {
+        const data = await fetchBrowseResults(entry.path, 1, signal, {
+            sortOverride: 'mtime_desc',
+            limitOverride: 1
+        });
+        if (!data || !Array.isArray(data.items) || !data.items.length) {
+            return false;
+        }
+        const coverSource = data.items.find(item => item.type === 'photo' || item.type === 'video') || data.items[0];
+        if (!coverSource) return false;
+        applyItemMetadata(entry, coverSource);
+        return true;
+    } catch (error) {
+        historyLogger.debug('单条历史补全失败', { path: entry.path, error: error?.message });
+        return false;
+    }
 }
 
 export async function recordHierarchyView(path, metadata = {}) {
