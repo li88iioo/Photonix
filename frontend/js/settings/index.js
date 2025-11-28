@@ -36,6 +36,9 @@ export async function showSettingsModal() {
   try {
     // 获取服务端设置和本地 AI 配置
     const settings = await fetchSettings();
+    if (!settings.AI_DAILY_LIMIT) {
+      settings.AI_DAILY_LIMIT = '200';
+    }
     const localAI = getLocalAISettings();
 
     // 合并 AI 相关设置（优先本地配置）

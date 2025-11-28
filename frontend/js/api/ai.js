@@ -11,10 +11,20 @@ import { getAuthToken } from '../app/auth.js';
 import { safeSetInnerHTML, safeClassList } from '../shared/dom-utils.js';
 import { escapeHtml } from '../shared/security.js';
 import { getAuthHeaders, refreshAuthToken, triggerAuthRequired } from './shared.js';
+import {
+    getConversationHistory,
+    appendConversationEntry,
+    clearConversationHistory,
+    buildConversationPrompt
+} from '../features/ai/ai-conversation-store.js';
 
 let currentGenerateController = null;
 let currentImagePath = null;
 let isProcessing = false;
+let activeChatImagePath = null;
+let chatUIInitialized = false;
+let chatStatusTimer = null;
+const AI_CLOSE_HINT_KEY = 'ai_close_hint_seen';
 
 /**
  * 获取本地存储中的 AI 配置
@@ -40,6 +50,229 @@ function parseImagePath(imageUrl) {
         : decodeURIComponent(url.pathname);
 }
 
+function normalizeChatImageKey(rawPath) {
+    if (!rawPath) return null;
+    if (rawPath.startsWith('blob:')) return rawPath;
+    try {
+        return parseImagePath(rawPath);
+    } catch {
+        return rawPath;
+    }
+}
+
+function ensureChatUIReady() {
+    if (chatUIInitialized) return;
+    const { aiChatForm, aiChatClear } = elements;
+    if (!aiChatForm) return;
+    chatUIInitialized = true;
+
+    aiChatForm.addEventListener('submit', handleChatSubmit);
+    if (aiChatClear) {
+        aiChatClear.addEventListener('click', handleChatClear);
+    }
+    if (elements.aiCloseHintDismiss) {
+        elements.aiCloseHintDismiss.addEventListener('click', () => {
+            markCloseHintAsSeen();
+            toggleCloseHint(false);
+        });
+    }
+}
+
+function renderChatHistory() {
+    const { aiChatHistory } = elements;
+    if (!aiChatHistory) return;
+    const history = activeChatImagePath ? getConversationHistory(activeChatImagePath) : [];
+    if (!history.length) {
+        safeSetInnerHTML(aiChatHistory, '<p class="ai-chat-history-empty">和她聊点什么吧～</p>');
+        return;
+    }
+    const html = history.map(entry => `
+        <div class="ai-chat-message ai-chat-message-${entry.role === 'user' ? 'user' : 'ai'}">
+            <div class="ai-chat-bubble">${escapeHtml(entry.message)}</div>
+        </div>
+    `).join('');
+    safeSetInnerHTML(aiChatHistory, html);
+    aiChatHistory.scrollTop = aiChatHistory.scrollHeight;
+}
+
+function setChatStatus(message, tone = 'muted') {
+    const { aiChatStatus } = elements;
+    if (!aiChatStatus) return;
+    aiChatStatus.textContent = message || '';
+    aiChatStatus.classList.remove('error', 'success');
+    if (tone === 'error') aiChatStatus.classList.add('error');
+    if (tone === 'success') aiChatStatus.classList.add('success');
+    clearTimeout(chatStatusTimer);
+    if (message) {
+        chatStatusTimer = setTimeout(() => {
+            aiChatStatus.textContent = '';
+            aiChatStatus.classList.remove('error', 'success');
+        }, 4000);
+    }
+}
+
+function setChatSendingState(isSending) {
+    const { aiChatForm, aiChatInput } = elements;
+    if (!aiChatForm) return;
+    const submitBtn = aiChatForm.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = isSending;
+    if (aiChatInput) aiChatInput.disabled = isSending;
+}
+
+function handleChatSubmit(event) {
+    event.preventDefault();
+    if (!activeChatImagePath) {
+        showNotification('请先打开一张图片再开始对话', 'info');
+        return;
+    }
+    if (isProcessing) {
+        setChatStatus('AI 正在处理，请稍候...', 'muted');
+        return;
+    }
+    const input = elements.aiChatInput;
+    if (!input) return;
+    const value = input.value.trim();
+    if (!value) {
+        setChatStatus('请输入想说的话', 'error');
+        return;
+    }
+    input.value = '';
+    sendConversationMessage(value);
+}
+
+function handleChatClear() {
+    if (!activeChatImagePath) return;
+    clearConversationHistory(activeChatImagePath);
+    renderChatHistory();
+    setChatStatus('对话已清空', 'success');
+}
+
+function updateChatAvailability(enabled) {
+    ensureChatUIReady();
+    const wrapper = elements.aiChatWrapper;
+    if (!wrapper) return;
+    const layout = elements.modalLayout;
+    if (layout) {
+        safeClassList(layout, enabled ? 'add' : 'remove', 'modal-layout--with-chat');
+    }
+    try {
+        document.body?.classList[enabled ? 'add' : 'remove']('ai-chat-visible');
+    } catch { }
+    safeClassList(wrapper, 'toggle', 'hidden', !enabled);
+    wrapper.setAttribute('aria-hidden', enabled ? 'false' : 'true');
+    toggleCloseHint(enabled);
+    if (enabled) {
+        renderChatHistory();
+        setChatStatus('', 'muted');
+    } else {
+        setChatStatus('', 'muted');
+    }
+}
+
+function shouldShowCloseHint() {
+    try {
+        return localStorage.getItem(AI_CLOSE_HINT_KEY) !== 'true';
+    } catch {
+        return true;
+    }
+}
+
+function markCloseHintAsSeen() {
+    try {
+        localStorage.setItem(AI_CLOSE_HINT_KEY, 'true');
+    } catch { }
+}
+
+function toggleCloseHint(enabled) {
+    const { aiCloseHint } = elements;
+    if (!aiCloseHint) return;
+    const showHint = enabled && shouldShowCloseHint();
+    safeClassList(aiCloseHint, 'toggle', 'hidden', !showHint);
+}
+
+function recordInitialAIMessage(imagePath, message) {
+    if (!imagePath || !message) return;
+    const history = getConversationHistory(imagePath);
+    if (history.length === 0) {
+        appendConversationEntry(imagePath, 'ai', message);
+    }
+    if (activeChatImagePath === imagePath) {
+        renderChatHistory();
+    }
+}
+
+function recordAIReply(imagePath, message) {
+    if (!imagePath || !message) return;
+    appendConversationEntry(imagePath, 'ai', message);
+    if (activeChatImagePath === imagePath) {
+        renderChatHistory();
+        setChatStatus('她回应了你', 'success');
+    }
+}
+
+async function sendConversationMessage(userMessage) {
+    if (!activeChatImagePath) return;
+    if (isProcessing) {
+        setChatStatus('AI 正在处理，请稍候...', 'muted');
+        return;
+    }
+
+    if (!validateAuthentication()) {
+        setChatStatus('请先登录后再继续对话', 'error');
+        return;
+    }
+
+    const aiConfig = validateAIConfig();
+    if (!aiConfig) return;
+
+    const existingHistory = getConversationHistory(activeChatImagePath);
+    const prompt = buildConversationPrompt(aiConfig.AI_PROMPT, existingHistory, userMessage);
+    appendConversationEntry(activeChatImagePath, 'user', userMessage);
+    renderChatHistory();
+
+    cleanupPreviousRequest(activeChatImagePath);
+    setChatSendingState(true);
+    setChatStatus('她正在思考...', 'muted');
+
+    try {
+        const response = await performGenerateRequest(activeChatImagePath, aiConfig, {
+            promptOverride: prompt
+        });
+        if (response.ok) {
+            const data = await response.json();
+            await handleGenerationResult(data, activeChatImagePath, aiConfig, { mode: 'chat' });
+        } else {
+            let errorMessage = `服务器错误: ${response.status}`;
+            let errorCode = null;
+            let errorDetail = null;
+            try {
+                const errorData = await response.json();
+                if (errorData?.message) errorMessage = errorData.message;
+                if (errorData?.code) errorCode = errorData.code;
+                if (errorData?.detail) errorDetail = errorData.detail;
+            } catch {
+                errorMessage = `服务器错误 (${response.status})`;
+            }
+            const error = new Error(errorMessage);
+            if (errorCode) error.code = errorCode;
+            if (errorDetail) error.detail = errorDetail;
+            throw error;
+        }
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            setChatStatus('会话已取消', 'error');
+        } else if (!error.silent) {
+            const fallbackMessage = error.message || '发送失败，请稍后再试';
+            const statusMessage = error.detail && error.detail !== fallbackMessage
+                ? `${fallbackMessage}（${error.detail}）`
+                : fallbackMessage;
+            setChatStatus(statusMessage, 'error');
+        }
+        setChatSendingState(false);
+        isProcessing = false;
+    }
+}
+
 /**
  * 判断是否为对同一图片的重复生成请求（防抖）
  * @param {string} imagePath 图片路径
@@ -56,7 +289,7 @@ function isDuplicateRequest(imagePath) {
 function cleanupPreviousRequest(imagePath) {
     try {
         if (currentGenerateController) currentGenerateController.abort();
-    } catch {}
+    } catch { }
     currentGenerateController = new AbortController();
     currentImagePath = imagePath;
     isProcessing = true;
@@ -92,28 +325,10 @@ function validateAIConfig() {
     const aiConfig = getLocalAISettings();
     if (!aiConfig.AI_URL || !aiConfig.AI_KEY || !aiConfig.AI_MODEL || !aiConfig.AI_PROMPT) {
         showNotification('请先在设置中填写完整的 AI 配置信息', 'error');
-        const { captionContainer, captionContainerMobile } = elements;
-        captionContainer.textContent = 'AI 配置信息不完整';
-        captionContainerMobile.textContent = '配置不完整';
+        setChatStatus('AI 配置信息不完整', 'error');
         return null;
     }
     return aiConfig;
-}
-
-/**
- * 设置加载中状态的 UI（漫画风格）
- * @param {HTMLElement} container 桌面端容器元素
- * @param {HTMLElement} mobileContainer 移动端容器元素
- */
-function setLoadingState(container, mobileContainer) {
-    const loadingHtml = '<div class="flex items-center justify-center h-full loading-state"><div class="spinner"></div><p class="ml-2">她正在酝酿情绪，请稍候...</p></div>';
-    safeSetInnerHTML(container, loadingHtml);
-    mobileContainer.textContent = '酝酿中...';
-    
-    // 显示气泡框（PC端）
-    if (elements.captionBubble) {
-        safeClassList(elements.captionBubble, 'add', 'show');
-    }
 }
 
 /**
@@ -136,70 +351,45 @@ async function checkAICache(imagePath, aiConfig) {
 }
 
 /**
- * 渲染生成的描述结果到页面（漫画打字机效果）
- * @param {string} caption 生成的描述文本
- */
-function displayCaptionResult(caption) {
-    const { captionContainer, captionContainerMobile, captionBubble } = elements;
-    
-    // 桌面端：漫画打字机效果
-    safeSetInnerHTML(captionContainer, '');
-    const typingDiv = document.createElement('div');
-    typingDiv.className = 'caption-typing-text';
-    typingDiv.textContent = caption;
-    captionContainer.appendChild(typingDiv);
-    
-    // 动态计算打字机动画参数
-    const textLength = caption.length;
-    const duration = Math.max(2, Math.min(8, textLength * 0.05)); // 2-8秒，根据长度
-    const steps = Math.min(textLength, 100); // 最多100步
-    
-    // 应用动画样式
-    typingDiv.style.animation = `
-        typing ${duration}s steps(${steps}, end) 0.5s 1 forwards,
-        blink-caret 0.75s step-end infinite
-    `;
-    typingDiv.classList.add('typing');
-    
-    // 监听打字动画结束
-    typingDiv.addEventListener('animationend', (event) => {
-        if (event.animationName === 'typing') {
-            typingDiv.classList.remove('typing');
-            typingDiv.classList.add('typing-done');
-            typingDiv.style.animation = 'none';
-        }
-    });
-    
-    // 显示气泡框（PC端自动显示）
-    if (captionBubble) {
-        safeClassList(captionBubble, 'add', 'show');
-    }
-    
-    // 移动端：简单显示（移动端空间有限）
-    captionContainerMobile.textContent = caption;
-}
-
-/**
  * 发起生成图片描述的请求（POST /api/ai/generate）
  * @param {string} imagePath 图片路径
  * @param {Object} aiConfig AI 配置
  * @returns {Promise<Response>} fetch 响应对象
  */
-async function makeAICaptionRequest(imagePath, aiConfig) {
+async function makeAICaptionRequest(imagePath, aiConfig, options = {}) {
+    const promptToUse = options.promptOverride || aiConfig.AI_PROMPT;
+    const controller = options.controller || currentGenerateController;
     return fetch('/api/ai/generate', {
         method: 'POST',
         headers: getAuthHeaders(),
-        signal: currentGenerateController.signal,
+        signal: controller ? controller.signal : undefined,
         body: JSON.stringify({
             image_path: imagePath,
             aiConfig: {
                 url: aiConfig.AI_URL,
                 key: aiConfig.AI_KEY,
                 model: aiConfig.AI_MODEL,
-                prompt: aiConfig.AI_PROMPT
+                prompt: promptToUse
             }
         })
     });
+}
+
+async function performGenerateRequest(imagePath, aiConfig, options = {}) {
+    let response = await makeAICaptionRequest(imagePath, aiConfig, options);
+    if (response.status === 401) {
+        const refreshed = await refreshAuthToken();
+        if (refreshed) {
+            response = await makeAICaptionRequest(imagePath, aiConfig, options);
+        } else {
+            triggerAuthRequired();
+            const error = new Error('UNAUTHORIZED');
+            error.code = 'UNAUTHORIZED';
+            error.silent = true;
+            throw error;
+        }
+    }
+    return response;
 }
 
 /**
@@ -232,61 +422,37 @@ export async function generateImageCaption(imageUrl) {
         return;
     }
 
-    const { captionContainer, captionContainerMobile } = elements;
-    setLoadingState(captionContainer, captionContainerMobile);
+    setChatStatus('她正在酝酿情绪，请稍候...', 'muted');
 
     try {
         const cached = await checkAICache(imagePath, aiConfig);
         if (cached) {
-            displayCaptionResult(cached.caption);
+            recordInitialAIMessage(imagePath, cached.caption);
+            setChatStatus('她准备好了，开始聊天吧', 'success');
             isProcessing = false;
             return;
         }
 
-        const response = await makeAICaptionRequest(imagePath, aiConfig);
-
-        if (response.status === 401) {
-            const refreshed = await refreshAuthToken();
-            if (refreshed) {
-                const retryResponse = await fetch('/api/ai/generate', {
-                    method: 'POST',
-                    headers: getAuthHeaders(),
-                    signal: currentGenerateController.signal,
-                    body: JSON.stringify({
-                        image_path: imagePath,
-                        aiConfig: {
-                            url: aiConfig.AI_URL,
-                            key: aiConfig.AI_KEY,
-                            model: aiConfig.AI_MODEL,
-                            prompt: aiConfig.AI_PROMPT
-                        }
-                    })
-                });
-
-                if (retryResponse.ok) {
-                    const data = await retryResponse.json();
-                    await handleGenerationResult(data, imagePath, aiConfig);
-                } else {
-                    throw new Error(`重试请求失败: ${retryResponse.status}`);
-                }
-            } else {
-                triggerAuthRequired();
-                const error = new Error('UNAUTHORIZED');
-                error.code = 'UNAUTHORIZED';
-                error.silent = true;
-                throw error;
-            }
-        } else if (response.ok) {
+        const response = await performGenerateRequest(imagePath, aiConfig);
+        if (response.ok) {
             const data = await response.json();
-            await handleGenerationResult(data, imagePath, aiConfig);
+            await handleGenerationResult(data, imagePath, aiConfig, { mode: 'caption' });
         } else {
             let errorMessage = `服务器错误: ${response.status}`;
+            let errorCode = null;
+            let errorDetail = null;
             try {
                 const errorData = await response.json();
                 if (errorData?.message) {
                     errorMessage = errorData.message;
                 } else if (errorData?.error) {
                     errorMessage = errorData.error;
+                }
+                if (errorData?.code) {
+                    errorCode = errorData.code;
+                }
+                if (errorData?.detail) {
+                    errorDetail = errorData.detail;
                 }
             } catch {
                 try {
@@ -298,23 +464,23 @@ export async function generateImageCaption(imageUrl) {
                     errorMessage = `服务器错误 (${response.status}): 响应格式异常`;
                 }
             }
-            throw new Error(errorMessage);
+            const error = new Error(errorMessage);
+            if (errorCode) error.code = errorCode;
+            if (errorDetail) error.detail = errorDetail;
+            throw error;
         }
     } catch (error) {
         if (error.name === 'AbortError') {
             isProcessing = false;
-            if (elements.captionContainer.innerHTML.includes('spinner') ||
-                elements.captionContainer.innerHTML.includes('酝酿中...')) {
-                safeSetInnerHTML(elements.captionContainer, '<div class="text-center text-gray-400 py-4">点击生成AI密语</div>');
-                elements.captionContainerMobile.textContent = '';
-            }
+            setChatStatus('对话已取消', 'error');
             return;
         }
 
-        const message = error.message || '生成失败，请重试';
-        elements.captionContainer.textContent = message;
-        elements.captionContainerMobile.textContent = '生成失败';
-        showNotification(`AI生成失败: ${message}`, 'error');
+        const fallbackMessage = error.message || '生成失败，请重试';
+        const statusMessage = error.detail && error.detail !== fallbackMessage
+            ? `${fallbackMessage}（${error.detail}）`
+            : fallbackMessage;
+        setChatStatus(statusMessage, 'error');
         isProcessing = false;
     }
 }
@@ -326,24 +492,29 @@ export async function generateImageCaption(imageUrl) {
  * @param {Object} aiConfig AI 配置
  * @returns {Promise<void>}
  */
-async function handleGenerationResult(data, imagePath, aiConfig) {
-    const { captionContainer, captionContainerMobile } = elements;
+async function handleGenerationResult(data, imagePath, aiConfig, options = {}) {
+    const mode = options.mode || 'caption';
+    const isChatMode = mode === 'chat';
 
     if (data && typeof data === 'object') {
         if (typeof data.description === 'string' && data.description.trim()) {
-            captionContainer.textContent = data.description;
-            captionContainerMobile.textContent = data.description;
-
-            try {
-                await aiCache.save(imagePath, {
-                    url: aiConfig.AI_URL,
-                    key: aiConfig.AI_KEY,
-                    model: aiConfig.AI_MODEL,
-                    prompt: aiConfig.AI_PROMPT
-                }, data.description);
-            } catch {}
-
+            const description = data.description;
+            if (!isChatMode) {
+                try {
+                    await aiCache.save(imagePath, {
+                        url: aiConfig.AI_URL,
+                        key: aiConfig.AI_KEY,
+                        model: aiConfig.AI_MODEL,
+                        prompt: aiConfig.AI_PROMPT
+                    }, description);
+                } catch { }
+                recordInitialAIMessage(imagePath, description);
+                setChatStatus('她准备好了，开始聊天吧', 'success');
+            } else {
+                recordAIReply(imagePath, description);
+            }
             isProcessing = false;
+            setChatSendingState(false);
             return;
         }
 
@@ -351,38 +522,37 @@ async function handleGenerationResult(data, imagePath, aiConfig) {
             if (data.message.includes('AI未能生成有效内容') ||
                 data.message.includes('AI处理失败') ||
                 data.code === 'AI_PROCESSING_ERROR') {
-                const detailHtml = typeof data.detail === 'string' && data.detail.trim()
-                    ? `<div class="text-xs text-gray-500 mt-1">${escapeHtml(data.detail)}</div>`
-                    : '';
-                safeSetInnerHTML(captionContainer, `
-                    <div class="text-red-600 mb-2">${escapeHtml(data.message)}</div>
-                    <div class="text-sm text-gray-500">请稍后重试或选择其他图片</div>
-                    ${detailHtml}
-                `);
-                captionContainerMobile.textContent = '生成失败';
+                const detail = data.detail || data.message;
+                setChatStatus(detail, 'error');
+                setChatSendingState(false);
                 isProcessing = false;
-                // 错误详情已注入密语气泡，避免重复通知
                 return;
             }
 
-            throw new Error(data.message);
+            const quotaError = new Error(data.message);
+            quotaError.code = data.code;
+            if (data.detail) quotaError.detail = data.detail;
+            throw quotaError;
         }
 
         if (data.message && data.cooldownSeconds) {
             const cooldownMsg = `请等待 ${data.cooldownSeconds} 秒后再试`;
-            safeSetInnerHTML(captionContainer, `
-                <div class="text-blue-600 mb-2">${escapeHtml(data.message)}</div>
-                <div class="text-sm text-gray-500">${escapeHtml(cooldownMsg)}</div>
-            `);
-            captionContainerMobile.textContent = '冷却中';
-            showNotification(data.message, 'warning');
+            setChatStatus(`${data.message}，${cooldownMsg}`, 'error');
+            setChatSendingState(false);
+            if (!isChatMode) {
+                showNotification(data.message, 'warning');
+            }
             isProcessing = false;
             return;
         }
 
         if (typeof data.result === 'string') {
-            captionContainer.textContent = data.result;
-            captionContainerMobile.textContent = data.result;
+            recordInitialAIMessage(imagePath, data.result);
+            if (!isChatMode) {
+                setChatStatus('她准备好了，开始聊天吧', 'success');
+            } else {
+                setChatSendingState(false);
+            }
             isProcessing = false;
             return;
         }
@@ -450,7 +620,7 @@ export async function fetchAvailableModels(apiUrl, apiKey, signal) {
     let data = null;
     try {
         data = await response.clone().json();
-    } catch {}
+    } catch { }
 
     if (!response.ok) {
         const message = data && data.message ? data.message : `获取模型列表失败（HTTP ${response.status}）`;
@@ -460,4 +630,16 @@ export async function fetchAvailableModels(apiUrl, apiKey, signal) {
     }
 
     return Array.isArray(data?.models) ? data.models : [];
+}
+
+export function updateAIChatContext(imagePath, options = {}) {
+    ensureChatUIReady();
+    const normalized = imagePath ? normalizeChatImageKey(imagePath) : null;
+    activeChatImagePath = normalized;
+    const enabled = Boolean(normalized && options.enabled);
+    updateChatAvailability(enabled);
+    if (enabled) {
+        renderChatHistory();
+        setChatStatus('', 'muted');
+    }
 }

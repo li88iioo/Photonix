@@ -26,6 +26,9 @@ function applyDefaultSettings(settings = {}) {
     if (typeof settings.MANUAL_SYNC_SCHEDULE === 'undefined') {
         settings.MANUAL_SYNC_SCHEDULE = DEFAULT_SYNC_SCHEDULE;
     }
+    if (typeof settings.AI_DAILY_LIMIT === 'undefined' || settings.AI_DAILY_LIMIT === null) {
+        settings.AI_DAILY_LIMIT = process.env.AI_DAILY_LIMIT || '200';
+    }
     return settings;
 }
 

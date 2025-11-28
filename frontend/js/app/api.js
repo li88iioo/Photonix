@@ -44,7 +44,8 @@ export {
     generateImageCaption,
     getAICacheStats,
     clearAICache,
-    fetchAvailableModels
+    fetchAvailableModels,
+    updateAIChatContext
 } from '../api/ai.js';
 
 /**

@@ -22,6 +22,10 @@ const updateSettingsSchema = Joi.object({
   AI_URL: Joi.string().uri({ allowRelative: false }).max(2048).optional(),
   AI_MODEL: Joi.string().max(256).optional(),
   AI_PROMPT: Joi.string().max(4000).optional(),
+  AI_DAILY_LIMIT: Joi.alternatives().try(
+    Joi.number().integer().min(1).max(10000),
+    Joi.string().pattern(/^\d+$/)
+  ).optional(),
 
   // 敏感字段（控制器过滤，不入库），这里允许透传给业务层使用
   AI_KEY: Joi.string().max(4096).optional(),

@@ -1208,6 +1208,16 @@ function setupModalInteractions() {
         }
     }, { signal: modalController.signal });
 
+    on(elements.modal, 'click', (event) => {
+        if (!document.body.classList.contains('ai-chat-visible')) return;
+        if (!window.location.hash.endsWith('#modal')) return;
+        const layout = elements.modalLayout;
+        if (layout && layout.contains(event.target)) return;
+        if (elements.modalToolbar && elements.modalToolbar.contains(event.target)) return;
+        if (elements.aiCloseHint && elements.aiCloseHint.contains(event.target)) return;
+        window.history.back();
+    }, { signal: modalController.signal });
+
     // PC端密语气泡框现在默认显示，不需要切换按钮
     // 移动端密语显示在工具栏中
 

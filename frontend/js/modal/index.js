@@ -6,12 +6,12 @@
 import { state, backdrops } from '../core/state.js';
 import { elements } from '../shared/dom-elements.js';
 import { preloadNextImages, showNotification } from '../shared/utils.js';
-import { generateImageCaption } from '../app/api.js';
+import { generateImageCaption, updateAIChatContext } from '../app/api.js';
 import { recordHierarchyView } from '../features/history/history-service.js';
 import Hls from 'hls.js';
 import { enablePinchZoom } from '../features/gallery/touch.js';
 import { createModuleLogger } from '../core/logger.js';
-import { safeSetInnerHTML, safeSetStyle, safeClassList } from '../shared/dom-utils.js';
+import { safeSetStyle, safeClassList } from '../shared/dom-utils.js';
 import {
     scheduleNavigationProgressBar,
     hideNavigationProgressBar,
@@ -78,9 +78,6 @@ let activeVideoToken = 0; // 当前视频加载令牌，避免并发事件冲突
  */
 function hideModalControls() {
     safeClassList(elements.modalClose, 'add', 'opacity-0');
-    if (elements.aiControlsContainer) {
-        safeClassList(elements.aiControlsContainer, 'add', 'opacity-0');
-    }
 }
 
 /**
@@ -89,9 +86,6 @@ function hideModalControls() {
  */
 function showModalControls() {
     safeClassList(elements.modalClose, 'remove', 'opacity-0');
-    if (elements.aiControlsContainer) {
-        safeClassList(elements.aiControlsContainer, 'remove', 'opacity-0');
-    }
 }
 
 /**
@@ -125,7 +119,7 @@ function createVideoSpinner() {
  */
 function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = null, effects = {}) {
     state.currentPhotoIndex = index;
-    const { modalVideo, modalImg, navigationHint, captionContainer, captionContainerMobile, mediaPanel } = elements;
+    const { modalVideo, modalImg, navigationHint, mediaPanel } = elements;
     const shouldPixelate = !!(effects && effects.pixelate);
 
     // 移除旧的视频加载器
@@ -159,7 +153,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
     const localAI = JSON.parse(localStorage.getItem('ai_settings') || '{}');
     const isAIEnabled = localAI.AI_ENABLED === 'true' || state.aiEnabled;
     const showAiElements = !isVideo && isAIEnabled;
-    safeClassList(elements.aiControlsContainer, 'toggle', 'hidden', !showAiElements);
+    updateAIChatContext(showAiElements ? originalPathForAI : null, { enabled: showAiElements });
 
     resetModalImageTransition();
     safeClassList(modalVideo, 'toggle', 'hidden', !isVideo);
@@ -356,7 +350,6 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
             modalLogger.warn('自动播放可能被浏览器阻止', e);
         });
 
-        if (elements.captionBubble) safeClassList(elements.captionBubble, 'remove', 'show');
     } else {
         // 图片处理逻辑
         safeSetStyle(navigationHint, 'display', 'flex');
@@ -439,22 +432,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
                 }
             }, 300);
 
-            // XSS 安全修复：使用 DOM 操作替代 innerHTML
-            safeSetInnerHTML(captionContainer, ''); // 清空内容
-            const loadingDiv = document.createElement('div');
-            loadingDiv.className = 'flex items-center justify-center h-full';
-
-            const spinner = document.createElement('div');
-            spinner.className = 'spinner';
-            loadingDiv.appendChild(spinner);
-
-            const textP = document.createElement('p');
-            textP.className = 'ml-4';
-            textP.textContent = '酝酿中...';
-            loadingDiv.appendChild(textP);
-
-            captionContainer.appendChild(loadingDiv);
-            captionContainerMobile.textContent = '酝酿中...';
+            setChatStatus('她正在酝酿情绪，请稍候...', 'muted');
         }
 
         // 启用移动端双指缩放/拖拽（touch.js）
@@ -646,9 +624,8 @@ export function closeModal() {
         state.currentObjectURL = null;
     }
 
-    // 隐藏 AI 气泡
-    if (elements.captionBubble) safeClassList(elements.captionBubble, 'remove', 'show');
     if (document.activeElement) document.activeElement.blur();
+    updateAIChatContext(null, { enabled: false });
 
     // 恢复滚动位置
     if (state.scrollPositionBeforeModal !== null) {

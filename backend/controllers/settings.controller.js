@@ -86,6 +86,7 @@ exports.getSettingsForClient = async (_req, res) => {
   res.json({
     AI_ENABLED: allSettings.AI_ENABLED,
     PASSWORD_ENABLED: allSettings.PASSWORD_ENABLED,
+    AI_DAILY_LIMIT: allSettings.AI_DAILY_LIMIT || process.env.AI_DAILY_LIMIT || '200',
     hasPassword: Boolean(allSettings.PASSWORD_HASH && allSettings.PASSWORD_HASH !== ''),
     isAdminSecretConfigured: Boolean(process.env.ADMIN_SECRET && process.env.ADMIN_SECRET.trim() !== ''),
     albumDeletionEnabled: allSettings.ALBUM_DELETE_ENABLED === 'true',
@@ -110,7 +111,18 @@ exports.updateSettings = async (req, res) => {
     const auditContextBuilder = (extra) => buildAuditContext(req, extra);
 
     // 敏感操作验证（如密码变更等需密钥）
-    const verifyResult = await verifySensitiveOperations(passwordOps.isSensitiveOperation, adminSecret, auditContextBuilder);
+    if (Object.prototype.hasOwnProperty.call(settingsToUpdate, 'AI_DAILY_LIMIT')) {
+      const normalized = parseInt(settingsToUpdate.AI_DAILY_LIMIT, 10);
+      if (!Number.isFinite(normalized) || normalized <= 0 || normalized > 10000) {
+        throw new ValidationError('AI 每日配额需要设置为 1 - 10000 之间的整数');
+      }
+      settingsToUpdate.AI_DAILY_LIMIT = String(normalized);
+    }
+
+    const quotaLimitChanged = Object.prototype.hasOwnProperty.call(settingsToUpdate, 'AI_DAILY_LIMIT');
+    const requiresAdmin = passwordOps.isSensitiveOperation || quotaLimitChanged;
+
+    const verifyResult = await verifySensitiveOperations(requiresAdmin, adminSecret, auditContextBuilder);
     if (!verifyResult.ok) {
       throw mapAdminSecretError(verifyResult);
     }

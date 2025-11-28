@@ -17,6 +17,7 @@ import { getLocalAISettings, setLocalAISettings } from './storage.js';
 import { showPasswordPrompt } from './password-prompt.js';
 import { closeSettingsModal } from './modal.js';
 import { state } from '../core/state.js';
+import { exportConversationHistory, importConversationHistory } from '../features/ai/ai-conversation-store.js';
 
 let lastButtonStateUpdate = 0;
 
@@ -114,6 +115,10 @@ export function populateForm(settings) {
   card.querySelector('#ai-key').value = '';
   card.querySelector('#ai-model').value = settings.AI_MODEL || '';
   card.querySelector('#ai-prompt').value = settings.AI_PROMPT || '';
+  const aiDailyLimitInput = card.querySelector('#ai-daily-limit');
+  if (aiDailyLimitInput) {
+    aiDailyLimitInput.value = String(settings.AI_DAILY_LIMIT || '');
+  }
 
   initialSettings.albumDeletionEnabled = Boolean(settings.albumDeletionEnabled);
   updateAlbumDeletionControls();
@@ -202,7 +207,7 @@ export function setupListeners() {
     btn.addEventListener('click', handleSave);
   });
 
-  card.querySelectorAll('input:not(#password-enabled), textarea').forEach(el => {
+  card.querySelectorAll('input:not(#password-enabled):not(#ai-daily-limit), textarea').forEach(el => {
     el.addEventListener('input', checkForChanges);
     el.addEventListener('change', checkForChanges);
   });
@@ -250,6 +255,8 @@ export function setupListeners() {
 
   setupPasswordToggles();
   setupManagementTab();
+  setupDailyLimitControls();
+  setupConversationHistoryTools();
 }
 
 /**
@@ -282,6 +289,138 @@ function setupPasswordToggles() {
       }, 200);
     });
   });
+}
+
+function setupDailyLimitControls() {
+  const { card, initialSettings } = settingsContext;
+  if (!card) return;
+
+  const input = card.querySelector('#ai-daily-limit');
+  const button = card.querySelector('#ai-daily-limit-save');
+  if (!input || !button) return;
+
+  const setLoading = (loading) => {
+    if (loading) {
+      if (!button.dataset.originalText) {
+        button.dataset.originalText = button.textContent;
+      }
+      button.textContent = '保存中...';
+      button.disabled = true;
+    } else {
+      button.textContent = button.dataset.originalText || '保存';
+      button.disabled = false;
+    }
+  };
+
+  button.addEventListener('click', () => {
+    if (!initialSettings.isAdminSecretConfigured) {
+      showNotification('未配置超级管理员密码，无法更改此设置', 'error');
+      return;
+    }
+    const rawValue = input.value.trim();
+    if (!rawValue) {
+      showNotification('请填写 AI 每日配额上限', 'error');
+      input.focus();
+      return;
+    }
+    const parsed = parseInt(rawValue, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 10000) {
+      showNotification('AI 每日配额需设置为 1 - 10000 之间的整数', 'error');
+      input.focus();
+      return;
+    }
+
+    const normalized = String(parsed);
+    if (normalized === String(initialSettings.AI_DAILY_LIMIT ?? '')) {
+      showNotification('当前配额未改变，无需保存', 'info');
+      return;
+    }
+
+    showPasswordPrompt({
+      useAdminSecret: true,
+      onConfirm: async (adminSecret) => {
+        setLoading(true);
+        try {
+          await saveSettings({
+            AI_DAILY_LIMIT: normalized,
+            adminSecret
+          });
+          initialSettings.AI_DAILY_LIMIT = normalized;
+          input.value = normalized;
+          showNotification('AI 每日配额已更新', 'success');
+        } catch (error) {
+          showNotification(error?.message || '更新 AI 配额失败', 'error');
+          throw error;
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
+  });
+}
+
+function setupConversationHistoryTools() {
+  const { card } = settingsContext;
+  if (!card) return;
+  const exportBtn = card.querySelector('#ai-history-export');
+  const importBtn = card.querySelector('#ai-history-import');
+  const importInput = card.querySelector('#ai-history-import-input');
+  if (!exportBtn && !importBtn) return;
+
+  if (exportBtn) {
+    exportBtn.addEventListener('click', () => {
+      const data = exportConversationHistory();
+      const total = data ? Object.keys(data).length : 0;
+      if (!total) {
+        showNotification('暂无会话可导出', 'info');
+        return;
+      }
+      const payload = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        conversations: data
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `photonix-ai-history-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      showNotification('已导出 AI 会话历史', 'success');
+    });
+  }
+
+  if (importBtn && importInput) {
+    importBtn.addEventListener('click', () => importInput.click());
+    importInput.addEventListener('change', async (event) => {
+      const file = event.target?.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          showNotification('导入失败：文件不是有效的 JSON', 'error');
+          return;
+        }
+        const result = importConversationHistory(parsed);
+        if (result.ok) {
+          const { conversations = 0, entries = 0 } = result.stats || {};
+          showNotification(`导入成功：${conversations} 张照片，共 ${entries} 条记录`, 'success');
+        } else {
+          showNotification(result.reason || '导入失败：文件格式不正确', 'error');
+        }
+      } catch (error) {
+        showNotification(error?.message || '导入失败，请重试', 'error');
+      } finally {
+        event.target.value = '';
+      }
+    });
+  }
 }
 
 /**
@@ -578,7 +717,6 @@ async function executeSave(adminSecret = null, options = {}) {
   if (adminSecret) {
     settingsToSend.adminSecret = adminSecret;
   }
-
   try {
     const result = await saveSettings(settingsToSend);
 

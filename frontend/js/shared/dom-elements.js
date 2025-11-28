@@ -16,18 +16,24 @@ export const elements = {
     // 模态框相关
     modal: safeGetElementById('modal'),
     modalContent: safeGetElementById('modal-content'),
+    modalLayout: safeGetElementById('modal-layout'),
     modalImg: safeGetElementById('modal-img'),
     modalVideo: safeGetElementById('modal-video'),
     modalClose: safeGetElementById('modal-close'),
+    modalToolbar: safeGetElementById('modal-toolbar'),
     settingsModal: safeGetElementById('settings-modal'),
     imageModal: safeGetElementById('image-modal'),
     videoModal: safeGetElementById('video-modal'),
 
-    // AI和字幕相关
-    aiControlsContainer: safeGetElementById('ai-controls-container'),
-    captionContainer: safeGetElementById('caption-container'),
-    captionContainerMobile: safeGetElementById('caption-container-mobile'),
-    captionBubble: safeGetElementById('caption-bubble'),
+    // AI 对话
+    aiChatWrapper: safeGetElementById('ai-chat-wrapper'),
+    aiChatHistory: safeGetElementById('ai-chat-history'),
+    aiChatForm: safeGetElementById('ai-chat-form'),
+    aiChatInput: safeGetElementById('ai-chat-input'),
+    aiChatClear: safeGetElementById('ai-chat-clear'),
+    aiChatStatus: safeGetElementById('ai-chat-status'),
+    aiCloseHint: safeGetElementById('ai-close-hint'),
+    aiCloseHintDismiss: safeGetElementById('ai-close-hint-dismiss'),
 
     // 导航和搜索
     navigationHint: safeGetElementById('navigation-hint'),
@@ -57,6 +63,10 @@ export function reinitializeElements() {
     elements.breadcrumbNav = safeGetElementById('breadcrumb-nav');
     elements.infiniteScrollLoader = safeGetElementById('infinite-scroll-loader');
     elements.infiniteScrollLoaderContainer = safeGetElementById('infinite-scroll-loader-container');
+    elements.modalLayout = safeGetElementById('modal-layout');
+    elements.modalToolbar = safeGetElementById('modal-toolbar');
+    elements.aiCloseHint = safeGetElementById('ai-close-hint');
+    elements.aiCloseHintDismiss = safeGetElementById('ai-close-hint-dismiss');
     // sortContainer现在是topbar右侧的按钮容器区域
     // 我们使用包含layout-toggle-wrap和sort-wrapper的父容器
     const topbarRightContainer = document.querySelector('#topbar .flex.items-center.space-x-1');

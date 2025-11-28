@@ -2,6 +2,7 @@ const logger = require('../config/logger');
 const { redis } = require('../config/redis');
 const crypto = require('crypto');
 const { safeRedisIncr, safeRedisExpire, safeRedisGet, safeRedisSet } = require('../utils/helpers');
+const settingsService = require('../services/settings.service');
 
 /**
  * 对输入进行 SHA-256 哈希，输出前 16 位十六进制字符串
@@ -39,7 +40,12 @@ module.exports = async function aiRateGuard(req, res, next) {
 
     // === 2. 配额参数环境变量（如无则使用默认） ===
     // 每用户每日最大次数（默认200），单图片请求冷却秒数（默认30）
-    const DAILY_LIMIT = parseInt(process.env.AI_DAILY_LIMIT || '200', 10);
+    let configuredLimit = null;
+    try {
+      const clientSettings = await settingsService.getAllSettings({ preferFreshSensitive: true });
+      configuredLimit = clientSettings?.AI_DAILY_LIMIT;
+    } catch {}
+    const DAILY_LIMIT = parseInt(configuredLimit || process.env.AI_DAILY_LIMIT || '200', 10);
     const PER_IMAGE_COOLDOWN_SEC = parseInt(process.env.AI_PER_IMAGE_COOLDOWN_SEC || '30', 10);
 
     // === 3. 计算分区 key（年月日） ===
@@ -56,9 +62,13 @@ module.exports = async function aiRateGuard(req, res, next) {
       const tomorrowSec = Math.floor(new Date(Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth(), nowDate.getUTCDate() + 1, 0, 0, 0)).getTime() / 1000);
       await safeRedisExpire(redis, quotaKey, Math.max(60, tomorrowSec - nowSec), 'AI配额过期');
     }
-    if (current > DAILY_LIMIT) {
+    if (DAILY_LIMIT > 0 && current > DAILY_LIMIT) {
       // 配额超限，直接拦截
-      return res.status(429).json({ code: 'AI_QUOTA_EXCEEDED', message: '今日 AI 生成次数已用尽，请明日再试。' });
+      return res.status(429).json({
+        code: 'AI_QUOTA_EXCEEDED',
+        message: '今日 AI 配额已用完，如需继续使用请在设置中调整 AI_DAILY_LIMIT 或明日再试。',
+        detail: `当前上限：${DAILY_LIMIT} 次`
+      });
     }
 
     // === 5. 单图片短期冷却锁 ===
