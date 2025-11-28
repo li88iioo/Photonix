@@ -7,6 +7,7 @@ import settingsContext from './context.js';
 import { settingsLogger } from './logger.js';
 import { saveSettings, waitForSettingsUpdate, toggleAlbumDeletion } from '../app/api.js';
 import { showNotification } from '../shared/utils.js';
+import { iconGitHub } from '../shared/svg-utils.js';
 import { removeAuthToken } from '../app/auth.js';
 import { SETTINGS, isDevelopment } from '../core/constants.js';
 import { safeClassList, safeSetStyle, safeGetStyle } from '../shared/dom-utils.js';
@@ -18,6 +19,12 @@ import { showPasswordPrompt } from './password-prompt.js';
 import { closeSettingsModal } from './modal.js';
 import { state } from '../core/state.js';
 import { exportConversationHistory, importConversationHistory } from '../features/ai/ai-conversation-store.js';
+
+// 注入 GitHub 链接
+const GITHUB_LINK_HTML = `
+  ${iconGitHub()}
+  <span>GitHub</span>
+`;
 
 let lastButtonStateUpdate = 0;
 
@@ -148,6 +155,17 @@ export function setupListeners() {
   if (!card) return;
 
   const nav = card.querySelector('.settings-nav');
+
+  // Inject GitHub link
+  if (nav && !nav.querySelector('.github-link')) {
+    const githubLink = document.createElement('a');
+    githubLink.href = 'https://github.com/li88iioo/Photonix';
+    githubLink.target = '_blank';
+    githubLink.className = 'github-link mt-auto';
+    githubLink.innerHTML = GITHUB_LINK_HTML;
+    nav.appendChild(githubLink);
+  }
+
   const panels = card.querySelectorAll('.settings-tab-content');
   const passwordEnabledToggle = card.querySelector('#password-enabled');
   const aiEnabledToggle = card.querySelector('#ai-enabled');
@@ -682,14 +700,14 @@ async function executeSave(adminSecret = null, options = {}) {
   const newPasswordValue = newPassInput.value;
 
   if (isPasswordEnabled && !initialSettings.hasPassword && !newPasswordValue) {
-        showNotification('请设置新密码以启用密码访问', 'error');
-        card.querySelector('button[data-tab="security"]').click();
-        newPassInput.focus();
-        safeClassList(newPassInput, 'add', 'input-error');
-        saveButtons.forEach(btn => {
-          safeClassList(btn, 'remove', 'loading');
-          btn.disabled = false;
-        });
+    showNotification('请设置新密码以启用密码访问', 'error');
+    card.querySelector('button[data-tab="security"]').click();
+    newPassInput.focus();
+    safeClassList(newPassInput, 'add', 'input-error');
+    saveButtons.forEach(btn => {
+      safeClassList(btn, 'remove', 'loading');
+      btn.disabled = false;
+    });
     return false;
   }
 

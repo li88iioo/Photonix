@@ -52,28 +52,28 @@ function transformValidationMessage(rawMessage) {
  * @returns {Promise} 导入的模块
  */
 export async function importWithRetry(modulePath, maxRetries = 3) {
-	for (let i = 0; i < maxRetries; i++) {
-		try {
-			return await import(modulePath);
-		} catch (error) {
-			utilsLogger.warn('动态导入失败', { attempt: i + 1, maxRetries, modulePath, error });
-			
-			// 如果是 PWA 环境且出现扩展相关错误，尝试使用绝对路径
-			if (error.message && error.message.includes('chrome-extension')) {
-				try {
-					const absolutePath = new URL(modulePath, window.location.origin + '/js/').href;
-					return await import(absolutePath);
-				} catch (absoluteError) {
-					utilsLogger.warn('绝对路径导入也失败', absoluteError);
-				}
-			}
-			
-			if (i === maxRetries - 1) throw error;
-			
-			// 指数退避重试
-			await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * NETWORK.RETRY_BASE_DELAY));
-		}
-	}
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await import(modulePath);
+        } catch (error) {
+            utilsLogger.warn('动态导入失败', { attempt: i + 1, maxRetries, modulePath, error });
+
+            // 如果是 PWA 环境且出现扩展相关错误，尝试使用绝对路径
+            if (error.message && error.message.includes('chrome-extension')) {
+                try {
+                    const absolutePath = new URL(modulePath, window.location.origin + '/js/').href;
+                    return await import(absolutePath);
+                } catch (absoluteError) {
+                    utilsLogger.warn('绝对路径导入也失败', absoluteError);
+                }
+            }
+
+            if (i === maxRetries - 1) throw error;
+
+            // 指数退避重试
+            await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * NETWORK.RETRY_BASE_DELAY));
+        }
+    }
 }
 
 /**
@@ -199,7 +199,7 @@ export function showNotification(message, type = 'info', duration = UI.NOTIFICAT
         requestAnimationFrame(() => safeClassList(existing, 'add', 'show'));
         return;
     }
-    
+
     // 创建通知元素
     const notif = document.createElement('div');
     const themeClass = theme === 'download' ? 'download-notification' : '';
@@ -232,7 +232,7 @@ export function showNotification(message, type = 'info', duration = UI.NOTIFICAT
 
     // 移除通知的函数
     function remove(el) {
-        try { if (el && el._hideTimeout) clearTimeout(el._hideTimeout); } catch {}
+        try { if (el && el._hideTimeout) clearTimeout(el._hideTimeout); } catch { }
         const node = el || notif;
         safeClassList(node, 'remove', 'show');
         setTimeout(() => {
@@ -246,14 +246,16 @@ export function showNotification(message, type = 'info', duration = UI.NOTIFICAT
     }
 }
 
+import { iconNotificationSuccess, iconNotificationError, iconNotificationWarning, iconNotificationInfo } from './svg-utils.js';
+
 function renderIcon(type) {
     const map = {
-        success: '✔',
-        error: '✕',
-        warning: '! ',
-        info: 'ℹ'
+        success: iconNotificationSuccess(),
+        error: iconNotificationError(),
+        warning: iconNotificationWarning(),
+        info: iconNotificationInfo()
     };
-    return map[type] || 'ℹ';
+    return map[type] || map.info;
 }
 
 /**
@@ -264,7 +266,7 @@ function renderIcon(type) {
 export function preloadNextImages(currentPhotos, startIndex) {
     // 获取需要预加载的图片（当前索引后的2张图片）
     const toPreload = currentPhotos.slice(startIndex + 1, startIndex + 3);
-    
+
     // 遍历预加载列表，排除视频文件
     toPreload.forEach(url => {
         if (url && !/\.(mp4|webm|mov)$/i.test(url)) {
@@ -281,7 +283,7 @@ export function preloadNextImages(currentPhotos, startIndex) {
 export function detectTunnelEnvironment() {
     const hostname = window.location.hostname;
     const port = window.location.port;
-    
+
     // 检测常见的内网穿透服务
     const tunnelIndicators = [
         'ngrok.io',
@@ -295,23 +297,23 @@ export function detectTunnelEnvironment() {
         'natapp.cn',
         'sunny-ngrok.com'
     ];
-    
-    const isTunnel = tunnelIndicators.some(indicator => hostname.includes(indicator)) || 
-                     (hostname !== 'localhost' && hostname !== '127.0.0.1' && port !== '12080');
-    
+
+    const isTunnel = tunnelIndicators.some(indicator => hostname.includes(indicator)) ||
+        (hostname !== 'localhost' && hostname !== '127.0.0.1' && port !== '12080');
+
     if (isTunnel) {
         utilsLogger.debug('检测到内网穿透环境，应用优化策略');
-        
+
         // 调整请求超时时间
         window.TUNNEL_TIMEOUT = NETWORK.TUNNEL_TIMEOUT; // 10秒
 
         // 调整重试策略
         window.TUNNEL_RETRY_DELAY = NETWORK.TUNNEL_RETRY_DELAY; // 2秒
-        
+
         // 标记为隧道环境
         window.IS_TUNNEL_ENVIRONMENT = true;
     }
-    
+
     return isTunnel;
 }
 
@@ -321,7 +323,7 @@ export function detectTunnelEnvironment() {
  */
 export function getTunnelOptimizedConfig() {
     const isTunnel = window.IS_TUNNEL_ENVIRONMENT || detectTunnelEnvironment();
-    
+
     return {
         timeout: isTunnel ? NETWORK.TUNNEL_TIMEOUT : NETWORK.DEFAULT_TIMEOUT,
         retries: isTunnel ? NETWORK.MAX_RETRY_ATTEMPTS : NETWORK.MAX_RETRY_ATTEMPTS - 1,
@@ -418,7 +420,7 @@ function setupConsoleControl() {
 
     if (isProduction) {
         // 生产环境：禁用console输出但保留error
-        const noop = () => {};
+        const noop = () => { };
         const methods = ['log', 'debug', 'info', 'warn'];
         methods.forEach(method => {
             console[method] = noop;
@@ -434,7 +436,7 @@ function setupConsoleControl() {
 document.addEventListener('DOMContentLoaded', () => {
     detectTunnelEnvironment();
     setupConsoleControl();
-    
+
     // 添加全局错误监听，减少内网穿透环境下的错误噪音
     if (window.IS_TUNNEL_ENVIRONMENT) {
         window.addEventListener('error', (event) => {

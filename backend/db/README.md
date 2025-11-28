@@ -55,13 +55,13 @@
 
 ### 启动与连接管理
 - 使用 `multi-db.js` 统一管理所有数据库连接
-- 启动顺序（见 `backend/server.js`）：
+- 启动顺序（参考 `backend/server.js`）：
   1) 创建/权限检查数据与缩略图目录
-  2) 判断是否需要从单库迁移至多库（缺失则迁移，否则跳过）
+  2) 若多库文件缺失则执行 `migrate-to-multi-db.js` 迁移
   3) `initializeConnections()` 建立三库连接
-  4) `initializeAllDBs()` 初始化迁移（若已完成则跳过）
+  4) `initializeAllDBs()` 执行各库迁移（若已完成则跳过）
   5) `ensureCoreTables()` 兜底创建关键表（幂等）
-  6) 启动 Workers、搭建监听与索引/缩略图自愈
+  6) 启动 Workers（thumbnail/index/video/settings）、搭建 SSE 监听、触发索引/缩略图/HLS 自愈
 
 ### 迁移系统
 - 每个数据库独立的迁移记录
@@ -69,10 +69,12 @@
 - 自动执行未完成的迁移
 - 自 1.0 起：仅当检测到多库文件缺失时才触发一次性迁移，避免重复迁移导致的锁冲突
 
-### Worker架构
-- 每个Worker使用对应的数据库
-- 避免跨数据库事务
-- 提高并发处理能力
+### Worker 架构
+- `thumbnail-worker.js`：处理缩略图生成，更新 `gallery.db` 的 `thumb_status`
+- `indexing-worker.js`：消费 `index.db` 队列，负责 FTS5 全量/增量索引与回填任务
+- `video-processor.js`：对视频做 HLS 切片，写入 `index.db` 的状态表
+- `settings-worker.js`：处理设置更新、AI 配额写入 `settings.db`
+- 每个 worker 仅访问所属数据库，避免跨库事务，提高并发稳定性
 
 ## 数据迁移
 
@@ -112,7 +114,7 @@ PHOTOS_DIR=/path/to/photos
 - `PRAGMA cache_size = -8000`: 8MB缓存
 - `PRAGMA busy_timeout = 10000`: 10秒超时
 
-## 监控和维护
+## 监控与维护
 
 ### 日志与维护
 - 每个数据库操作包含库标识，便于排查
@@ -128,15 +130,16 @@ PHOTOS_DIR=/path/to/photos
 ## 故障处理
 
 ### 常见问题
-1. **数据库锁定**: 确保 WAL 模式、适度增加超时时间
-2. **连接失败**: 检查文件权限，重启服务
-3. **数据不一致**: 使用迁移脚本重新同步或触发全量重建索引
+1. **数据库锁定**：确保 WAL 模式、适度增加 `busy_timeout`；如批量任务过多，可临时下调 worker 并发
+2. **连接失败**：检查 `DATA_DIR` 挂载与权限，确保容器用户具备读写，再重启服务
+3. **数据不一致**：运行迁移脚本或在设置面板触发“索引全量重建”“缩略图自愈”
 
 ### 恢复步骤
 1. 停止服务
 2. 备份当前 `data/` 目录
 3. 运行迁移脚本（如需要）或清理异常数据
-4. 重启服务，观察日志并验证完整性
+4. 在设置面板触发同步，确认索引/缩略图/HLS 状态恢复
+5. 重启服务，观察日志并验证完整性
 
 ## 未来规划
 

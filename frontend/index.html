@@ -126,28 +126,27 @@
         <div id="modal-content" class="relative w-full h-full flex flex-col items-center justify-center">
             <div id="modal-layout" class="modal-layout">
                 <div id="media-panel" class="modal-media">
-                <img id="modal-img" alt="" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-                    draggable="false" style="user-select: none; -webkit-user-select: none;">
-                <video id="modal-video" class="hidden max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-                    controls></video>
+                    <img id="modal-img" alt="" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+                        draggable="false" style="user-select: none; -webkit-user-select: none;">
+                    <video id="modal-video" class="hidden max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+                        controls></video>
                 </div>
                 <aside id="ai-chat-wrapper" class="modal-chat hidden" aria-hidden="true">
                     <div class="ai-chat-panel-inner">
-                    <div class="ai-chat-panel-header">
-                        <div>
-                            <p class="ai-chat-title">画中密语</p>
-                            <p class="ai-chat-subtitle">和照片继续聊天</p>
+                        <div class="ai-chat-panel-header">
+                            <div>
+                                <p class="ai-chat-title">画中密语</p>
+                                <p class="ai-chat-subtitle">和照片继续聊天</p>
+                            </div>
                         </div>
-                    </div>
-                    <div id="ai-close-hint" class="ai-close-hint hidden" role="status" aria-live="polite">
-                        <p>关闭按钮已隐藏，点击背景任意空白即可退出。</p>
-                        <button type="button" id="ai-close-hint-dismiss">知道了</button>
-                    </div>
+                        <div id="ai-close-hint" class="ai-close-hint hidden" role="status" aria-live="polite">
+                            <p>关闭按钮已隐藏，点击背景任意空白即可退出。</p>
+                            <button type="button" id="ai-close-hint-dismiss">知道了</button>
+                        </div>
                         <div id="ai-chat-history" class="ai-chat-history" aria-live="polite"></div>
                         <div id="ai-chat-status" class="ai-chat-status"></div>
                         <form id="ai-chat-form" class="ai-chat-form">
-                            <textarea id="ai-chat-input" rows="2" placeholder="想和她说点什么？"
-                                aria-label="输入想说的话"></textarea>
+                            <textarea id="ai-chat-input" rows="2" placeholder="想和她说点什么？" aria-label="输入想说的话"></textarea>
                             <div class="ai-chat-form-actions">
                                 <button type="button" id="ai-chat-clear" class="ai-chat-link-btn">清空对话</button>
                                 <button type="submit" class="ai-chat-send-btn">
@@ -415,7 +414,7 @@
                             <div class="manage-card" id="manual-sync-card">
                                 <div class="manage-card-header">
                                     <h3 class="manage-card-title">索引维护</h3>
-                                    <p class="manage-card-description">自动监听关闭时，可在此集中处理相册与媒体的增删变化。</p>
+                                    <p class="manage-card-description">集中处理相册与媒体的增删变化。</p>
                                 </div>
                                 <div class="manage-card-body">
                                     <button id="manual-sync-btn"
@@ -439,7 +438,7 @@
                             <div class="manage-card" id="album-delete-card">
                                 <div class="manage-card-header">
                                     <h3 class="manage-card-title">相册删除控制</h3>
-                                    <p class="manage-card-description">开启安全开关后，可在相册封面右击或长按进行删除。</p>
+                                    <p class="manage-card-description">开启后可在相册封面右击或长按进行删除。</p>
                                 </div>
                                 <div class="manage-card-body">
                                     <div class="manage-toggle-row" id="album-delete-toggle-row" role="button"
@@ -454,7 +453,7 @@
                                                 aria-label="启用网页相册删除">
                                         </div>
                                     </div>
-                                    <p class="manage-helper-text">开启功能时需要管理员验证，删除操作将同步清理索引与缩略图。</p>
+                                    <p class="manage-helper-text">开启功能需管理员验证，删除操作将同步清理索引与缩略图。</p>
                                 </div>
                             </div>
                             <div class="manage-card" id="download-service-card">

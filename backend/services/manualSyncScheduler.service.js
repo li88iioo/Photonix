@@ -242,11 +242,46 @@ async function runManualSync(trigger, raw) {
         });
       }
     }
+
+    if (trigger === 'schedule') {
+      await runScheduledMaintenancePipeline();
+    }
   } catch (error) {
     logger.error(`${LOG_PREFIXES.AUTO_SYNC} 手动同步失败:`, error);
   } finally {
     state.running = false;
     scheduleNextRun();
+  }
+}
+
+async function runScheduledMaintenancePipeline() {
+  try {
+    const { triggerSyncOperation, triggerCleanupOperation } = require('./settings/maintenance.service');
+    logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：启动缩略图补全`);
+    const thumbSyncResult = await triggerSyncOperation('thumbnail');
+    logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：缩略图补全完成 ${thumbSyncResult?.message ? `(${thumbSyncResult.message})` : ''}`.trim());
+
+    try {
+      logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：启动缩略图清理`);
+      const thumbCleanupResult = await triggerCleanupOperation('thumbnail');
+      logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：缩略图清理完成 ${thumbCleanupResult?.message ? `(${thumbCleanupResult.message})` : ''}`.trim());
+    } catch (thumbCleanupError) {
+      logger.error(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：缩略图清理失败`, thumbCleanupError);
+    }
+
+    logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：启动 HLS 补全`);
+    const hlsSyncResult = await triggerSyncOperation('hls');
+    logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：HLS 补全完成 ${hlsSyncResult?.message ? `(${hlsSyncResult.message})` : ''}`.trim());
+
+    try {
+      logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：启动 HLS 清理`);
+      const hlsCleanupResult = await triggerCleanupOperation('hls');
+      logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：HLS 清理完成 ${hlsCleanupResult?.message ? `(${hlsCleanupResult.message})` : ''}`.trim());
+    } catch (hlsCleanupError) {
+      logger.error(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：HLS 清理失败`, hlsCleanupError);
+    }
+  } catch (pipelineError) {
+    logger.error(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：维护流水线执行失败`, pipelineError);
   }
 }
 

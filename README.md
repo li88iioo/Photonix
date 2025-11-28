@@ -5,16 +5,38 @@
 一个极简、AI 驱动的智能相册，专为现代 Web 设计。它集成了 PWA、流式加载、多数据库架构和高性能缓存，旨在提供极致的浏览体验和智能的交互方式。
 
 
+## 📚 导航
+- [主要特性](#-主要特性)
+- [快速开始](#-快速开始)
+- [项目架构](#-项目架构)
+- [配置说明](#-配置说明)
+- [Docker 服务配置](#-docker-服务配置)
+- [数据库架构](#-数据库架构)
+- [API 接口](#-api-接口)
+- [本地开发](#-本地开发)
+- [功能详解](#-功能详解)
+- [更新与升级](#-更新与升级)
+- [性能优化建议](#-性能优化建议)
+- [常见问题](#-常见问题)
+
+
 ## ✨ 主要特性
 
 ### 🎭 AI 智能交互
 - **AI 画中密语**：AI 扮演照片人物，沉浸式对话体验
 - **多模型支持**：兼容 OpenAI、Claude、Gemini 等主流视觉模型
 - **自定义提示词**：支持多种AI角色设定，从温馨对话到私密互动
-- **异步任务处理**：AI内容生成采用 BullMQ 队列机制，避免阻塞用户界面
+- **轻量级微服务**：内置 AI 微服务架构，采用内存队列与智能并发控制，无需额外消息队列组件
 - **智能缓存**：AI生成内容 Redis 持久化缓存，降低 API 成本
 - **任务去重**：相同图片自动复用已有结果，优化性能
 - **提示词模板**：内置多种对话风格模板，可参考 `AIPROMPT.md`
+- **会话存储**：对话历史仅保存在浏览器 IndexedDB，可导入导出，避免后端保存隐私数据
+
+### 📥 资源订阅中心
+- **RSS/Atom 订阅**：内置 Feed 解析器，支持订阅并自动同步外部图库源
+- **自动抓取**：后台定时任务自动爬取新发布的媒体资源，支持断点续传
+- **智能调度**：基于任务编排器 (TaskScheduler) 的下载管理，支持并发控制与错误重试
+- **历史回溯**：完整的下载历史记录与状态追踪，防止重复下载
 
 ### 🖼️ 图片管理
 - **流式图片加载**：大相册极速响应，懒加载优化
@@ -31,7 +53,7 @@
 ### 🚀 性能优化
 - **多数据库架构**：主数据库、设置数据库、索引数据库分离
 - **Redis 高性能缓存**：AI内容与搜索结果持久缓存
-- **Worker 线程池**：缩略图生成、AI处理、索引重建多线程并发
+- **Worker 线程池**：缩略图生成、索引重建、视频转码多线程并发
 - **智能索引**：SQLite FTS5全文搜索，支持模糊匹配
 
 ### 📱 用户体验
@@ -46,6 +68,8 @@
 - **健康检查**：容器健康状态监控
 - **日志系统**：结构化日志，便于问题排查
 - **数据迁移**：自动数据库迁移，平滑升级
+- **系统维护中心**：前端设置页集成索引/缩略图/HLS 状态表、自动维护计划与手动同步，并整合下载服务入口
+- **安全操作台**：相册删除、下载服务、AI 配额等敏感操作需管理员密钥，操作可审计
 
 ## 🚀 快速开始
 
@@ -106,6 +130,7 @@ if (Test-Path .env) {
 - ⚡ **性能优化**：硬件自适应配置，支持 `DETECTED_CPU_COUNT` 和 `DETECTED_MEMORY_GB`
 - 🔒 **安全设置**：生产环境务必修改 `JWT_SECRET` 和 `ADMIN_SECRET`
 - 🤖 **AI 集成**：支持自定义 AI 服务配置和提示词模板
+- 📊 **AI 调用配额**：后台可设定 `AI_DAILY_LIMIT`（1~10000），并在前端设置面板单独保存；需要管理员密钥确认
 
 
 ### 4. 准备照片目录
@@ -138,10 +163,11 @@ docker compose logs -f app
 - **健康检查**：`http://localhost:12080/health`
 
 ## 📁 项目架构
+## 📁 项目架构
 
 ```
 Photonix/
-├── Dockerfile                          # 单容器构建（前端打包→拷贝到 backend/public，pm2 启动 server+ai-worker）
+├── Dockerfile                          # 单容器构建（前端打包→拷贝到 backend/public，pm2 启动 server）
 ├── docker-compose.yml                   # 编排（app + redis），端口与卷映射
 ├── README.md                            # 项目说明
 ├── AIPROMPT.md                          # AI 提示词示例
@@ -155,84 +181,37 @@ Photonix/
 │   ├── app.js                           # Express 应用：中间件、/api、静态资源与 SPA 路由
 │   ├── server.js                        # 启动流程：多库初始化、Workers、索引/监控、健康检查
 │   ├── entrypoint.sh                    # 容器入口：权限修复、依赖自愈、定时任务、pm2-runtime 启动
-│   ├── ecosystem.config.js              # pm2 配置：server 与 ai-worker 进程
+│   ├── ecosystem.config.js              # pm2 配置：管理 server 进程
 │   ├── package.json                     # 后端依赖与脚本
-│   ├── package-lock.json                # 锁定文件
 │   ├── config/
 │   │   ├── index.js                     # 全局配置（端口/目录/Redis/Workers/索引参数）
 │   │   ├── hardware.js                  # 硬件检测与资源配置
 │   │   ├── logger.js                    # winston 日志配置
-│   │   ├── redis.js                     # ioredis 连接与 BullMQ 队列（AI/Settings）
-│   │   └── runtime.js                   # 运行时配置管理
+│   │   ├── redis.js                     # ioredis 连接
+│   │   └── vision-models.js             # 视觉模型元数据
 │   ├── controllers/
-│   │   ├── ai.controller.js             # 接收前端 aiConfig，入队生成描述
-│   │   ├── auth.controller.js           # 登录/刷新 Token/状态检测
+│   │   ├── ai.controller.js             # AI 控制器：对接 Microservice
+│   │   ├── download.controller.js       # 下载/订阅控制器
 │   │   ├── browse.controller.js         # 相册/图片流式浏览
-│   │   ├── event.controller.js          # SSE 事件流
-│   │   ├── login.controller.js          # 登录背景等
-│   │   ├── search.controller.js         # 搜索查询接口
-│   │   ├── settings.controller.js       # 设置读写（过滤敏感项）
-│   │   └── thumbnail.controller.js      # 缩略图获取：exists/processing/failed 占位
+│   │   └── ...                          # 其他业务控制器
 │   ├── db/
 │   │   ├── migrate-to-multi-db.js       # 单库→多库迁移脚本
-│   │   ├── migrations.js                # 多库初始化与核心表兜底
 │   │   ├── multi-db.js                  # SQLite 连接管理与通用查询
-│   │   ├── sqlite-retry.js              # SQLite 重试机制
-│   │   └── README.md                    # 多库说明
-│   ├── middleware/
-│   │   ├── ai-rate-guard.js             # AI 配额/冷却/去重（Redis）
-│   │   ├── auth.js                      # 认证：公开访问/Token 校验/JWT_SECRET 检查
-│   │   ├── cache.js                     # 路由级 Redis 缓存与标签失效
-│   │   ├── cacheMonitor.js              # 缓存监控中间件
-│   │   ├── inputValidation.js           # 输入验证中间件
-│   │   ├── pathValidator.js             # 路径校验（防穿越）
-│   │   ├── permissions.js               # 权限控制中间件
-│   │   ├── rateLimiter.js               # 全局速率限制
-│   │   ├── requestId.js                 # 请求 ID 注入
-│   │   └── validation.js                # Joi 参数校验与 asyncHandler
-│   ├── repositories/
-│   │   ├── indexStatus.repo.js          # 索引状态数据访问层
-│   │   ├── items.repo.js                # 项目数据访问层
-│   │   ├── stats.repo.js                # 统计数据访问层
-│   │   └── thumbStatus.repo.js          # 缩略图状态数据访问层
-│   ├── routes/
-│   │   ├── ai.routes.js                 # /api/ai：生成与任务状态
-│   │   ├── auth.routes.js               # /api/auth：登录/刷新/状态
-│   │   ├── browse.routes.js             # /api/browse：相册/媒体列表
-│   │   ├── cache.routes.js              # /api/cache：缓存清理
-│   │   ├── event.routes.js              # /api/events：SSE
-│   │   ├── index.js                     # /api 聚合入口
-│   │   ├── metrics.routes.js            # /api/metrics：缓存/队列指标
-│   │   ├── search.routes.js             # /api/search：搜索
-│   │   ├── settings.routes.js           # /api/settings：客户端可读设置
-│   │   └── thumbnail.routes.js          # /api/thumbnail：缩略图获取
+│   │   └── migrations.js                # 多库初始化
 │   ├── services/
-│   │   ├── adaptive.service.js          # 自适应性能模式管理
-│   │   ├── ai-microservice.js           # AI微服务集成
-│   │   ├── batch.executor.js            # 批量执行器服务
-│   │   ├── cache.service.js             # 缓存标签管理/失效
-│   │   ├── event.service.js             # 事件总线（SSE）
-│   │   ├── file.service.js              # 文件与封面相关逻辑
-│   │   ├── indexer.service.js           # 监控目录/合并变更/索引调度
-│   │   ├── orchestrator.js              # 任务编排器
-│   │   ├── queryOptimizer.service.js    # 查询优化服务
-│   │   ├── search.service.js            # 搜索实现（FTS5 等）
-│   │   ├── settings.service.js          # 设置缓存（内存/Redis）与持久化
-│   │   ├── thumbnail.service.js         # 缩略图高/低优队列与重试
-│   │   ├── tx.manager.js                # 事务管理器
-│   │   ├── video.service.js             # 视频处理服务
-│   │   └── worker.manager.js            # Worker 管理（缩略图/索引/视频）
+│   │   ├── ai-microservice.js           # [核心] AI 内存微服务：队列/并发/请求封装
+│   │   ├── download/                    # [核心] 下载与订阅服务模块
+│   │   │   ├── FeedProcessor.js         # RSS/Atom 解析
+│   │   │   ├── TaskScheduler.js         # 任务调度器
+│   │   │   └── ImageDownloader.js       # 图片下载实现
+│   │   ├── worker.manager.js            # Worker 管理（缩略图/索引/视频）
+│   │   ├── indexer.service.js           # 索引服务
+│   │   └── ...                          # 其他服务
 │   ├── utils/
-│   │   ├── errorHandler.js              # 错误处理工具
-│   │   ├── errorMessageTranslator.js    # 错误消息翻译器
 │   │   ├── hls.utils.js                 # HLS 视频处理工具
 │   │   ├── media.utils.js               # 媒体判定/尺寸计算等
-│   │   ├── path.utils.js                # 路径清理/安全校验
-│   │   ├── search.utils.js              # 搜索辅助工具
-│   │   ├── tempFileManager.js           # 临时文件管理器
-│   │   └── time.utils.js                # 时间处理工具
+│   │   └── ...                          # 通用工具
 │   └── workers/
-│       ├── ai-worker.js                 # 调用外部 AI 接口，写回结果
 │       ├── indexing-worker.js           # 构建/增量更新搜索索引
 │       ├── settings-worker.js           # 设置持久化任务
 │       ├── thumbnail-worker.js          # Sharp/FFmpeg 生成缩略图
@@ -241,52 +220,32 @@ Photonix/
 └── frontend/
     ├── index.html                        # 页面入口
     ├── manifest.json                     # PWA 清单
-    ├── package.json                      # 前端依赖与构建脚本
-    ├── package-lock.json                 # 锁定文件
-    ├── style.css                         # 全站样式（含骨架/占位/动效）
-    ├── sw-src.js                         # Service Worker 源文件（构建生成 sw.js）
-    ├── sw-cache-manager.js               # Service Worker缓存管理器
-    ├── workbox-config.js                 # Workbox 配置（injectManifest）
-    ├── tailwind.config.js                # Tailwind 配置
-    ├── assets/
-    │   └── icon.svg                      # 应用图标
-    └── js/
-        ├── abort-bus.js                  # 统一中止控制
-        ├── ai-cache.js                   # AI缓存管理
-        ├── api-client.js                 # API客户端封装
-        ├── api.js                        # API 封装（认证/设置/搜索等）
-        ├── auth.js                       # 登录/Token 本地管理
-        ├── constants.js                  # 常量定义
-        ├── dom-elements.js               # DOM 元素管理（动态初始化/重新获取）
-        ├── dom-utils.js                  # DOM工具函数
-        ├── error-handler.js              # 全局错误处理
-        ├── event-buffer.js               # 事件缓冲管理
-        ├── event-manager.js              # 事件管理器
-        ├── indexeddb-helper.js           # IndexedDB 搜索历史/浏览记录
-        ├── lazyload-state-manager.js     # 懒加载状态管理
-        ├── lazyload.js                   # 懒加载与占位/状态处理
-        ├── listeners.js                  # 滚动/交互事件
-        ├── loading-states.js             # 骨架/空态/错误态渲染
-        ├── logger.js                     # 日志管理
-        ├── main.js                       # 启动流程与状态初始化
-        ├── masonry.js                    # 瀑布流布局与列数计算
-        ├── modal.js                      # 媒体预览模态框（支持双指缩放/拖拽）
-        ├── router.js                     # Hash 路由与流式加载
-        ├── search-history.js             # 搜索历史 UI 逻辑
-        ├── security.js                   # 安全相关功能
-        ├── settings.js                   # 设置面板与本地 AI 配置
-        ├── sse.js                        # SSE 连接与事件处理
-        ├── state.js                      # 全局状态容器（布局模式管理）
-        ├── svg-utils.js                  # SVG工具函数
-        ├── timer-manager.js              # 定时器管理器
-        ├── touch.js                      # 触摸手势（双指缩放、拖拽、滑动切换）
-        ├── ui-components.js              # UI组件库
-        ├── ui.js                         # DOM 渲染与卡片组件（布局切换、瀑布流/网格）
-        ├── utils.js                      # 杂项工具
-        └── virtual-scroll.js             # 虚拟滚动
+    ├── js/
+    │   ├── api/                          # API 客户端层
+    │   │   ├── ai.js                     # AI 相关 API
+    │   │   ├── download.js               # 下载相关 API
+    │   │   └── ...
+    │   ├── features/                     # 功能模块
+    │   │   ├── download/                 # 下载中心前端逻辑
+    │   │   ├── gallery/                  # 画廊核心逻辑 (懒加载/瀑布流/手势)
+    │   │   ├── ai/                       # AI 对话逻辑
+    │   │   └── history/                  # 历史记录服务
+    │   ├── shared/                       # 共享工具
+    │   │   ├── indexeddb-helper.js       # 前端存储实现 (History)
+    │   │   └── ...
+    │   ├── main.js                       # 启动流程
+    │   └── router.js                     # 路由管理
+    └── assets/                           # 静态资源
 ```
-
 ## 🔧 配置说明
+
+### 🧭 请求生命周期（AI 画中密语）
+1. **前端触发**：`frontend/js/features/ai/ai-conversation-store.js` 维护对话历史，通过 `frontend/js/api/ai.js` 发起 `POST /api/ai/generate`。
+2. **后端入口**：`backend/app.js` 中 `/api` 路由将请求交给 `backend/controllers/ai.controller.js`，执行访问密码与管理员密钥校验。
+3. **配额与排队**：控制器查询 `settings.db` 中的 `AI_DAILY_LIMIT`，并把任务交给 `services/ai-microservice.js` 内存队列，结合 Redis (`config/redis.js`) 做任务去重、并发调度与结果缓存。
+4. **模型调用**：按照 `config/vision-models.js` 定义调度 OpenAI/Claude/Gemini 等模型，得到结果后写入 Redis，并更新缓存映射。
+5. **状态推送**：前端通过 `/api/ai/status/:jobId` 轮询或 `/api/events` SSE 获取处理进度，workers 会把索引/缩略图状态写入 `index.db`，更新设置面板的维护表格。
+6. **前端呈现**：`ai-conversation-store.js` 将结果存入 IndexedDB，UI 即时刷新，用户可在设置面板导出/导入对话历史。
 
 ### 环境变量配置 (`.env`)
 
@@ -297,9 +256,12 @@ Photonix/
 | `NODE_ENV`               | `production`                                       | Node.js 运行环境模式。                                       |
 | `LOG_LEVEL`              | `info`                                             | 日志输出级别。                                               |
 | `RATE_LIMIT_WINDOW_MINUTES` | `1`                                             | API 速率限制的时间窗口（分钟，代码默认 1 分钟）。            |
-| `RATE_LIMIT_MAX_REQUESTS`    | `800`                                          | 在一个时间窗口内的最大请求数（代码默认 800，可按需下调）。   |
+| `RATE_LIMIT_MAX_REQUESTS`    | `3000`                                          | 在一个时间窗口内的最大请求数（代码默认 800，可按需下调）。   |
 | `JWT_SECRET`             | `your-own-very-long-and-random-secret-string-123450` | 用于签发和验证登录 Token 的密钥，请修改为复杂随机字符串。    |
 | `ADMIN_SECRET`           | `（默认nameadmin，请手动设置）`                          | 超级管理员密钥，启用/修改/禁用访问密码等敏感操作时必需。      |
+| `AI_DAILY_LIMIT`         | `1000`                                             | AI 每日调用上限，设置面板支持 1~10000，可避免超额调用。        |
+| `DETECTED_CPU_COUNT`     | `auto`                                             | 覆盖硬件自检结果，控制 worker 并发；低配主机可手动下调。        |
+| `DETECTED_MEMORY_GB`     | `auto`                                             | 覆盖自动内存检测，便于在容器或低配环境下定制缓存策略。        |
 
 > **注意：**
 > - `ADMIN_SECRET` 必须在 `.env` 文件中手动设置，否则涉及超级管理员权限的敏感操作（如设置/修改/禁用访问密码）将无法进行。
@@ -360,9 +322,18 @@ Photonix 提供完整的 RESTful API，支持前后端分离开发。
 - `POST /api/ai/generate` - 生成 AI 描述
 - `GET /api/ai/status/:jobId` - 查询任务状态
 
+#### 下载接口 (`/api/download`)
+- `POST /api/download/feeds` - 添加或更新订阅源
+- `GET /api/download/feeds` - 列出订阅源
+- `POST /api/download/tasks` - 创建下载任务或触发立即抓取
+- `GET /api/download/history` - 查看下载历史记录
+- `GET /api/download/status` - 查看当前任务队列运行状态
+
 #### 设置接口 (`/api/settings`)
 - `GET /api/settings` - 获取应用设置
 - `PUT /api/settings` - 更新应用设置
+- `GET /api/settings/status` - 查询设置更新状态、AI 配额等结果
+- `POST /api/settings/status` - 内部更新状态（由 worker/调度调用）
 
 #### 缩略图接口 (`/api/thumbnail`)
 - `GET /api/thumbnail/:path` - 获取缩略图
@@ -670,9 +641,10 @@ Photonix 的核心特色功能，通过 AI 让照片中的人物"开口说话"�
 #### 功能特性
 - **多模型兼容**：支持 OpenAI GPT-4V、Claude-3、Gemini 等视觉模型
 - **自定义角色**：可设置不同的人设和对话风格
-- **异步处理**：BullMQ 队列确保流畅的用户体验
+- **内存微服务**：轻量级并发处理，无需外部队列即可完成生成
 - **智能缓存**：Redis 缓存避免重复生成，降低 API 成本
 - **任务去重**：相同图片自动复用已有结果
+- **对话历史**：会话仅存浏览器，可导入导出，最大保留 12 条记录
 
 #### 使用方法
 1. **配置 AI 服务**：
@@ -689,6 +661,19 @@ Photonix 的核心特色功能，通过 AI 让照片中的人物"开口说话"�
    - 内置多种对话风格模板
    - 支持完全自定义提示词
    - 参考 `AIPROMPT.md` 获取更多示例
+- **历史管理**：设置面板可导出全部AI对（每个图片会话上限12条）话历史 JSON，或导入备份恢复。
+
+### 运维面板与手动同步
+
+Photonix 在前端设置的“运维”页整合了多项维护能力：
+
+- **状态表格**：索引、缩略图、HLS 三张状态表实时显示进度、文件统计与最近同步时间。
+- **手动同步**：可随时触发相册/媒体全量同步，同时联动缩略图状态增量更新，执行过程会生成摘要报告。
+- **自动维护计划**：支持输入分钟间隔或 Cron 表达式，后台自动运行手动同步，并在同步结束后依次完成缩略图补全/清理与 HLS 补全/清理；输入 `off` 即可关闭。
+- **相册删除开关**：启用后，前端支持右键/长按删除相册，所有操作需要管理员密钥并触发索引+缩略图清理。
+- **下载服务控制台**：在管理卡片中打开 `#/download` 控制台，集中管理 RSS 订阅、任务调度、导入导出与日志。
+
+> 所有手动/自动维护操作都会校验访问密码与管理员密钥，确保敏感操作留痕可控。
 
 #### 技术实现
 - **队列系统**：使用 Redis + BullMQ 处理并发任务
@@ -785,7 +770,7 @@ docker compose logs -f
 - **工作线程**：系统自动检测 CPU 核心数，动态调整 `NUM_WORKERS`
 - **缓存策略**：合理配置 Redis 内存，支持标签化缓存清理
 - **索引优化**：大相册首次索引耗时较长，建议在业务低峰进行
-- **队列配置**：BullMQ 支持任务优先级和并发控制
+- **任务调度**：AI 采用内存微服务排队策略，下载任务由 TaskScheduler 提供限流与重试
 
 ### Docker 优化
 - **资源限制**：根据硬件配置设置容器资源限制
@@ -824,6 +809,7 @@ docker compose logs -f
   - **普通 Linux 主机**：建议在宿主机执行 `sudo chown -R <容器UID:GID> /opt/photos`（Node 官方镜像通常为 `1000:1000`），或在 `docker-compose.yml` 的 `app` 服务中添加 `user: "1000:1000"`，让容器进程以具备写权限的用户运行。
   - **NAS/NFS（如 Synology DSM）**：在 DSM 中创建专用的“Photonix”用户/用户组，并赋予共享目录读写权限；随后在容器配置中将 `user` 指向该用户的 UID/GID，或使用 DSM 套件的“用户映射”功能保证容器用户与共享权限一致。为避免 DSM GUI 显示数字 UID，可在 DSM 上同步创建同名账号。
   - 修改属主不会影响 root 删除/管理能力；若仍提示 403，请确认 NFS 挂载选项允许写入（不要启用 `ro`、`root_squash` 等限制），并重新启动容器。
+- **数据库排查**：遇到索引/缩略图/HLS 状态异常，可结合设置面板的“手动同步”与 [backend/db/README.md](backend/db/README.md) 的多库维护指南定位问题。
 
 ### 网络问题
 - **SSE 连接断开**：检查反向代理配置，确保长连接支持
