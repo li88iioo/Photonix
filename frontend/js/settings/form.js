@@ -10,7 +10,7 @@ import { showNotification } from '../shared/utils.js';
 import { removeAuthToken } from '../app/auth.js';
 import { SETTINGS, isDevelopment } from '../core/constants.js';
 import { safeClassList, safeSetStyle, safeGetStyle } from '../shared/dom-utils.js';
-import { setupApiUrlAutoComplete, attemptModelFetch } from './ai.js';
+import { setupApiUrlAutoComplete, setupModelDropdownControls, attemptModelFetch } from './ai.js';
 import { setupManagementTab, renderManualSyncScheduleStatus } from './management.js';
 import { loadStatusTables } from './status.js';
 import { getLocalAISettings, setLocalAISettings } from './storage.js';
@@ -110,6 +110,7 @@ export function populateForm(settings) {
   card.querySelector('#ai-url').value = settings.AI_URL || '';
 
   setupApiUrlAutoComplete();
+  setupModelDropdownControls();
   card.querySelector('#ai-key').value = '';
   card.querySelector('#ai-model').value = settings.AI_MODEL || '';
   card.querySelector('#ai-prompt').value = settings.AI_PROMPT || '';

@@ -351,13 +351,17 @@ async function handleGenerationResult(data, imagePath, aiConfig) {
             if (data.message.includes('AI未能生成有效内容') ||
                 data.message.includes('AI处理失败') ||
                 data.code === 'AI_PROCESSING_ERROR') {
+                const detailHtml = typeof data.detail === 'string' && data.detail.trim()
+                    ? `<div class="text-xs text-gray-500 mt-1">${escapeHtml(data.detail)}</div>`
+                    : '';
                 safeSetInnerHTML(captionContainer, `
                     <div class="text-red-600 mb-2">${escapeHtml(data.message)}</div>
                     <div class="text-sm text-gray-500">请稍后重试或选择其他图片</div>
+                    ${detailHtml}
                 `);
                 captionContainerMobile.textContent = '生成失败';
                 isProcessing = false;
-                showNotification('AI生成失败', 'error');
+                // 错误详情已注入密语气泡，避免重复通知
                 return;
             }
 

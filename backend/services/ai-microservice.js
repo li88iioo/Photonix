@@ -10,8 +10,69 @@ const axiosRetry = require('axios-retry');
 const sharp = require('sharp');
 const { PHOTOS_DIR } = require('../config');
 const logger = require('../config/logger');
+const {
+    getVisionModelMeta,
+    isVisionModelWhitelisted,
+    normalizeVisionModelId,
+    VISION_MODEL_KEYWORDS
+} = require('../config/vision-models');
 
 const GEMINI_HOST_PATTERN = /generativelanguage\.googleapis\.com$/i;
+const VISION_PROBE_IMAGE_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==';
+const VISION_PROBE_PROMPT = '请快速确认你能看到这张图片，并返回一个词。';
+const MODEL_KEYWORD_HEURISTICS = Array.from(new Set([
+    'vision',
+    'image',
+    'omni',
+    'flash',
+    'gpt-4o',
+    'gpt-4.1',
+    'gpt-4-turbo',
+    'photography',
+    'multimodal',
+    ...VISION_MODEL_KEYWORDS
+]));
+
+function extractTextFromStructuredContent(content, depth = 0) {
+    if (!content || depth > 5) return null;
+    if (typeof content === 'string') {
+        return content.trim() ? content : null;
+    }
+    if (Array.isArray(content)) {
+        for (const item of content) {
+            const result = extractTextFromStructuredContent(item, depth + 1);
+            if (result) return result;
+        }
+        return null;
+    }
+    if (typeof content === 'object') {
+        if (typeof content.text === 'string' && content.text.trim()) {
+            return content.text;
+        }
+        if (typeof content.content === 'string' && content.content.trim()) {
+            return content.content;
+        }
+        if (typeof content.value === 'string' && content.value.trim()) {
+            return content.value;
+        }
+        for (const key of Object.keys(content)) {
+            const result = extractTextFromStructuredContent(content[key], depth + 1);
+            if (result) return result;
+        }
+    }
+    return null;
+}
+
+function enrichModelMetadata(id, fallbackDisplay = '', fallbackDescription = '') {
+    const meta = getVisionModelMeta(id);
+    return {
+        id,
+        displayName: meta?.label || fallbackDisplay || id,
+        description: meta?.description || fallbackDescription || '',
+        provider: meta?.provider || '',
+        capabilities: Array.isArray(meta?.capabilities) ? [...meta.capabilities] : []
+    };
+}
 
 function normalizeBaseUrl(rawUrl = '') {
     const trimmed = rawUrl.trim();
@@ -88,30 +149,57 @@ function isGeminiEndpoint(url = '') {
     }
 }
 
-function isLikelyVisionModel(model) {
-    if (!model) return false;
-    const id = String(model.id || model.name || '').toLowerCase();
-    if (!id) return false;
-    if (model.capabilities && model.capabilities.vision === true) return true;
+function hasMetadataVisionCapability(modelId) {
+    const meta = getVisionModelMeta(modelId);
+    return Array.isArray(meta?.capabilities) && meta.capabilities.includes('vision');
+}
+
+function computeVisionHeuristicScore(model) {
+    if (!model) return 0;
+    let score = 0;
+    const normalizedId = normalizeVisionModelId(model.id || model.name);
+    if (!normalizedId) return 0;
+
+    if (model.capabilities && model.capabilities.vision === true) {
+        score += 3;
+    }
+
     const modalityFields = [model.modalities, model.supportedModalities, model.supported_input_modalities, model.supportedInputModalities];
     for (const field of modalityFields) {
         if (Array.isArray(field) && field.some(mod => typeof mod === 'string' && mod.toLowerCase().includes('image'))) {
-            return true;
+            score += 3;
+            break;
         }
     }
-    const heuristics = ['vision', 'image', 'omni', 'gpt-4o', 'flash', 'gpt-4.1', 'photography', 'multimodal'];
-    return heuristics.some(token => id.includes(token));
+
+    const description = String(model.description || model.owned_by || '').toLowerCase();
+    if (description.includes('vision') || description.includes('image')) {
+        score += 1;
+    }
+
+    if (MODEL_KEYWORD_HEURISTICS.some(token => normalizedId.includes(token))) {
+        score += 1;
+    }
+
+    return score;
+}
+
+function isLikelyVisionModel(model) {
+    if (!model) return false;
+    const rawId = model.id || model.name;
+    if (!rawId) return false;
+    if (hasMetadataVisionCapability(rawId)) return true;
+    const score = computeVisionHeuristicScore(model);
+    return score >= 2;
 }
 
 function isGeminiVisionModel(model) {
     if (!model) return false;
-    const name = String(model.name || '').toLowerCase();
-    const supportedInputs = model.supportedInputModalities || model.inputModalities;
-    if (Array.isArray(supportedInputs) && supportedInputs.some(mod => typeof mod === 'string' && mod.toLowerCase().includes('image'))) {
-        return true;
-    }
-    const heuristics = ['vision', '1.5', 'flash', 'pro'];
-    return heuristics.some(token => name.includes(token));
+    const rawId = model.name || model.id;
+    if (!rawId) return false;
+    if (hasMetadataVisionCapability(rawId)) return true;
+    const score = computeVisionHeuristicScore(model);
+    return score >= 2;
 }
 
 // 微服务状态管理
@@ -126,6 +214,8 @@ class AIMicroservice {
         this.maxConcurrent = this.resolveInitialConcurrency();
         this.isProcessing = false; // 处理状态
         this.initializeAxios();
+        this.enableVisionProbe = process.env.AI_ENABLE_VISION_PROBE === 'true';
+        this.visionProbeCache = new Map();
     }
 
     resolveInitialConcurrency() {
@@ -407,10 +497,27 @@ class AIMicroservice {
                 const choice = data.choices[0];
                 if (choice.message && typeof choice.message.content === 'string') {
                     description = choice.message.content;
+                } else if (choice.message && Array.isArray(choice.message.content)) {
+                    description = extractTextFromStructuredContent(choice.message.content);
                 } else if (typeof choice.text === 'string') {
                     description = choice.text;
                 } else if (choice.delta && typeof choice.delta.content === 'string') {
                     description = choice.delta.content;
+                } else if (choice.message && typeof choice.message === 'object') {
+                    description = extractTextFromStructuredContent(choice.message);
+                }
+            }
+
+            // 兼容部分 OpenAI 接口返回 Gemini 风格结构（candidates/parts）
+            if (!description && Array.isArray(data?.candidates)) {
+                for (const candidate of data.candidates) {
+                    const contentParts = Array.isArray(candidate?.content?.parts)
+                        ? candidate.content.parts
+                        : Array.isArray(candidate?.content)
+                            ? candidate.content
+                            : [];
+                    description = extractTextFromStructuredContent(contentParts);
+                    if (description) break;
                 }
             }
 
@@ -568,6 +675,83 @@ class AIMicroservice {
         return this.fetchOpenAIModels(aiConfig);
     }
 
+    async evaluateVisionModel(model, aiConfig, options = {}) {
+        const id = model && (model.id || model.name);
+        const capabilities = new Set();
+        const meta = id ? getVisionModelMeta(id) : null;
+        if (Array.isArray(meta?.capabilities)) {
+            meta.capabilities.forEach(cap => capabilities.add(cap));
+        }
+        if (model?.capabilities && model.capabilities.vision === true) {
+            capabilities.add('vision');
+        }
+
+        let include = capabilities.has('vision');
+        const score = computeVisionHeuristicScore(model);
+        if (!include && score >= 2) {
+            capabilities.add('vision');
+            include = true;
+        } else if (!include && score === 1 && options.allowProbe && this.enableVisionProbe && aiConfig) {
+            const probed = await this.probeVisionCapability(aiConfig, id);
+            if (probed) {
+                capabilities.add('vision');
+                capabilities.add('probe');
+                include = true;
+            }
+        }
+
+        return {
+            include,
+            capabilities: Array.from(capabilities),
+            labelOverride: meta?.label,
+            descriptionOverride: meta?.description,
+            provider: meta?.provider
+        };
+    }
+
+    async probeVisionCapability(aiConfig, modelId) {
+        if (!aiConfig || !modelId) return false;
+        if (isGeminiEndpoint(aiConfig.url)) return false;
+        const cacheKey = `${normalizeBaseUrl(aiConfig.url)}::${modelId}`;
+        if (this.visionProbeCache.has(cacheKey)) {
+            return this.visionProbeCache.get(cacheKey);
+        }
+        try {
+            const headers = {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${aiConfig.key}`
+            };
+            const payload = {
+                model: modelId,
+                temperature: 0,
+                max_tokens: 8,
+                messages: [{
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: VISION_PROBE_PROMPT },
+                        { type: 'image_url', image_url: { url: `data:image/png;base64,${VISION_PROBE_IMAGE_BASE64}` } }
+                    ]
+                }]
+            };
+            await this.aiAxios.post(buildOpenAIEndpoint(aiConfig.url, 'chat/completions'), payload, {
+                headers,
+                timeout: Math.min(this.taskTimeoutMs, 15000)
+            });
+            this.visionProbeCache.set(cacheKey, true);
+            return true;
+        } catch (error) {
+            const status = error?.response?.status;
+            const message = error?.response?.data?.error?.message || error?.message || '';
+            if (status === 400 && typeof message === 'string' && message.toLowerCase().includes('image')) {
+                this.visionProbeCache.set(cacheKey, false);
+                return false;
+            }
+            logger.debug(`[AI-MICROSERVICE] 视觉能力探测失败 (${modelId}): ${message || status}`);
+            this.visionProbeCache.set(cacheKey, false);
+            return false;
+        }
+    }
+
     async fetchOpenAIModels(aiConfig) {
         const headers = { Authorization: `Bearer ${aiConfig.key}` };
 
@@ -595,14 +779,22 @@ class AIMicroservice {
             try {
                 const response = await this.aiAxios.get(endpoint, { headers });
                 const rawModels = Array.isArray(response.data?.data) ? response.data.data : [];
-                return rawModels
-                    .filter(isLikelyVisionModel)
-                    .map(model => ({
-                        id: model.id || model.name,
-                        displayName: model.displayName || model.id || model.name,
-                        description: model.description || model.owned_by || ''
-                    }))
-                    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+                const results = [];
+                for (const model of rawModels) {
+                    const id = model.id || model.name;
+                    if (!id) continue;
+                    const evaluation = await this.evaluateVisionModel(model, aiConfig, { allowProbe: true });
+                    if (!evaluation.include) continue;
+                    const enriched = enrichModelMetadata(
+                        id,
+                        evaluation.labelOverride || model.displayName || model.id || model.name,
+                        evaluation.descriptionOverride || model.description || model.owned_by || ''
+                    );
+                    enriched.capabilities = evaluation.capabilities;
+                    enriched.provider = evaluation.provider || enriched.provider || model.owned_by || '';
+                    results.push(enriched);
+                }
+                return results.sort((a, b) => a.displayName.localeCompare(b.displayName));
             } catch (error) {
                 const status = error?.response?.status;
                 const message = error?.response?.data?.error?.message || error?.message || '获取模型列表失败';
@@ -624,22 +816,33 @@ class AIMicroservice {
 
     async fetchGeminiModels(aiConfig) {
         const endpoint = buildGeminiEndpoint(aiConfig.url, 'models');
+        const aggregated = [];
+        let pageToken = null;
+        let attempts = 0;
+        const maxPages = Number(process.env.AI_MODEL_LIST_MAX_PAGES || 8);
         try {
-            const response = await this.aiAxios.get(endpoint, {
-                params: { key: aiConfig.key, pageSize: 100 }
-            });
-            const rawModels = Array.isArray(response.data?.models) ? response.data.models : [];
-            return rawModels
-                .filter(isGeminiVisionModel)
-                .map(model => {
-                    const id = normalizeGeminiModelId(model.name).replace(/^models\//, '');
-                    return {
-                        id,
-                        displayName: model.displayName || id,
-                        description: model.description || ''
-                    };
-                })
-                .sort((a, b) => a.displayName.localeCompare(b.displayName));
+            do {
+                const params = { key: aiConfig.key, pageSize: 100 };
+                if (pageToken) params.pageToken = pageToken;
+                const response = await this.aiAxios.get(endpoint, { params });
+                const rawModels = Array.isArray(response.data?.models) ? response.data.models : [];
+                aggregated.push(...rawModels);
+                pageToken = response.data?.nextPageToken;
+                attempts += 1;
+            } while (pageToken && attempts < maxPages);
+
+            const results = [];
+            for (const model of aggregated) {
+                const id = normalizeGeminiModelId(model.name).replace(/^models\//, '');
+                if (!id) continue;
+                const evaluation = await this.evaluateVisionModel(model, null, { allowProbe: false });
+                if (!evaluation.include) continue;
+                const enriched = enrichModelMetadata(id, evaluation.labelOverride || model.displayName || id, evaluation.descriptionOverride || model.description || '');
+                enriched.capabilities = evaluation.capabilities;
+                enriched.provider = evaluation.provider || enriched.provider || '';
+                results.push(enriched);
+            }
+            return results.sort((a, b) => a.displayName.localeCompare(b.displayName));
         } catch (error) {
             const status = error?.response?.status;
             const message = error?.response?.data?.error?.message || error?.message || '获取模型列表失败';

@@ -197,6 +197,17 @@ exports.generateCaption = async (req, res) => {
             requestId: req.requestId,
             timestamp: new Date().toISOString()
         };
+        const detailMsg = error?.details?.reason ||
+            error?.details?.errorMessage ||
+            error?.details?.errorData ||
+            error?.details?.message ||
+            error?.details?.responseData;
+        if (detailMsg && typeof detailMsg === 'string') {
+            errorResponse.detail = detailMsg;
+            if (!errorResponse.message || !errorResponse.message.includes(detailMsg)) {
+                errorResponse.message = `${errorResponse.message}（${detailMsg}）`;
+            }
+        }
 
         let statusCode = 502; // 默认：Bad Gateway
         if (error.message && error.message.includes('认证失败')) {

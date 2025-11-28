@@ -90,6 +90,13 @@ export async function showSettingsModal() {
 
     // 用模板渲染主卡片
     safeSetInnerHTML(card, template?.innerHTML || '');
+    settingsContext.modelDropdownInitialized = false;
+    settingsContext.modelDropdownOpen = false;
+    if (settingsContext.modelDropdownOutsideHandler) {
+      document.removeEventListener('mousedown', settingsContext.modelDropdownOutsideHandler, true);
+      settingsContext.modelDropdownOutsideHandler = null;
+    }
+    settingsContext.modelListListenerTarget = null;
 
     // 表单与事件监听初始化（异步确保 DOM 插入后执行）
     requestAnimationFrame(() => {

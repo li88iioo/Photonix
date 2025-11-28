@@ -296,7 +296,8 @@
                                 <div class="setting-group-content">
                                     <form id="ai-settings-form" onsubmit="return false;">
                                         <input type="text" id="ai-url" name="ai_url"
-                                            placeholder="/ 结尾忽略 v1 版本，# 结尾强制使用输入地址" class="form-input">
+                                            placeholder="/ 结尾忽略 v1 版本，# 结尾强制使用输入地址（支持Gemini&Openai格式）"
+                                            class="form-input">
                                         <div class="password-wrapper ai-key-wrapper">
                                             <input type="password" id="ai-key" name="ai_key"
                                                 placeholder="API Key (若需更新，请在此输入)" class="form-input"
@@ -318,10 +319,27 @@
                                                 </svg>
                                             </span>
                                         </div>
-                                        <input type="text" id="ai-model" name="ai_model"
-                                            placeholder="模型名称 (默认: gemini-2.0-flash)" class="form-input"
-                                            list="ai-model-options">
-                                        <datalist id="ai-model-options"></datalist>
+                                        <div class="ai-model-field">
+                                            <div class="ai-model-combobox">
+                                                <input type="text" id="ai-model" name="ai_model"
+                                                    placeholder="模型名称 (推荐: gemini-2.0-flash)" class="form-input"
+                                                    autocomplete="off" role="combobox" aria-expanded="false"
+                                                    aria-controls="ai-model-dropdown">
+                                                <button type="button" id="ai-model-dropdown-toggle"
+                                                    class="ai-model-dropdown-toggle" aria-label="展开模型列表"
+                                                    aria-haspopup="listbox" aria-expanded="false">
+                                                    <svg width="18" height="18" viewBox="0 0 20 20" fill="none"
+                                                        xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                                                        <path d="M5 8l5 5 5-5" stroke="currentColor" stroke-width="1.5"
+                                                            stroke-linecap="round" stroke-linejoin="round" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                            <div id="ai-model-dropdown" class="ai-model-dropdown" aria-hidden="true"
+                                                role="listbox">
+                                                <div id="ai-model-list" class="ai-model-list" aria-live="polite"></div>
+                                            </div>
+                                        </div>
                                         <textarea id="ai-prompt" name="ai_prompt" rows="3" placeholder="AI 默认提示词"
                                             class="form-textarea"></textarea>
                                     </form>

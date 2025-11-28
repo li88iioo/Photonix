@@ -12,7 +12,14 @@ const settingsContext = {
   initialSettings: {},
   modelFetchTimer: null,
   modelFetchAbortController: null,
-  lastModelFetchSignature: null
+  lastModelFetchSignature: null,
+  modelList: [],
+  modelListPage: 0,
+  modelListListenerTarget: null,
+  modelListPaginationHandler: null,
+  modelDropdownInitialized: false,
+  modelDropdownOpen: false,
+  modelDropdownOutsideHandler: null
 };
 
 /**

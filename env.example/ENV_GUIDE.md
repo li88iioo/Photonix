@@ -389,14 +389,15 @@
 - 代码引用：services/file.service.js
 - 示例：DIMENSION_PROBE_CONCURRENCY=4
 
-6) AI_*（AI_CACHE_MAX_BYTES / AI_DAILY_LIMIT / AI_PER_IMAGE_COOLDOWN_SEC）
+6) AI_*（AI_CACHE_MAX_BYTES / AI_DAILY_LIMIT / AI_PER_IMAGE_COOLDOWN_SEC / AI_ENABLE_VISION_PROBE）
 - 作用：AI 缓存与配额/冷却
-- 默认值：268435456（生产建议）/ 200 / 60（开发较小）
-- 取值/格式：字节数/次数/秒
+- 默认值：268435456（生产建议）/ 200 / 60（开发较小）/ false
+- 取值/格式：字节数/次数/秒/true|false
 - 推荐修改场景：成本/流控管理
-- 风险：限制过严导致失败；过宽增加成本
+- 风险：限制过严导致失败；过宽增加成本；开启视觉探测会额外发送一次轻量请求
 - 代码引用：workers/ai-worker.js、middleware/ai-rate-guard.js
 - 示例：AI_CACHE_MAX_BYTES=268435456
+- 额外说明：`AI_ENABLE_VISION_PROBE=true` 时，未知模型会自动发送一张 1x1 png 进行视觉能力探测，仅在需要时额外消耗极少 token
 
 7) PERFORMANCE_MODE
 - 作用：全局性能模式（自适应提示）

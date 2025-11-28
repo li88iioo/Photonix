@@ -954,6 +954,181 @@ body {
     }
 }
 
+/* === AI 模型选择下拉面板 === */
+.ai-model-field {
+    position: relative;
+}
+
+.ai-model-combobox {
+    position: relative;
+}
+
+.ai-model-combobox input.form-input {
+    padding-right: 2.75rem;
+}
+
+.ai-model-dropdown-toggle {
+    position: absolute;
+    top: 50%;
+    right: 0.6rem;
+    transform: translateY(-50%);
+    border: none;
+    background: transparent;
+    color: var(--gray-500);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem;
+    cursor: pointer;
+    border-radius: 0.4rem;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+
+.ai-model-dropdown-toggle:hover {
+    background: rgba(0, 0, 0, 0.04);
+    color: var(--gray-700);
+}
+
+.ai-model-dropdown-toggle:focus-visible {
+    outline: 2px solid var(--primary-color, #2563eb);
+}
+
+.ai-model-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    background: rgba(255, 255, 255, 0.98);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 14px;
+    box-shadow: 0 20px 40px rgba(15, 23, 42, 0.15);
+    padding: 14px 16px;
+    z-index: 50;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-6px);
+    transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s ease;
+}
+
+.ai-model-dropdown.open {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+.ai-model-list-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    font-size: 0.95rem;
+    color: var(--gray-500);
+}
+
+.ai-model-grid {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.ai-model-item {
+    border: 1px solid rgba(148, 163, 184, 0.5);
+    border-radius: 12px;
+    padding: 10px 12px;
+    background: rgba(248, 250, 252, 0.8);
+    cursor: pointer;
+    transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease;
+}
+
+.ai-model-item:hover {
+    border-color: var(--primary-color, #2563eb);
+    transform: translateY(-1px);
+    background: #fff;
+}
+
+.ai-model-item-main {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-weight: 600;
+    color: var(--gray-800);
+}
+
+.ai-model-id {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--gray-500);
+}
+
+.ai-model-desc {
+    margin: 4px 0 0;
+    font-size: 0.82rem;
+    color: var(--gray-600);
+    line-height: 1.4;
+}
+
+.ai-model-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.ai-model-tags span {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    background: rgba(37, 99, 235, 0.08);
+    color: var(--primary-color, #2563eb);
+    border-radius: 999px;
+    font-size: 0.75rem;
+    text-transform: capitalize;
+}
+
+.ai-model-pagination {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ai-model-page-btn {
+    border: 1px solid var(--gray-300);
+    background: white;
+    border-radius: 8px;
+    padding: 4px 12px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+}
+
+.ai-model-page-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.ai-model-page-btn:not(:disabled):hover {
+    background: var(--gray-100);
+}
+
+.ai-model-page-indicator {
+    font-size: 0.85rem;
+    color: var(--gray-500);
+}
+
+.ai-model-list-empty {
+    border: 1px dashed var(--gray-300);
+    border-radius: 10px;
+    padding: 16px;
+    font-size: 0.9rem;
+    color: var(--gray-500);
+    background: var(--gray-50);
+}
+
 /* === 新增：导航提示动画 === */
 #navigation-hint {
     opacity: 0;

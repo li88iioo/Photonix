@@ -6,7 +6,10 @@
 import settingsContext from './context.js';
 import { fetchAvailableModels } from '../app/api.js';
 import { showNotification } from '../shared/utils.js';
-import { safeSetInnerHTML } from '../shared/dom-utils.js';
+import { safeSetInnerHTML, safeClassList } from '../shared/dom-utils.js';
+import { escapeHtml } from '../shared/security.js';
+
+const MODELS_PER_PAGE = 12;
 
 /**
  * 绑定 AI 接口地址输入框的自动补全与模型刷新事件。
@@ -31,6 +34,45 @@ export function setupApiUrlAutoComplete() {
     autoCompleteApiUrl(event.target);
     attemptModelFetch('blur');
   });
+}
+
+/**
+ * 初始化模型下拉面板控制。
+ * @returns {void}
+ */
+export function setupModelDropdownControls() {
+  const { card } = settingsContext;
+  if (!card || settingsContext.modelDropdownInitialized) return;
+
+  const toggle = card.querySelector('#ai-model-dropdown-toggle');
+  const dropdown = card.querySelector('#ai-model-dropdown');
+  const input = card.querySelector('#ai-model');
+
+  if (!toggle || !dropdown || !input) {
+    return;
+  }
+
+  settingsContext.modelDropdownInitialized = true;
+
+  toggle.addEventListener('click', (event) => {
+    event.preventDefault();
+    toggleModelDropdown();
+  });
+
+  input.addEventListener('focus', () => {
+    if (!settingsContext.modelDropdownOpen) {
+      openModelDropdown();
+    }
+  });
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeModelDropdown();
+      input.blur();
+    }
+  });
+
+  renderModelList(settingsContext.modelList || [], { preservePage: true });
 }
 
 /**
@@ -131,8 +173,8 @@ export async function fetchAndPopulateModels(apiUrl, apiKey) {
   if (!card) return;
 
   const aiModelInput = card.querySelector('#ai-model');
-  const datalist = card.querySelector('#ai-model-options');
-  if (!aiModelInput || !datalist) return;
+  const dropdown = card.querySelector('#ai-model-dropdown');
+  if (!aiModelInput || !dropdown) return;
 
   const originalPlaceholder = aiModelInput.getAttribute('data-original-placeholder') || aiModelInput.placeholder;
   aiModelInput.setAttribute('data-original-placeholder', originalPlaceholder);
@@ -164,7 +206,7 @@ export async function fetchAndPopulateModels(apiUrl, apiKey) {
     }
     settingsContext.lastModelFetchSignature = null;
     showNotification(error?.message || '获取模型列表失败，请稍后重试', 'error');
-    updateModelOptions([]);
+      updateModelOptions([]);
   } finally {
     aiModelInput.placeholder = aiModelInput.getAttribute('data-original-placeholder') || '';
     aiModelInput.disabled = false;
@@ -178,28 +220,216 @@ export async function fetchAndPopulateModels(apiUrl, apiKey) {
  * @returns {void}
  */
 export function updateModelOptions(models) {
+  if (Array.isArray(models)) {
+    settingsContext.modelList = models;
+  } else {
+    settingsContext.modelList = [];
+  }
+  renderModelList(settingsContext.modelList, { preservePage: false });
+}
+
+function renderModelList(models = null, options = {}) {
+  const { preservePage = false } = options;
   const { card } = settingsContext;
   if (!card) return;
 
-  const datalist = card.querySelector('#ai-model-options');
-  if (!datalist) return;
+  const container = card.querySelector('#ai-model-list');
+  if (!container) return;
 
-  safeSetInnerHTML(datalist, '');
+  ensureModelListListener(container);
 
-  if (!Array.isArray(models) || models.length === 0) {
+  if (Array.isArray(models)) {
+    settingsContext.modelList = models;
+    if (!preservePage) {
+      settingsContext.modelListPage = 0;
+    }
+  }
+
+  const data = Array.isArray(settingsContext.modelList) ? settingsContext.modelList : [];
+  const total = data.length;
+
+  if (total === 0) {
+    safeSetInnerHTML(
+      container,
+      '<div class="ai-model-list-empty">当前 API 未返回可用的视觉模型，您可以手动输入模型名称。</div>'
+    );
     return;
   }
 
-  const fragment = document.createDocumentFragment();
-  models.forEach(model => {
-    const option = document.createElement('option');
-    option.value = model.id || model.name || '';
-    if (model.displayName && model.displayName !== option.value) {
-      option.label = model.displayName;
-    }
-    option.textContent = model.displayName || option.value;
-    fragment.appendChild(option);
-  });
+  const totalPages = Math.max(1, Math.ceil(total / MODELS_PER_PAGE));
+  let currentPage = Math.min(settingsContext.modelListPage || 0, totalPages - 1);
+  currentPage = Math.max(0, currentPage);
+  settingsContext.modelListPage = currentPage;
 
-  datalist.appendChild(fragment);
+  const start = currentPage * MODELS_PER_PAGE;
+  const end = start + MODELS_PER_PAGE;
+  const pageItems = data.slice(start, end);
+
+  const listHtml = pageItems
+    .map((model) => {
+      const id = escapeHtml(model.id || '');
+      const name = escapeHtml(model.displayName || id);
+      const description = escapeHtml(model.description || '');
+      const tags = Array.isArray(model.capabilities) && model.capabilities.length
+        ? `<div class="ai-model-tags">${model.capabilities.map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div>`
+        : '';
+      return `
+        <li class="ai-model-item" data-model-id="${id}">
+          <div class="ai-model-item-main">
+            <span class="ai-model-name">${name}</span>
+            <span class="ai-model-id">${id}</span>
+          </div>
+          ${description ? `<p class="ai-model-desc">${description}</p>` : ''}
+          ${tags}
+        </li>`;
+    })
+    .join('');
+
+  const paginationHtml = totalPages > 1
+    ? `<div class="ai-model-pagination" role="toolbar" aria-label="AI模型分页">
+        <button type="button" class="ai-model-page-btn" data-model-page="prev" ${currentPage === 0 ? 'disabled' : ''}>上一页</button>
+        <span class="ai-model-page-indicator">${currentPage + 1} / ${totalPages}</span>
+        <button type="button" class="ai-model-page-btn" data-model-page="next" ${currentPage >= totalPages - 1 ? 'disabled' : ''}>下一页</button>
+      </div>`
+    : '';
+
+  safeSetInnerHTML(
+    container,
+    `<div class="ai-model-list-header">
+        <span>共 ${total} 个视觉模型</span>
+        ${paginationHtml}
+     </div>
+     <ul class="ai-model-grid">${listHtml}</ul>`
+  );
+}
+
+function ensureModelListListener(container) {
+  if (!container) return;
+
+  if (!settingsContext.modelListPaginationHandler) {
+    settingsContext.modelListPaginationHandler = (event) => {
+      const option = event.target.closest('[data-model-id]');
+      if (option) {
+        const modelId = option.getAttribute('data-model-id');
+        if (modelId) {
+          handleModelSelection(modelId);
+        }
+        return;
+      }
+
+      const control = event.target.closest('[data-model-page]');
+      if (!control) return;
+
+      const total = Array.isArray(settingsContext.modelList) ? settingsContext.modelList.length : 0;
+      if (total === 0) return;
+      const totalPages = Math.max(1, Math.ceil(total / MODELS_PER_PAGE));
+
+      const action = control.getAttribute('data-model-page');
+      if (action === 'prev' && settingsContext.modelListPage > 0) {
+        settingsContext.modelListPage -= 1;
+      } else if (action === 'next' && settingsContext.modelListPage < totalPages - 1) {
+        settingsContext.modelListPage += 1;
+      } else {
+        return;
+      }
+
+      renderModelList(null, { preservePage: true });
+    };
+  }
+
+  if (settingsContext.modelListListenerTarget === container) {
+    return;
+  }
+
+  if (settingsContext.modelListListenerTarget) {
+    settingsContext.modelListListenerTarget.removeEventListener('click', settingsContext.modelListPaginationHandler);
+  }
+
+  container.addEventListener('click', settingsContext.modelListPaginationHandler);
+  settingsContext.modelListListenerTarget = container;
+}
+
+function handleModelSelection(modelId) {
+  const { card } = settingsContext;
+  if (!card || !modelId) return;
+  const input = card.querySelector('#ai-model');
+  if (!input) return;
+  input.value = modelId;
+  const event = new Event('input', { bubbles: true });
+  input.dispatchEvent(event);
+  closeModelDropdown();
+}
+
+function toggleModelDropdown(forceState) {
+  if (forceState === true) {
+    openModelDropdown();
+    return;
+  }
+  if (forceState === false) {
+    closeModelDropdown();
+    return;
+  }
+  if (settingsContext.modelDropdownOpen) {
+    closeModelDropdown();
+  } else {
+    openModelDropdown();
+  }
+}
+
+function openModelDropdown() {
+  const { card } = settingsContext;
+  if (!card || settingsContext.modelDropdownOpen) return;
+  const dropdown = card.querySelector('#ai-model-dropdown');
+  const toggle = card.querySelector('#ai-model-dropdown-toggle');
+  const input = card.querySelector('#ai-model');
+  if (!dropdown) return;
+  safeClassList(dropdown, 'add', 'open');
+  dropdown.setAttribute('aria-hidden', 'false');
+  if (toggle) toggle.setAttribute('aria-expanded', 'true');
+  if (input) input.setAttribute('aria-expanded', 'true');
+  settingsContext.modelDropdownOpen = true;
+  ensureDropdownOutsideHandler();
+}
+
+function closeModelDropdown() {
+  const { card } = settingsContext;
+  if (!card || !settingsContext.modelDropdownOpen) return;
+  const dropdown = card.querySelector('#ai-model-dropdown');
+  const toggle = card.querySelector('#ai-model-dropdown-toggle');
+  const input = card.querySelector('#ai-model');
+  if (!dropdown) return;
+  safeClassList(dropdown, 'remove', 'open');
+  dropdown.setAttribute('aria-hidden', 'true');
+  if (toggle) toggle.setAttribute('aria-expanded', 'false');
+  if (input) input.setAttribute('aria-expanded', 'false');
+  settingsContext.modelDropdownOpen = false;
+  removeDropdownOutsideHandler();
+}
+
+function ensureDropdownOutsideHandler() {
+  if (settingsContext.modelDropdownOutsideHandler) return;
+  settingsContext.modelDropdownOutsideHandler = (event) => {
+    const { card } = settingsContext;
+    if (!card) return;
+    const dropdown = card.querySelector('#ai-model-dropdown');
+    const toggle = card.querySelector('#ai-model-dropdown-toggle');
+    const input = card.querySelector('#ai-model');
+    if (!dropdown) return;
+    if (
+      (dropdown && dropdown.contains(event.target)) ||
+      (toggle && toggle.contains(event.target)) ||
+      (input && input.contains(event.target))
+    ) {
+      return;
+    }
+    closeModelDropdown();
+  };
+
+  document.addEventListener('mousedown', settingsContext.modelDropdownOutsideHandler, true);
+}
+
+function removeDropdownOutsideHandler() {
+  if (!settingsContext.modelDropdownOutsideHandler) return;
+  document.removeEventListener('mousedown', settingsContext.modelDropdownOutsideHandler, true);
+  settingsContext.modelDropdownOutsideHandler = null;
 }
