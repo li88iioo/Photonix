@@ -5,21 +5,6 @@
 一个极简、AI 驱动的智能相册，专为现代 Web 设计。它集成了 PWA、流式加载、多数据库架构和高性能缓存，旨在提供极致的浏览体验和智能的交互方式。
 
 
-## 📚 导航
-- [主要特性](#-主要特性)
-- [快速开始](#-快速开始)
-- [项目架构](#-项目架构)
-- [配置说明](#-配置说明)
-- [Docker 服务配置](#-docker-服务配置)
-- [数据库架构](#-数据库架构)
-- [API 接口](#-api-接口)
-- [本地开发](#-本地开发)
-- [功能详解](#-功能详解)
-- [更新与升级](#-更新与升级)
-- [性能优化建议](#-性能优化建议)
-- [常见问题](#-常见问题)
-
-
 ## ✨ 主要特性
 
 ### 🎭 AI 智能交互
@@ -532,65 +517,8 @@ data: {"message":"SSE connection established.","clientId":"..."}
 | 60秒后自动断开 | 超时配置过短 | 增加 `proxy_read_timeout` 到 24小时 |
 | `net::ERR_FAILED` | Nginx 配置未生效 | 执行 `nginx -t && nginx -s reload` |
 | HTTPS 下无法连接 | 后端使用 HTTP，需要协议转换 | 使用 `proxy_pass http://...` 即可 |
-```
 
 
-### 多实例一致限流（Redis Store）
-
-自 v1.0.0 起，应用在以下路由上使用 Redis 作为 express-rate-limit 的共享存储，以保证多实例/多进程环境下的限流一致性：
-
-- `/api` 全局限流：见 `backend/middleware/rateLimiter.js`
-- `/api/auth/login`、`/api/auth/refresh`：见 `backend/routes/auth.routes.js`
-- `/api/metrics/*`：见 `backend/routes/metrics.routes.js`
-
-依赖：`REDIS_URL`（默认 `redis://localhost:6379`；Compose 环境请使用 `redis://redis:6379`）。如需调整窗口和配额，可通过以下环境变量：
-
-- `RATE_LIMIT_WINDOW_MINUTES`（默认 15）
-- `RATE_LIMIT_MAX_REQUESTS`（默认 100）
-
-行为说明：
-- 全局限流对 GET /api/thumbnail 在存在 Authorization 头时跳过，以避免登录后缩略图并发触发 429（与 backend/middleware/rateLimiter.js 一致）。
-- 限流键基于 Redis 存储，适配多实例/多进程一致性。
-
-说明：Redis Store 通过现有的 ioredis 客户端进行 `sendCommand`，无需额外配置。
-
-认证端点限流说明：
-- /api/auth/refresh：使用 Redis 限流（express-rate-limit + RedisStore），默认 REFRESH_RATE_WINDOW_MS=60000、REFRESH_RATE_MAX=60，并启用 skipSuccessfulRequests，正常续期不计入配额。
-- /api/auth/login：不使用 express-rate-limit，全权依赖控制器内基于 Redis 的防爆破机制（逐次加锁/冷却）；密码正确会清理失败计数与锁定状态。
-
-### 前端开发
-```bash
-cd frontend
-npm install
-npm run build
-# 或使用开发服务器
-npx http-server -p 8000
-```
-
-### 数据库管理
-```bash
-# 查看数据库状态
-sqlite3 data/gallery.db ".tables"
-
-# 手动执行数据迁移
-node backend/db/migrate-to-multi-db.js
-```
-
-### 启动期回填任务（降低运行时 IO）
-
-为减少浏览大目录时的 `fs.stat` 与动态尺寸探测开销，服务在启动后会异步触发两类后台回填任务（由 `indexing-worker` 执行）：
-
-- 回填 mtime：`backfill_missing_mtime`
-- 回填媒体尺寸（width/height）：`backfill_missing_dimensions`
-
-相关环境变量（可选）：
-
-- `MTIME_BACKFILL_BATCH`（默认 500）：单批更新条数
-- `MTIME_BACKFILL_SLEEP_MS`（默认 200）：批次间休眠
-- `DIM_BACKFILL_BATCH`（默认 500）：尺寸回填单批条数
-- `DIM_BACKFILL_SLEEP_MS`（默认 200）：批次间休眠
-
-回填任务在 `backend/server.js` 启动阶段触发，属于后台低优先级操作，不影响正常功能。
 
 ### 生产部署建议
 
