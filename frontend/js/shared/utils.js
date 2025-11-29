@@ -161,17 +161,16 @@ export function resolveMessage(value, fallback = '操作失败') {
 }
 
 export function showNotification(message, type = 'info', duration = UI.NOTIFICATION_DURATION_DEFAULT, options = {}) {
-    const { theme = 'default', containerId, context } = options || {};
+    const { containerId, context } = options || {};
 
-    const targetContainerId = containerId
-        || (theme === 'download' ? 'download-notification-container' : 'notification-container');
-    const containerParent = context || (theme === 'download' ? safeGetElementById('download-root') || document.body : document.body);
+    const targetContainerId = containerId || 'notification-container';
+    const containerParent = context || document.body;
 
     let container = safeGetElementById(targetContainerId);
     if (!container) {
         container = document.createElement('div');
         container.id = targetContainerId;
-        container.className = theme === 'download' ? 'download-notification-container' : '';
+        container.className = '';
         containerParent.appendChild(container);
     }
     const fallbackMap = {
@@ -202,8 +201,7 @@ export function showNotification(message, type = 'info', duration = UI.NOTIFICAT
 
     // 创建通知元素
     const notif = document.createElement('div');
-    const themeClass = theme === 'download' ? 'download-notification' : '';
-    notif.className = ['notification', type, themeClass].filter(Boolean).join(' ');
+    notif.className = ['notification', type].filter(Boolean).join(' ');
     notif.dataset.key = key;
     notif.dataset.count = '1';
     safeSetInnerHTML(notif, `
@@ -237,10 +235,8 @@ export function showNotification(message, type = 'info', duration = UI.NOTIFICAT
         safeClassList(node, 'remove', 'show');
         setTimeout(() => {
             node.remove();
-            if (container && container.childElementCount === 0 && container.parentNode) {
-                if (theme === 'download') {
-                    container.parentNode.removeChild(container);
-                }
+            if (container && container.childElementCount === 0 && container.parentNode && container.id !== 'notification-container') {
+                container.parentNode.removeChild(container);
             }
         }, 300);
     }

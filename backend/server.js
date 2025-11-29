@@ -26,13 +26,11 @@ const { validateCriticalConfig } = require('./config/validator');
 const { handleUncaughtException, handleUnhandledRejection } = require('./middleware/errorHandler');
 // 延后加载 Redis，避免无 Redis 环境下启动即触发连接
 const { PORT, THUMBS_DIR, DB_FILE, SETTINGS_DB_FILE, PHOTOS_DIR, DATA_DIR } = require('./config');
-const { initializeConnections, closeAllConnections } = require('./db/multi-db');
-const { initializeAllDBs, ensureCoreTables } = require('./db/migrations');
+const { initializeConnections, closeAllConnections, withTimeout, dbAllOnPath } = require('./db/multi-db');
+const { initializeAllDBs } = require('./db/migrations');
 const { migrateToMultiDB } = require('./db/migrate-to-multi-db');
-const { createThumbnailWorkerPool, ensureCoreWorkers } = require('./services/worker.manager');
 const { startAdaptiveScheduler } = require('./services/adaptive.service');
 const { setupWorkerListeners, buildSearchIndex } = require('./services/indexer.service');
-const { withTimeout, dbAllOnPath } = require('./db/multi-db');
 const { timeUtils, TIME_CONSTANTS } = require('./utils/time.utils');
 const { getCount, getThumbProcessingStats, getDataIntegrityStats } = require('./repositories/stats.repo');
 
@@ -42,7 +40,6 @@ const { getCount, getThumbProcessingStats, getDataIntegrityStats } = require('./
  */
 class IndexScheduler {
     constructor() {
-        // 调度相关配置参数
         this.disableStartupIndex = (process.env.DISABLE_STARTUP_INDEX || 'false').toLowerCase() === 'true';
         this.startDelayMs = Number(process.env.INDEX_START_DELAY_MS || 5000);
         this.retryIntervalMs = Number(process.env.INDEX_RETRY_INTERVAL_MS || 60000);
@@ -51,10 +48,6 @@ class IndexScheduler {
         this.hasPendingJob = false;
     }
 
-    /**
-     * 判断是否应跳过启动时的索引构建
-     * @returns {boolean}
-     */
     shouldSkipStartupIndex() {
         if (this.disableStartupIndex) {
             logger.info('检测到 DISABLE_STARTUP_INDEX=true，跳过启动时索引构建。');
@@ -63,10 +56,6 @@ class IndexScheduler {
         return false;
     }
 
-    /**
-     * 清理索引中间进度标记（自愈流程用）
-     * @async
-     */
     async performIndexCleanup() {
         try {
             const { redis } = require('./config/redis');
@@ -78,10 +67,6 @@ class IndexScheduler {
         }
     }
 
-    /**
-     * 执行索引构建过程
-     * @async
-     */
     async performIndexBuild() {
         try {
             const { buildSearchIndex } = require('./services/indexer.service');
@@ -92,10 +77,6 @@ class IndexScheduler {
         }
     }
 
-    /**
-     * 调度索引重建任务（runWhenIdle机制）
-     * @param {string} reasonText - 调度原因描述（可选）
-     */
     scheduleIndexRebuild(reasonText) {
         if (this.shouldSkipStartupIndex()) {
             return;
@@ -124,12 +105,8 @@ class IndexScheduler {
                 try {
                     logger.info('[Startup-Index] 进入空闲窗口回调，准备触发全量索引...');
 
-                    // 冷启动自愈：清理可能残留的索引进行中旗标
                     await this.performIndexCleanup();
-
-                    // 执行索引构建
                     await this.performIndexBuild();
-
                 } catch (err) {
                     logger.debug('runWhenIdle 启动索引失败（忽略）：' + (err && err.message));
                 } finally {
@@ -149,6 +126,25 @@ class IndexScheduler {
     }
 }
 
+async function isThumbsDirEffectivelyEmpty(rootDir) {
+    try {
+        const [filesystemEntries, existsCount] = await Promise.all([
+            fs.readdir(rootDir).catch(() => []),
+            getCount('thumb_status', 'main', "status='exists'")
+        ]);
+
+        if (!Number.isFinite(existsCount) || existsCount <= 0) {
+            return false;
+        }
+
+        const hasAnyFile = (filesystemEntries || []).some((name) => name !== '.writetest');
+        return !hasAnyFile;
+    } catch (error) {
+        logger.debug(`[Startup] 缩略图目录检查失败: ${error && error.message}`);
+        return null;
+    }
+}
+
 // 单例索引调度器实例
 const indexScheduler = new IndexScheduler();
 
@@ -160,160 +156,6 @@ function scheduleIndexRebuild(reasonText) {
     return indexScheduler.scheduleIndexRebuild(reasonText);
 }
 
-/**
- * 快速检查目标目录是否为空（最多递归 maxDepth 层）
- * @param {string} rootDir - 根目录
- * @param {number} maxDepth - 最大递归深度
- * @returns {Promise<boolean>} 是否为空
- */
-async function performQuickDirectoryCheck(rootDir, maxDepth = 2) {
-    try {
-        const directoryStack = [{ dir: rootDir, depth: 0 }];
-
-        while (directoryStack.length > 0) {
-            const { dir, depth } = directoryStack.pop();
-            const entries = await fs.readdir(dir, { withFileTypes: true });
-
-            for (const entry of entries) {
-                if (entry.name === '.writetest') continue;
-
-                const fullPath = path.join(dir, entry.name);
-
-                if (entry.isFile()) {
-                    return false; // 任意文件视为非空
-                }
-
-                if (entry.isDirectory() && depth < maxDepth) {
-                    directoryStack.push({ dir: fullPath, depth: depth + 1 });
-                }
-            }
-        }
-
-        return true; // 深度遍历完无文件
-    } catch (error) {
-        logger.warn(`[Startup] 快速目录检查失败 (${rootDir}): ${error && error.message}`);
-        const wrapped = new Error('QUICK_DIR_CHECK_FAILED');
-        wrapped.cause = error;
-        wrapped.code = 'QUICK_DIR_CHECK_FAILED';
-        throw wrapped;
-    }
-}
-
-/**
- * 数据库采样校验缩略图真实存在性（抽取部分条目做存在性校验）
- * @param {number} sampleSize - 采样数量
- * @returns {Promise<boolean>} 样本条目指向缩略图是否都不存在
- */
-async function performDatabaseSampleCheck(sampleSize = 50) {
-    const { dbAll } = require('./db/multi-db');
-    const effectiveLimit = Math.max(1, Math.min(sampleSize, 100));
-
-    try {
-        const rows = await dbAll(
-            'main',
-            `SELECT path FROM thumb_status
-             WHERE status='exists'
-             ORDER BY rowid DESC
-             LIMIT ?`,
-            [effectiveLimit]
-        );
-
-        if (!Array.isArray(rows) || rows.length === 0) {
-            return true;
-        }
-
-        for (const row of rows) {
-            const filePath = row && row.path ? String(row.path) : '';
-            if (!filePath) continue;
-            const isVideoFile = /\.(mp4|webm|mov)$/i.test(filePath);
-            const thumbnailExtension = isVideoFile ? '.jpg' : '.webp';
-            const thumbnailRelativePath = filePath.replace(/\.[^.]+$/, thumbnailExtension);
-            const thumbnailAbsolutePath = path.join(THUMBS_DIR, thumbnailRelativePath);
-
-            try {
-                await fs.access(thumbnailAbsolutePath);
-                return false;
-            } catch (thumbCheckErr) {
-                logger.silly(`[Startup] 样本 ${thumbnailRelativePath || '未知'} 缺少缩略图（忽略）: ${thumbCheckErr && thumbCheckErr.message}`);
-            }
-        }
-
-        return true;
-    } catch (err) {
-        // 兼容 rowid 不存在的情况
-        if (err && /no such column: rowid/i.test(String(err.message || err))) {
-            try {
-                const fallbackRows = await dbAll(
-                    'main',
-                    `SELECT path FROM thumb_status
-                     WHERE status='exists'
-                     ORDER BY mtime DESC
-                     LIMIT ?`,
-                    [effectiveLimit]
-                );
-                if (!Array.isArray(fallbackRows) || fallbackRows.length === 0) {
-                    return true;
-                }
-                for (const row of fallbackRows) {
-                    const filePath = row && row.path ? String(row.path) : '';
-                    if (!filePath) continue;
-                    const isVideoFile = /\.(mp4|webm|mov)$/i.test(filePath);
-                    const thumbnailExtension = isVideoFile ? '.jpg' : '.webp';
-                    const thumbnailRelativePath = filePath.replace(/\.[^.]+$/, thumbnailExtension);
-                    const thumbnailAbsolutePath = path.join(THUMBS_DIR, thumbnailRelativePath);
-
-                    try {
-                        await fs.access(thumbnailAbsolutePath);
-                        return false;
-                    } catch (sampleThumbErr) {
-                        logger.silly(`[Startup] 样本 ${thumbnailRelativePath || '未知'} 缺少缩略图（忽略）: ${sampleThumbErr && sampleThumbErr.message}`);
-                    } // 不存在时忽略
-                }
-                return true;
-            } catch (fallbackError) {
-                logger.debug('[Startup] rowid 查询失败后回退亦失败:', fallbackError && fallbackError.message);
-            }
-        }
-        // 兼容旧表不存在
-        const message = err && err.message ? err.message : '';
-        if (/no such table/i.test(message)) {
-            logger.debug('[Startup] 缩略图状态表不存在，跳过缩略图采样检查');
-            return true;
-        }
-        logger.debug(`[Startup] 数据库采样检查失败: ${message}`);
-        const wrapped = err instanceof Error ? err : new Error(message || 'DB_SAMPLE_CHECK_FAILED');
-        if (!wrapped.code) {
-            wrapped.code = 'DB_SAMPLE_CHECK_FAILED';
-        }
-        throw wrapped;
-    }
-}
-
-/**
- * 判断缩略图目录是否“几乎为空”
- * - 快速遍历最多两层目录发现有文件就视为非空
- * - 若目录为空，再抽样 DB 进一步校验缩略图实际缺失性
- * @param {string} rootDir
- * @returns {Promise<boolean|null>} true:有效为空，false:非空，null:无法判断
- */
-async function isThumbsDirEffectivelyEmpty(rootDir) {
-    try {
-        // 步骤1: 目录层面快速检查
-        const isQuickEmpty = await performQuickDirectoryCheck(rootDir);
-        if (!isQuickEmpty) return false;
-    } catch (error) {
-        logger.debug(`[Startup] 缩略图目录快速检查失败，暂不触发自愈: ${error && error.message}`);
-        return null;
-    }
-
-    try {
-        // 步骤2: 对应 DB 采样二次核验，降低误判
-        return await performDatabaseSampleCheck();
-    } catch (error) {
-        logger.debug(`[Startup] 缩略图数据库采样检查失败，暂不触发自愈: ${error && error.message}`);
-        return null;
-    }
-}
 
 /**
  * 重置卡在'processing'状态的缩略图记录

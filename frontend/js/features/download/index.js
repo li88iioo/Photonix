@@ -79,7 +79,7 @@ const ADMIN_VERIFICATION_MAX_AGE = 12 * 60 * 60 * 1000;
 const AUTO_REFRESH_INTERVAL = 30 * 1000;
 
 function showDownloadNotification(message, type = 'info', duration) {
-  return showNotification(message, type, duration, { theme: 'download' });
+  return showNotification(message, type, duration);
 }
 
 let configImportInput = null;

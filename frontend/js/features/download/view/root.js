@@ -506,90 +506,7 @@ function ensureStyleHelpers() {
     .toggle-switch input:checked + .slider { background: linear-gradient(90deg, #6366f1 0%, #4f46e5 100%); box-shadow: 0 6px 14px rgba(79, 70, 229, 0.18); }
     .toggle-switch input:checked + .slider::before { transform: translateX(22px); }
     .toggle-switch input:focus-visible + .slider { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.2); }
-    .download-notification-container {
-      position: fixed;
-      top: 24px;
-      right: 24px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      z-index: 1100;
-      pointer-events: none;
-      align-items: flex-end;
-    }
-    .download-notification-container .notification {
-      pointer-events: auto;
-      min-width: 280px;
-      max-width: min(360px, calc(100vw - 48px));
-      padding: 16px 18px 16px 16px;
-      border-radius: 14px;
-      background: var(--surface-color);
-      border: 1px solid var(--border-color);
-      box-shadow: var(--shadow-md);
-      display: grid;
-      grid-template-columns: auto 1fr auto;
-      gap: 14px;
-      align-items: center;
-      transform: translateY(-20px);
-      opacity: 0;
-      transition: transform 0.25s ease, opacity 0.25s ease, box-shadow 0.25s ease;
-    }
-    .download-notification-container .notification::before {
-      content: '';
-      width: 6px;
-      height: 100%;
-      border-radius: 999px;
-      background: linear-gradient(180deg, #6366f1 0%, #8b5cf6 100%);
-    }
-    .download-notification-container .notification.show {
-      transform: translateY(0);
-      opacity: 1;
-    }
-    .download-notification-container .notification span {
-      font-size: 14px;
-      color: var(--text-color);
-      line-height: 1.5;
-      margin: 0;
-    }
-    .download-notification-container .notification.success::before { background: linear-gradient(180deg, #34d399 0%, #10b981 100%); }
-    .download-notification-container .notification.error::before { background: linear-gradient(180deg, #f87171 0%, #ef4444 100%); }
-    .download-notification-container .notification.warning::before { background: linear-gradient(180deg, #facc15 0%, #f59e0b 100%); }
-    .download-notification-container .notification.info::before { background: linear-gradient(180deg, #60a5fa 0%, #6366f1 100%); }
-    .download-notification-container .notification .close-btn {
-      border: none;
-      background: rgba(99, 102, 241, 0.1);
-      color: var(--primary);
-      width: 30px;
-      height: 30px;
-      border-radius: 10px;
-      font-size: 18px;
-      cursor: pointer;
-      transition: background 0.2s ease, transform 0.2s ease;
-    }
-    .download-notification-container .notification .close-btn:hover {
-      background: rgba(99, 102, 241, 0.18);
-      transform: scale(1.05);
-    }
-    .download-notification-container .notification .close-btn:active {
-      transform: scale(0.96);
-    }
-    .download-notification-container .notification .close-btn:focus-visible {
-      outline: 2px solid rgba(99, 102, 241, 0.45);
-      outline-offset: 2px;
-    }
-    .download-notification-container .notification[data-count="1"] span::after { content: ''; }
-    @media (max-width: 768px) {
-      .download-notification-container {
-        top: 16px;
-        right: 16px;
-        left: 16px;
-        align-items: stretch;
-      }
-      .download-notification-container .notification {
-        width: 100%;
-        max-width: none;
-      }
-    }
+    /* Download page now reuses global notification styles */
     .feed-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-top: 24px; }
     .config-footer { position: fixed; bottom: 0; left: 264px; right: 0; background: var(--bg-color); padding: 16px 32px calc(16px + env(safe-area-inset-bottom, 20px)); display: flex; justify-content: stretch; z-index: 15; }
     .config-footer-card { width: 100%; padding: 18px 32px calc(18px + env(safe-area-inset-bottom, 0)); background: var(--surface-color); border: 1px solid var(--border-color); border-radius: 14px; display: flex; align-items: center; justify-content: space-between; gap: 16px; box-shadow: var(--shadow-sm); }
@@ -1335,10 +1252,6 @@ function setRootVisible(visible) {
       delete themeColorMeta.dataset.originalColor;
     }
 
-    const notifContainer = document.getElementById('download-notification-container');
-    if (notifContainer && notifContainer.parentNode) {
-      notifContainer.parentNode.removeChild(notifContainer);
-    }
     removeStyleHelpers();
     const openMenus = rootEl.querySelectorAll('.task-actions-menu.is-open');
     openMenus.forEach((menu) => {

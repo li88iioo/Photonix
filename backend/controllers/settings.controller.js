@@ -224,7 +224,7 @@ exports.triggerSync = async (req, res) => {
     if (!validTypes.includes(type)) {
       throw new ValidationError('无效的补全类型', { validTypes });
     }
-    // 索引重建需鉴权与密钥检验
+
     if (type === 'index') {
       const hasPermissionToRun = hasPermission(getUserRole(req), PERMISSIONS.GENERATE_THUMBNAILS);
       if (!hasPermissionToRun) {
@@ -243,6 +243,7 @@ exports.triggerSync = async (req, res) => {
       }
       logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved', message: '重建索引管理员密钥验证成功' }))));
     }
+
     const syncResult = await triggerSyncOperation(type);
     res.json({
       success: true,
@@ -273,22 +274,16 @@ exports.resyncThumbnails = async (_req, res) => {
     logger.info('手动触发缩略图状态重同步请求');
     const result = await thumbnailSyncService.resyncThumbnailStatus({ trigger: 'manual-api', waitForCompletion: false });
 
-    if (result.started) {
-      res.json({
-        success: true,
-        message: '缩略图状态重同步已在后台启动',
-        data: { status: 'started' },
-        timestamp: new Date().toISOString()
-      });
-    } else {
-      const syncedCount = Number(result?.syncedCount || 0);
-      res.json({
-        success: true,
-        message: `缩略图状态重同步完成，共同步 ${syncedCount} 个文件`,
-        data: { syncedCount, details: result },
-        timestamp: new Date().toISOString()
-      });
-    }
+    const responsePayload = result.started
+      ? { status: 'started' }
+      : { syncedCount: Number(result?.syncedCount || 0), details: result };
+
+    res.json({
+      success: true,
+      message: result.started ? '缩略图状态重同步已在后台启动' : `缩略图状态重同步完成，共同步 ${responsePayload.syncedCount} 个文件`,
+      data: responsePayload,
+      timestamp: new Date().toISOString()
+    });
   } catch (error) {
     logger.error('手动触发缩略图状态重同步请求失败:', error);
     if (error instanceof AppError) throw error;
@@ -316,7 +311,7 @@ exports.triggerCleanup = async (req, res) => {
     const cleanupResult = await triggerCleanupOperation(type);
     res.json({
       success: true,
-      message: `已启动${getTypeDisplayName(type)}同步任务`,
+      message: cleanupResult.message,
       data: cleanupResult,
       timestamp: new Date().toISOString()
     });
@@ -355,29 +350,21 @@ exports.manualAlbumSync = async (req, res) => {
     const removalList = [...removedPhotos, ...removedVideos];
 
     if (addedPhotos.length || addedVideos.length || removalList.length) {
-      try {
-        await thumbnailSyncService.updateThumbnailStatusIncremental({
-          addedPhotos,
-          addedVideos,
-          removed: removalList,
-          trigger: 'manual-sync',
-          waitForCompletion: false
-        });
-      } catch (syncError) {
+      await thumbnailSyncService.updateThumbnailStatusIncremental({
+        addedPhotos,
+        addedVideos,
+        removed: removalList,
+        trigger: 'manual-sync',
+        waitForCompletion: false
+      }).catch((syncError) => {
         logger.warn('缩略图增量更新失败，降级为后台全量重建:', syncError && syncError.message ? syncError.message : syncError);
-        const fallback = thumbnailSyncService.resyncThumbnailStatus({
+        return thumbnailSyncService.resyncThumbnailStatus({
           trigger: 'manual-sync-fallback',
           waitForCompletion: false
+        })?.promise?.catch((fallbackError) => {
+          logger.error('缩略图状态全量重建失败（降级阶段）:', fallbackError && fallbackError.message ? fallbackError.message : fallbackError);
         });
-        const fallbackPromise = fallback && typeof fallback.then === 'function'
-          ? fallback
-          : fallback?.promise;
-        if (fallbackPromise && typeof fallbackPromise.then === 'function') {
-          fallbackPromise.catch((fallbackError) => {
-            logger.error('缩略图状态全量重建失败（降级阶段）:', fallbackError && fallbackError.message ? fallbackError.message : fallbackError);
-          });
-        }
-      }
+      });
     }
     const message = summary.totalChanges > 0 ? '手动同步完成' : '没有检测到需要同步的内容';
     logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved', summary }))));

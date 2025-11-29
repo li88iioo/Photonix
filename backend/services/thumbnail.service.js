@@ -25,7 +25,6 @@ const { sanitizePath, isPathSafe } = require('../utils/path.utils');
 const state = require('./state.manager');
 
 const PHOTOS_DIR_SAFE_ROOT = path.resolve(PHOTOS_DIR);
-let lastQueueFullWarnAt = 0;
 const thumbMetrics = {
     generated: 0,
     skipped: 0,
@@ -56,34 +55,48 @@ const activeTasks = new Set();          // 正在处理的任务集合
 const failureCounts = new Map();        // 任务失败次数统计
 const failureTimestamps = new Map();    // 失败记录的时间戳
 
-// 双队列系统：优先级队列设计
-// - ondemandQueue: 用户浏览触发的按需生成（高优先级）
-// - batchQueue: 后台批量补全任务（低优先级）
-const ondemandQueue = [];         // 高优先级：用户按需请求
-const batchQueue = [];             // 低优先级：批量补全
-const queuedSet = new Set();       // ondemand去重
-const batchQueuedSet = new Set();  // batch去重
+// 单一优先队列：0=ondemand, 1=batch
+const PRIORITY = {
+    ondemand: 0,
+    batch: 1
+};
 const MAX_ONDEMAND_QUEUE = Number(process.env.THUMB_ONDEMAND_QUEUE_MAX || 2000);
 const MAX_BATCH_QUEUE = Number(process.env.THUMB_BATCH_QUEUE_MAX || 5000);
 const BATCH_COOLDOWN_MS = Math.max(0, Number(process.env.THUMB_BATCH_COOLDOWN_MS || 0));
 const TELEMETRY_LOG_INTERVAL_MS = Math.max(5000, Number(process.env.THUMB_TELEMETRY_LOG_INTERVAL_MS || 15000));
 const QUEUE_FULL_WARN_INTERVAL_MS = Math.max(1000, Number(process.env.THUMB_QUEUE_WARN_INTERVAL_MS || 5000));
+const QUEUE_FULL_DEBUG_INTERVAL_MS = Math.max(5000, Number(process.env.THUMB_QUEUE_DEBUG_INTERVAL_MS || 30000));
+const OVERFLOW_RETRY_MS = Math.max(1000, Number(process.env.THUMB_OVERFLOW_RETRY_MS || 5000));
+const ONDEMAND_RESERVE_SLOTS = Math.max(0, Number(process.env.THUMB_ONDEMAND_RESERVE_SLOTS || 1));
 
-const OVERFLOW_RETRY_MS = Number(process.env.THUMB_OVERFLOW_RETRY_MS || 5000);
-const overflowBuffer = new Map(); // relativePath -> task
+const taskQueue = [];
+const queuedTasks = new Map(); // relativePath -> priorityLabel
+const queueStats = {
+    ondemand: 0,
+    batch: 0
+};
+const overflowBuffer = new Map(); // relativePath -> { task, context }
+const activeByPriority = {
+    ondemand: 0,
+    batch: 0
+};
+const taskContexts = new Map(); // relativePath -> context
+let queueDrainTimer = null;
 let overflowTimer = null;
 
 // 按需空闲销毁：当按需队列清空且无在途任务时，短延时销毁线程池（更符合“本目录生成完后退出”）
 let __idleDestroyTimer = null;
 const THUMB_ONDEMAND_IDLE_DESTROY_MS = Number(process.env.THUMB_ONDEMAND_IDLE_DESTROY_MS || 30000);
 let __lastBatchTelemetryLog = 0;
+let lastQueueFullWarnAt = 0;
+let lastQueueFullDebugAt = 0;
 
 function scheduleIdlePoolDestroy() {
     try {
         if (__idleDestroyTimer) clearTimeout(__idleDestroyTimer);
         __idleDestroyTimer = setTimeout(() => {
             try {
-                if (ondemandQueue.length === 0 && batchQueue.length === 0 && state.thumbnail.getActiveCount() === 0) {
+                if (queueStats.ondemand === 0 && queueStats.batch === 0 && state.thumbnail.getActiveCount() === 0) {
                     destroyThumbnailWorkerPool();
                 }
             } catch (error) {
@@ -97,7 +110,7 @@ function scheduleIdlePoolDestroy() {
 // 需求信号指标：供自适应增压判断是否需要扩容
 function refreshThumbMetrics() {
     const active = state.thumbnail.getActiveCount();
-    const queued = ondemandQueue.length + batchQueue.length;
+    const queued = queueStats.ondemand + queueStats.batch;
     thumbMetrics.processing = active;
     thumbMetrics.queued = queued;
     thumbMetrics.pending = active + queued;
@@ -111,6 +124,60 @@ function updateQueueMetric() {
 
 refreshThumbMetrics();
 
+function getBatchConcurrencyLimit(maxConcurrency) {
+    if (ONDEMAND_RESERVE_SLOTS <= 0) {
+        return maxConcurrency;
+    }
+    if (maxConcurrency <= 1) {
+        return 1;
+    }
+    const reserve = Math.min(ONDEMAND_RESERVE_SLOTS, maxConcurrency - 1);
+    return Math.max(1, maxConcurrency - reserve);
+}
+
+function canStartBatchTask(maxConcurrency) {
+    if (maxConcurrency <= 1) {
+        return true;
+    }
+    if (queueStats.ondemand === 0 && activeByPriority.ondemand === 0) {
+        return true;
+    }
+    const limit = getBatchConcurrencyLimit(maxConcurrency);
+    return activeByPriority.batch < limit;
+}
+
+function scheduleOverflowReplay(delay = OVERFLOW_RETRY_MS) {
+    if (overflowTimer || overflowBuffer.size === 0) {
+        return;
+    }
+    overflowTimer = setTimeout(() => {
+        overflowTimer = null;
+        if (overflowBuffer.size === 0) {
+            return;
+        }
+        const pending = Array.from(overflowBuffer.values());
+        overflowBuffer.clear();
+        for (const entry of pending) {
+            const context = entry.context === 'batch' ? 'batch' : 'ondemand';
+            const accepted = dispatchThumbnailTask(entry.task, context);
+            if (!accepted) {
+                overflowBuffer.set(entry.task.relativePath, entry);
+            }
+        }
+        if (overflowBuffer.size > 0) {
+            scheduleOverflowReplay(OVERFLOW_RETRY_MS);
+        }
+    }, Math.max(0, delay));
+}
+
+function enqueueOverflowTask(task, context) {
+    if (!task || !task.relativePath) {
+        return;
+    }
+    overflowBuffer.set(task.relativePath, { task, context });
+    scheduleOverflowReplay();
+}
+
 function resolveThumbConcurrencyLimit() {
     try {
         const limit = getThumbMaxConcurrency();
@@ -123,41 +190,42 @@ function resolveThumbConcurrencyLimit() {
     return Math.max(1, Math.floor(Number(NUM_WORKERS) || 1));
 }
 
-function drainOndemand() {
+function drainTaskQueue() {
+    if (queueDrainTimer) {
+        clearTimeout(queueDrainTimer);
+        queueDrainTimer = null;
+    }
     try {
         const maxConcurrency = resolveThumbConcurrencyLimit();
         ensureThumbnailPoolCapacity(maxConcurrency);
 
-        while (state.thumbnail.getActiveCount() < maxConcurrency) {
-            let task = null;
-            let isOndemand = false;
+        if (taskQueue.length > 1) {
+            taskQueue.sort((a, b) => a.priority - b.priority || a.enqueuedAt - b.enqueuedAt);
+        }
 
-            if (ondemandQueue.length > 0) {
-                task = ondemandQueue.shift();
-                isOndemand = true;
-            } else if (batchQueue.length > 0) {
-                task = batchQueue.shift();
-            } else {
+        while (state.thumbnail.getActiveCount() < maxConcurrency && taskQueue.length > 0) {
+            const next = taskQueue[0];
+            if (!next) break;
+
+            const label = next.priority === PRIORITY.ondemand ? 'ondemand' : 'batch';
+            if (label === 'batch' && !canStartBatchTask(maxConcurrency)) {
                 break;
             }
 
-            if (!task) {
-                break;
-            }
-
-            const targetSet = isOndemand ? queuedSet : batchQueuedSet;
-            targetSet.delete(task.relativePath);
+            taskQueue.shift();
+            queueStats[label] = Math.max(0, queueStats[label] - 1);
+            queuedTasks.delete(next.task.relativePath);
             updateQueueMetric();
 
-            if (activeTasks.has(task.relativePath)) {
+            if (activeTasks.has(next.task.relativePath)) {
                 continue;
             }
 
-            startThumbnailTask(task, isOndemand ? 'ondemand' : 'batch');
+            startThumbnailTask(next.task, label);
         }
 
         const active = state.thumbnail.getActiveCount();
-        if (ondemandQueue.length === 0 && batchQueue.length === 0 && active === 0) {
+        if (queueStats.ondemand === 0 && queueStats.batch === 0 && active === 0) {
             scheduleIdlePoolDestroy();
         }
     } catch (error) {
@@ -167,40 +235,14 @@ function drainOndemand() {
     refreshThumbMetrics();
 }
 
-function scheduleOverflowReplay() {
-    if (overflowTimer || overflowBuffer.size === 0) {
+function scheduleQueueDrain(delay = 0) {
+    if (queueDrainTimer) {
         return;
     }
-
-    overflowTimer = setTimeout(() => {
-        overflowTimer = null;
-        if (overflowBuffer.size === 0) {
-            return;
-        }
-
-        const replayTasks = Array.from(overflowBuffer.values());
-        overflowBuffer.clear();
-
-        for (const task of replayTasks) {
-            const dispatched = dispatchThumbnailTask(task, 'overflow');
-            if (!dispatched) {
-                // 再次失败，放回缓冲区等待下一轮
-                overflowBuffer.set(task.relativePath, task);
-            }
-        }
-
-        if (overflowBuffer.size > 0) {
-            scheduleOverflowReplay();
-        }
-    }, OVERFLOW_RETRY_MS);
-}
-
-function enqueueOverflowTask(task) {
-    if (!task || !task.relativePath) {
-        return;
-    }
-    overflowBuffer.set(task.relativePath, task);
-    scheduleOverflowReplay();
+    queueDrainTimer = setTimeout(() => {
+        queueDrainTimer = null;
+        drainTaskQueue();
+    }, Math.max(0, delay));
 }
 
 // 内存清理配置
@@ -434,12 +476,11 @@ function dispatchThumbnailTask(task, context = 'ondemand') {
         logThumbIgnore('确保缩略图线程池', error);
     }
 
-    const isBatch = context === 'batch';
-    const targetQueue = isBatch ? batchQueue : ondemandQueue;
-    const targetQueuedSet = isBatch ? batchQueuedSet : queuedSet;
-    const maxQueue = isBatch ? MAX_BATCH_QUEUE : MAX_ONDEMAND_QUEUE;
+    const priority = context === 'batch' ? PRIORITY.batch : PRIORITY.ondemand;
+    const label = priority === PRIORITY.ondemand ? 'ondemand' : 'batch';
+    const maxQueue = label === 'ondemand' ? MAX_ONDEMAND_QUEUE : MAX_BATCH_QUEUE;
 
-    if (activeTasks.has(safeTask.relativePath) || queuedSet.has(safeTask.relativePath) || batchQueuedSet.has(safeTask.relativePath)) {
+    if (activeTasks.has(safeTask.relativePath) || queuedTasks.has(safeTask.relativePath)) {
         return true;
     }
 
@@ -447,36 +488,45 @@ function dispatchThumbnailTask(task, context = 'ondemand') {
     ensureThumbnailPoolCapacity(maxConcurrency);
     const currentActive = state.thumbnail.getActiveCount();
 
-    if (currentActive < maxConcurrency) {
-        startThumbnailTask(safeTask, context);
+    if (currentActive < maxConcurrency && queueStats[label] === 0) {
+        startThumbnailTask(safeTask, label);
         return true;
     }
 
-    if (targetQueue.length >= maxQueue) {
+    if (queueStats[label] >= maxQueue) {
         const now = Date.now();
         if (now - lastQueueFullWarnAt >= QUEUE_FULL_WARN_INTERVAL_MS) {
-            logger.warn(`[${isBatch ? '批量' : '按需'}队列] 已满(${maxQueue})，暂缓新任务`);
+            logger.warn(`[${label === 'ondemand' ? '按需' : '批量'}队列] 已满(${maxQueue})，暂缓新任务`);
             lastQueueFullWarnAt = now;
-        } else {
-            logger.debug(`[${isBatch ? '批量' : '按需'}队列] 已满(${maxQueue})，任务推迟: ${safeTask.relativePath}`);
+        } else if (now - lastQueueFullDebugAt >= QUEUE_FULL_DEBUG_INTERVAL_MS) {
+            logger.debug(`[${label === 'ondemand' ? '按需' : '批量'}队列] 已满(${maxQueue})，任务推迟（示例）: ${safeTask.relativePath}`);
+            lastQueueFullDebugAt = now;
         }
-        if (!isBatch) {
-            enqueueOverflowTask(safeTask);
+        if (label === 'ondemand') {
+            enqueueOverflowTask(safeTask, label);
         }
         return false;
     }
 
-    targetQueue.push(safeTask);
-    targetQueuedSet.add(safeTask.relativePath);
+    queuedTasks.set(safeTask.relativePath, label);
+    queueStats[label] += 1;
+    taskQueue.push({ task: safeTask, priority, enqueuedAt: Date.now() });
     updateQueueMetric();
-    logger.debug(`[${isBatch ? '批量' : '按需'}生成] 并发受限，任务入队: ${safeTask.relativePath} (队列=${targetQueue.length}, active=${currentActive}, limit=${maxConcurrency})`);
-    scheduleQueueDrain();
+    if (queueStats[label] <= 3 || (queueStats[label] % 50 === 0)) {
+        logger.debug(`[${label === 'ondemand' ? '按需' : '批量'}生成] 并发受限，任务入队: ${safeTask.relativePath} (队列=${queueStats[label]}, active=${currentActive}, limit=${maxConcurrency})`);
+    }
+    scheduleQueueDrain(0);
     return true;
 }
 
 function startThumbnailTask(task, context) {
     const logPrefix = context === 'batch' ? LOG_PREFIXES.BATCH_BACKFILL : LOG_PREFIXES.ONDEMAND_GENERATE;
     activeTasks.add(task.relativePath);
+    taskContexts.set(task.relativePath, context);
+    if (typeof activeByPriority[context] !== 'number') {
+        activeByPriority[context] = 0;
+    }
+    activeByPriority[context] += 1;
     updateTaskTimestamp(task.relativePath);
     state.thumbnail.incrementActiveCount();
     refreshThumbMetrics();
@@ -658,7 +708,12 @@ async function processWorkerFailure(task, errorPayload) {
 }
 
 function finalizeWorkerCycle(relativePath) {
+    const context = taskContexts.get(relativePath) || 'ondemand';
+    taskContexts.delete(relativePath);
     activeTasks.delete(relativePath);
+    if (activeByPriority[context] > 0) {
+        activeByPriority[context] -= 1;
+    }
     state.thumbnail.decrementActiveCount();
     refreshThumbMetrics();
     try {
@@ -666,7 +721,7 @@ function finalizeWorkerCycle(relativePath) {
     } catch (error) {
         logThumbIgnore('更新缩略图使用指标', error);
     }
-    drainOndemand();
+    scheduleQueueDrain(0);
 }
 
 function ensureThumbnailPoolCapacity(limit) {
@@ -675,20 +730,6 @@ function ensureThumbnailPoolCapacity(limit) {
         scaleThumbnailWorkerPool(desiredSize);
     } catch (error) {
         logThumbIgnore('调整缩略图线程池大小', error);
-    }
-}
-
-function scheduleQueueDrain() {
-    try {
-        setImmediate(() => {
-            try {
-                drainOndemand();
-            } catch (error) {
-                logger.debug(`${LOG_PREFIXES.THUMB} 队列处理失败: ${error.message}`);
-            }
-        });
-    } catch (error) {
-        logger.debug(`${LOG_PREFIXES.THUMB} 触发队列处理失败: ${error.message}`);
     }
 }
 
@@ -978,7 +1019,7 @@ async function batchGenerateMissingThumbnails(limit = 1000) {
                 durationMs: batchDurationMs,
                 cooldownMs: cooldownEnforced ? BATCH_COOLDOWN_MS : 0,
                 backlogPending: thumbMetrics.pending,
-                queuedLength: ondemandQueue.length
+                queuedLength: queueStats.ondemand
             });
         }
 

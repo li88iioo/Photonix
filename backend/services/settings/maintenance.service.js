@@ -32,6 +32,9 @@ const { redis } = require('../../config/redis');
  * - 获取缩略图状态统计
  * - 清理缩略图缓存
  */
+const PQueueModule = require('p-queue');
+const PQueue = typeof PQueueModule === 'function' ? PQueueModule : PQueueModule.default;
+
 class ThumbnailSyncService {
   /**
    * 构造函数
@@ -43,11 +46,9 @@ class ThumbnailSyncService {
     this.db = require('../../db/multi-db');
     this.config = require('../../config');
     this.redis = clientRedis;
-    this._resyncQueue = Promise.resolve();
-    this._resyncPending = 0;
-    this._resyncActive = false;
+    this.queue = new PQueue({ concurrency: 1 });
     this._currentTrigger = null;
-    this._resyncStartedAt = null;
+    this._resyncPending = 0;
   }
 
   /**
@@ -217,60 +218,45 @@ class ThumbnailSyncService {
   _scheduleThumbnailTask(options, taskFactory) {
     const { trigger = '系统内部', waitForCompletion = true, skipIfRunning = false } = options || {};
 
-    const inProgress = this._resyncActive || this._resyncPending > 0;
-    if (skipIfRunning && inProgress) {
+    if (skipIfRunning && (this.queue.pending > 0 || this.queue.size > 0)) {
       const current = this._currentTrigger || '系统内部';
       logger.info(`${LOG_PREFIXES.THUMBNAIL_SYNC} 当前已有任务运行中（触发源：${current}），跳过来自 ${trigger} 的请求`);
       return {
         inProgress: true,
         skipped: true,
-        trigger: this._currentTrigger
+        trigger: current
       };
     }
 
-    if (inProgress && !skipIfRunning) {
-      const running = this._currentTrigger || '系统内部';
-      logger.debug(`${LOG_PREFIXES.THUMBNAIL_SYNC} 将任务排队执行（当前运行：${running}，新触发源：${trigger}）`);
-    }
-
-    this._resyncPending += 1;
-
-    const scheduledRun = this._resyncQueue.then(async () => {
-      this._resyncActive = true;
+    const runTask = async () => {
       this._currentTrigger = trigger;
-      this._resyncStartedAt = Date.now();
+      this._resyncPending += 1;
       try {
         return await taskFactory();
       } finally {
-        this._resyncActive = false;
         this._currentTrigger = null;
-        this._resyncStartedAt = null;
+        this._resyncPending = Math.max(0, this._resyncPending - 1);
       }
-    });
-
-    this._resyncQueue = scheduledRun.then(() => undefined, () => undefined);
-
-    const finalize = () => {
-      this._resyncPending = Math.max(0, this._resyncPending - 1);
     };
-    scheduledRun.finally(finalize);
+
+    const pendingPromise = this.queue.add(runTask);
 
     if (!waitForCompletion) {
-      scheduledRun.catch((error) => {
+      pendingPromise.catch((error) => {
         logger.error(`${LOG_PREFIXES.THUMBNAIL_SYNC} 异步任务失败（触发源：${trigger}）:`, error);
       });
-      return { started: true, trigger, promise: scheduledRun };
+      return { started: true, trigger, promise: pendingPromise };
     }
 
-    return scheduledRun;
+    return pendingPromise;
   }
 
   getResyncState() {
     return {
-      running: this._resyncActive,
-      pending: this._resyncPending,
+      running: this.queue.pending > 0,
+      pending: this.queue.size,
       trigger: this._currentTrigger,
-      startedAt: this._resyncStartedAt
+      startedAt: this.queue.pending > 0 ? Date.now() : null
     };
   }
 
@@ -1061,29 +1047,24 @@ async function triggerSyncOperation(type) {
 
   switch (type) {
     case 'index': {
-      // 发送消息给索引工作线程重建索引
       const message = TraceManager.injectToWorkerMessage({ type: 'rebuild_index', payload: { photosDir: PHOTOS_DIR, syncThumbnails: true } });
       getIndexingWorker().postMessage(message);
       return { message: '已启动索引补全任务' };
     }
     case 'thumbnail':
-      // 执行缩略图补全
-      await performThumbnailReconcile();
-      return { message: '已启动缩略图补全任务' };
+      return { message: '已启动缩略图补全任务', result: await performThumbnailReconcile() };
     case 'hls': {
-      // 执行HLS补全
       const batch = await performHlsReconcileOnce();
       return { message: `HLS补全完成：total=${batch.total}, success=${batch.success}, failed=${batch.failed}, skipped=${batch.skipped}`, result: batch };
     }
     case 'all': {
-      // 执行所有补全任务
       const message = TraceManager.injectToWorkerMessage({ type: 'rebuild_index', payload: { photosDir: PHOTOS_DIR, syncThumbnails: true } });
       getIndexingWorker().postMessage(message);
-      await performThumbnailReconcile();
+      const thumbResult = await performThumbnailReconcile();
       const batchAll = await performHlsReconcileOnce();
       return {
-        message: `已完成HLS补全：total=${batchAll.total}, success=${batchAll.success}, failed=${batchAll.failed}, skipped=${batchAll.skipped}`,
-        result: { hls: batchAll }
+        message: `已完成补全任务`,
+        result: { thumbnail: thumbResult, hls: batchAll }
       };
     }
     default: {

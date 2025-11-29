@@ -799,7 +799,7 @@ export function showPreviewModal({
       const payloadIds = resolveEntriesForApi(entryKeys);
       if (!payloadIds.length) {
         if (showNotification) {
-          showNotification('未找到可下载的条目', 'warning', undefined, { theme: 'download' });
+          showNotification('未找到可下载的条目', 'warning');
         }
         return;
       }
@@ -808,7 +808,7 @@ export function showPreviewModal({
       try {
         await submitDownloadEntries(serverId, payloadIds);
         if (showNotification) {
-          showNotification('已提交下载任务', 'success', undefined, { theme: 'download' });
+          showNotification('已提交下载任务', 'success');
         }
         if (typeof markAdminVerified === 'function') {
           markAdminVerified();
@@ -829,7 +829,7 @@ export function showPreviewModal({
           const message = typeof resolveMessage === 'function'
             ? resolveMessage(error, '下载失败')
             : '下载失败';
-          showNotification(message, 'error', undefined, { theme: 'download' });
+          showNotification(message, 'error');
         }
       } finally {
         busy = false;

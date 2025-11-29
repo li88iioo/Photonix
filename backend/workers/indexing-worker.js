@@ -29,6 +29,9 @@ const { withTransaction } = require('../services/tx.manager');
 const { getCount } = require('../repositories');
 const { createWorkerResult, createWorkerError, createWorkerLog } = require('../utils/workerMessage');
 
+const INDEX_PROGRESS_LOG_STEP = Math.max(1000, Number(process.env.INDEX_PROGRESS_LOG_STEP || 5000));
+const INDEX_CACHE_LOG_INTERVAL_MS = Math.max(1000, Number(process.env.INDEX_CACHE_LOG_INTERVAL_MS || 20000));
+
 /**
  * 数据库超时管理器
  * 统一管理数据库超时的调整逻辑
@@ -539,6 +542,8 @@ const dbTimeoutManager = new DbTimeoutManager();
                 const ftsStmt = getDB('main').prepare("INSERT OR REPLACE INTO items_fts (rowid, name) VALUES (?, ?)");
 
                 let batch = [];
+                let lastProgressLogCount = 0;
+                let lastCacheLogAt = 0;
                 let shouldProcess = !lastProcessedPath;
 
                 for await (const item of walkDirStream(photosDir)) {
@@ -559,7 +564,10 @@ const dbTimeoutManager = new DbTimeoutManager();
                         }
                         count += batch.length;
                         await idxRepo.setProcessedFiles(count);
-                        logger.debug(`[INDEXING-WORKER] 已处理 ${count} 个条目`);
+                        if ((count - lastProgressLogCount) >= INDEX_PROGRESS_LOG_STEP) {
+                            logger.debug(`[INDEXING-WORKER] 已处理 ${count} 个条目`);
+                            lastProgressLogCount = count;
+                        }
 
                         // 内存优化：分批清理本地缓存（每处理一批就清理一次）
                         const localCacheSize = externalCache.localCache.size;
@@ -570,7 +578,11 @@ const dbTimeoutManager = new DbTimeoutManager();
                                 .slice(0, batchCleanupCount);
 
                             entries.forEach(([key]) => externalCache.localCache.delete(key));
-                            logger.debug(`批处理后清理本地缓存: ${batchCleanupCount}个条目，当前大小: ${externalCache.localCache.size}/${externalCache.LOCAL_CACHE_SIZE}`);
+                            const now = Date.now();
+                            if (now - lastCacheLogAt >= INDEX_CACHE_LOG_INTERVAL_MS) {
+                                logger.debug(`批处理后清理本地缓存: ${batchCleanupCount}个条目，当前大小: ${externalCache.localCache.size}/${externalCache.LOCAL_CACHE_SIZE}`);
+                                lastCacheLogAt = now;
+                            }
                         }
 
                         batch = [];

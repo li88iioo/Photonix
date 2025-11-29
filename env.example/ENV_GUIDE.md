@@ -432,17 +432,17 @@
 - 代码引用：backend/app.js（helmet csp）
 - 示例：ENABLE_APP_CSP=true
 
-10) THUMB_ONDEMAND_RESERVE
-- 作用：缩略图按需生成时预留的worker数量，避免批量补全占用所有资源
-- 默认值：0
-- 取值/格式：0-NUM_WORKERS的整数
+10) THUMB_ONDEMAND_RESERVE_SLOTS（代码中常量为 ONDEMAND_RESERVE_SLOTS）
+- 作用：缩略图按需生成时始终预留的 worker 槽位，防止批量补全占满所有并发导致实时请求卡顿
+- 默认值：1（至少保留一个槽位给按需任务；NUM_WORKERS<=1 时自动退化）
+- 取值/格式：0-NUM_WORKERS 的整数
 - 推荐配置方案：
-  - 单用户环境：0（不预留，充分利用资源）
-  - 多用户环境：1-2（预留给实时请求）
-  - 高并发环境：NUM_WORKERS*0.2（预留20%给实时处理）
-- 风险：设置过大会导致批量补全变慢；设置过小可能影响实时响应
-- 代码引用：services/thumbnail.service.js
-- 示例：THUMB_ONDEMAND_RESERVE=1
+  - 单用户/离线批处理：0（允许批量占满所有 worker 以尽快完成）
+  - 常规 2-4 worker：1（默认值，保证至少 1 并发处理实时缩略图）
+  - 8+ worker 高并发：2-3（约 20%-30% 预留给实时流量）
+- 风险：值过大拖慢批量补全；值过小（或 0）在首轮 100w+ 扫描时可能影响用户体验
+- 代码引用：services/thumbnail.service.js（ONDEMAND_RESERVE_SLOTS 常量）
+- 示例：THUMB_ONDEMAND_RESERVE_SLOTS=2
 
 11) THUMB_ONDEMAND_QUEUE_MAX
 - 作用：缩略图按需生成队列最大长度
@@ -479,6 +479,32 @@
   - 风险：过低增加日志量；过高则监控粒度下降
   - 代码引用：services/thumbnail.service.js
   - 示例：THUMB_TELEMETRY_LOG_INTERVAL_MS=20000
+- THUMB_QUEUE_DEBUG_INTERVAL_MS
+  - 作用：当队列达到上限时，Debug 级别“任务推迟”日志的节流间隔（毫秒），避免 5000+ 条重复日志刷屏
+  - 默认值：30000
+  - 取值/格式：>=5000 的整数毫秒
+  - 推荐修改场景：调试阶段想观察更多样本，可临时调小；生产环境建议保持默认或调大
+  - 风险：过小仍可能输出大量日志；过大则只偶尔看到示例
+  - 代码引用：services/thumbnail.service.js（THUMB_QUEUE_DEBUG_INTERVAL_MS 常量）
+  - 示例：THUMB_QUEUE_DEBUG_INTERVAL_MS=60000
+
+- INDEX_PROGRESS_LOG_STEP
+  - 作用：索引重建时“已处理 X 个条目”日志的步长（条目数），降低全量导入时的日志噪声
+  - 默认值：5000
+  - 取值/格式：>=1000 的整数
+  - 推荐修改场景：需要更细/更粗的进度粒度（例如调试单目录时调小）
+  - 风险：过小仍会输出大量日志；过大会导致进度反馈不及时
+  - 代码引用：workers/indexing-worker.js
+  - 示例：INDEX_PROGRESS_LOG_STEP=10000
+
+- INDEX_CACHE_LOG_INTERVAL_MS
+  - 作用：索引线程清理本地缓存时的日志节流间隔（毫秒）
+  - 默认值：20000
+  - 取值/格式：>=1000 的整数毫秒
+  - 推荐修改场景：想更频繁地观察缓存命中/清理，或希望进一步降低日志噪声
+  - 风险：过小会刷屏；过大会导致看不到缓存清理日志
+  - 代码引用：workers/indexing-worker.js
+  - 示例：INDEX_CACHE_LOG_INTERVAL_MS=60000
 
 13) THUMB_IDLE_SHUTDOWN_MS
 - 作用：缩略图worker空闲自动关闭时间（毫秒）
@@ -891,7 +917,7 @@ AI_DAILY_LIMIT=50
 AI_PER_IMAGE_COOLDOWN_SEC=120
 
 # 缩略图优化
-THUMB_ONDEMAND_RESERVE=1
+THUMB_ONDEMAND_RESERVE_SLOTS=1
 THUMB_POOL_MAX=1
 
 ```
