@@ -154,6 +154,15 @@ class ErrorHandler {
                 return;
             }
 
+            // 过滤浏览器切换桌面/移动模式等导致的匿名 Script error
+            if (event.message === 'Script error.' && !event.filename) {
+                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                    errorLogger.debug('忽略跨域 Script error.', { message: event.message });
+                }
+                event.preventDefault();
+                return;
+            }
+
             this.handleError(event.error || event.message, {
                 type: ErrorTypes.UNKNOWN,
                 severity: ErrorSeverity.HIGH,
@@ -775,9 +784,13 @@ export class AsyncErrorBoundary {
      * @param {Function} [options.onRetry] 重试回调
      */
     constructor(options = {}) {
-        this.maxRetries = options.maxRetries || 3;
-        this.retryDelay = options.retryDelay || 1000;
-        this.backoffMultiplier = options.backoffMultiplier || 2;
+        const normalizedRetries = Number.isFinite(options.maxRetries) ? options.maxRetries : 3;
+        const normalizedDelay = Number.isFinite(options.retryDelay) ? options.retryDelay : 1000;
+        const normalizedBackoff = Number.isFinite(options.backoffMultiplier) ? options.backoffMultiplier : 2;
+
+        this.maxRetries = Math.max(0, normalizedRetries);
+        this.retryDelay = Math.max(0, normalizedDelay);
+        this.backoffMultiplier = normalizedBackoff > 0 ? normalizedBackoff : 2;
         this.onError = options.onError || null;
         this.onRetry = options.onRetry || null;
     }

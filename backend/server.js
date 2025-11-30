@@ -126,21 +126,115 @@ class IndexScheduler {
     }
 }
 
+async function performQuickDirectoryCheck(rootDir, maxDepth = 2) {
+    const stack = [{ dir: rootDir, depth: 0 }];
+    while (stack.length > 0) {
+        const { dir, depth } = stack.pop();
+        let entries;
+        try {
+            entries = await fs.readdir(dir, { withFileTypes: true });
+        } catch (error) {
+            // 如果目录不存在或无法访问，交给上层判断
+            throw error;
+        }
+        for (const entry of entries) {
+            if (entry.name === '.writetest') continue;
+            if (entry.isFile()) {
+                return false; // 发现真实文件，目录非空
+            }
+            if (entry.isDirectory() && depth < maxDepth) {
+                stack.push({ dir: path.join(dir, entry.name), depth: depth + 1 });
+            }
+        }
+    }
+    return true;
+}
+
+async function performDatabaseSampleCheck(sampleSize = 50) {
+    const { dbAll } = require('./db/multi-db');
+    const limit = Math.max(1, Math.min(sampleSize, 100));
+    try {
+        const rows = await dbAll('main', `
+            SELECT path FROM thumb_status
+            WHERE status='exists'
+            ORDER BY rowid DESC
+            LIMIT ?
+        `, [limit]);
+        if (!Array.isArray(rows) || rows.length === 0) {
+            return true;
+        }
+        for (const row of rows) {
+            const filePath = row?.path;
+            if (!filePath) {
+                continue;
+            }
+            const isVideo = /\.(mp4|webm|mov)$/i.test(filePath);
+            const ext = isVideo ? '.jpg' : '.webp';
+            const thumbRel = filePath.replace(/\.[^.]+$/, ext);
+            const thumbAbs = path.join(THUMBS_DIR, thumbRel);
+            try {
+                await fs.access(thumbAbs);
+                return false; // 找到至少一个真实文件，说明目录非空
+            } catch (err) {
+                if (err.code && err.code !== 'ENOENT') {
+                    logger.debug(`[Startup] 检查缩略图样本失败: ${thumbAbs} -> ${err.message}`);
+                }
+            }
+        }
+        return true;
+    } catch (error) {
+        const message = error?.message || '';
+        if (/no such table/i.test(message)) {
+            logger.debug('[Startup] thumb_status 表不存在，跳过缩略图采样检查');
+            return true;
+        }
+        if (/no such column: rowid/i.test(message)) {
+            try {
+                const rows = await dbAll('main', `
+                    SELECT path FROM thumb_status
+                    WHERE status='exists'
+                    ORDER BY mtime DESC
+                    LIMIT ?
+                `, [limit]);
+                if (!Array.isArray(rows) || rows.length === 0) {
+                    return true;
+                }
+                for (const row of rows) {
+                    const filePath = row?.path;
+                    if (!filePath) continue;
+                    const isVideo = /\.(mp4|webm|mov)$/i.test(filePath);
+                    const ext = isVideo ? '.jpg' : '.webp';
+                    const thumbRel = filePath.replace(/\.[^.]+$/, ext);
+                    const thumbAbs = path.join(THUMBS_DIR, thumbRel);
+                    try {
+                        await fs.access(thumbAbs);
+                        return false;
+                    } catch { }
+                }
+                return true;
+            } catch (fallbackError) {
+                logger.debug(`[Startup] 缩略图采样回退失败: ${fallbackError && fallbackError.message}`);
+            }
+        }
+        throw error;
+    }
+}
+
 async function isThumbsDirEffectivelyEmpty(rootDir) {
     try {
-        const [filesystemEntries, existsCount] = await Promise.all([
-            fs.readdir(rootDir).catch(() => []),
-            getCount('thumb_status', 'main', "status='exists'")
-        ]);
-
-        if (!Number.isFinite(existsCount) || existsCount <= 0) {
+        const isQuickEmpty = await performQuickDirectoryCheck(rootDir, 2);
+        if (!isQuickEmpty) {
             return false;
         }
-
-        const hasAnyFile = (filesystemEntries || []).some((name) => name !== '.writetest');
-        return !hasAnyFile;
     } catch (error) {
-        logger.debug(`[Startup] 缩略图目录检查失败: ${error && error.message}`);
+        logger.debug(`[Startup] 快速目录检查失败，跳过本轮自愈: ${error && error.message}`);
+        return null;
+    }
+
+    try {
+        return await performDatabaseSampleCheck();
+    } catch (error) {
+        logger.debug(`[Startup] 缩略图数据库采样检查失败: ${error && error.message}`);
         return null;
     }
 }

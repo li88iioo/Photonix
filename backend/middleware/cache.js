@@ -2,7 +2,6 @@ const { redis } = require('../config/redis');
 const logger = require('../config/logger');
 const { safeRedisGet, safeRedisSet } = require('../utils/helpers');
 const { addTagsToKey } = require('../services/cache.service.js');
-const { QueryCacheOptimizer } = require('../services/queryOptimizer.service.js');
 
 /**
  * 缓存命中/未命中/总请求计数
@@ -11,41 +10,76 @@ const { QueryCacheOptimizer } = require('../services/queryOptimizer.service.js')
 const cacheStats = { hits: 0, misses: 0, totalRequests: 0 };
 
 /**
- * 记录正在构建缓存的 Promise，避免并发穿透
- * @type {Map<string, Promise<any>>}
+ * SingleFlight 控制表，确保缓存 miss 时只有一个请求负责重建缓存。
+ * key -> { promise, resolve, reject, createdAt }
  */
-const inFlight = new Map();
-/**
- * 记录 inFlight 请求的时间戳，用于超时清理
- * @type {Map<string, number>}
- */
-const inFlightTimestamps = new Map();
+const singleFlightEntries = new Map();
+const SINGLE_FLIGHT_WAIT_TIMEOUT_MS = Number(process.env.CACHE_SINGLEFLIGHT_WAIT_TIMEOUT_MS || 10000);
+const SINGLE_FLIGHT_STALE_MS = Number(process.env.CACHE_SINGLEFLIGHT_STALE_MS || 30000);
+const SINGLE_FLIGHT_CLEANUP_INTERVAL_MS = Number(process.env.CACHE_SINGLEFLIGHT_CLEANUP_INTERVAL_MS || 60000);
 
-/** 单个 inFlight 超时时间(ms) */
-const INFLIGHT_TIMEOUT_MS = 8000;
-/** inFlight 清理时间间隔(ms)，默认5分钟 */
-const INFLIGHT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+function acquireSingleFlight(key) {
+    const existing = singleFlightEntries.get(key);
+    if (existing) {
+        return { isLeader: false, promise: existing.promise, entry: existing };
+    }
+    let resolveFn;
+    let rejectFn;
+    const promise = new Promise((resolve, reject) => {
+        resolveFn = resolve;
+        rejectFn = reject;
+    });
+    const entry = {
+        promise,
+        resolve: resolveFn,
+        reject: rejectFn,
+        createdAt: Date.now()
+    };
+    // 预附加 catch，避免在没有跟随者时触发未处理的 Promise 拒绝日志
+    promise.catch(() => {});
+    singleFlightEntries.set(key, entry);
+    return { isLeader: true, promise, entry };
+}
 
-/**
- * 定期清理超时的 inFlight 请求，防止内存泄漏
- */
-setInterval(() => {
+function resolveSingleFlight(key, entry) {
+    const current = singleFlightEntries.get(key);
+    if (current !== entry) return;
+    singleFlightEntries.delete(key);
+    entry.resolve();
+}
+
+function rejectSingleFlight(key, entry, error) {
+    const current = singleFlightEntries.get(key);
+    if (current !== entry) return;
+    singleFlightEntries.delete(key);
+    entry.reject(error);
+}
+
+const singleFlightCleanupTimer = setInterval(() => {
     const now = Date.now();
-    let cleaned = 0;
-
-    for (const [key, timestamp] of inFlightTimestamps.entries()) {
-        // 超过两倍超时时间未更新则清除
-        if ((now - timestamp) > INFLIGHT_TIMEOUT_MS * 2) {
-            inFlight.delete(key);
-            inFlightTimestamps.delete(key);
-            cleaned++;
+    for (const [key, entry] of singleFlightEntries.entries()) {
+        if (now - entry.createdAt > SINGLE_FLIGHT_STALE_MS) {
+            rejectSingleFlight(key, entry, new Error('singleflight_stale'));
         }
     }
+}, SINGLE_FLIGHT_CLEANUP_INTERVAL_MS);
+singleFlightCleanupTimer.unref?.();
 
-    if (cleaned > 0) {
-        logger.debug(`[CACHE CLEANUP] 清理了 ${cleaned} 个超时的inFlight请求`);
-    }
-}, INFLIGHT_CLEANUP_INTERVAL_MS);
+function waitWithTimeout(promise, timeoutMs, message = 'singleflight_timeout') {
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+        promise
+            .then((value) => {
+                clearTimeout(timer);
+                resolve(value);
+            })
+            .catch((err) => {
+                clearTimeout(timer);
+                reject(err);
+            });
+    });
+}
 
 /**
  * 根据请求信息生成缓存标签(tag)，用于细粒度缓存失效和依赖管理
@@ -94,36 +128,6 @@ function generateTagsFromReq(req) {
         }
     }
     return Array.from(tags);
-}
-
-/**
- * 单飞(SingleFlight)并发去抖: 同一个key的请求只会触发一次producer，其它请求等待
- * @param {string} key 标识
- * @param {function():Promise<any>} producer 主体异步函数
- * @returns {Promise<any>} 共享的异步结果
- */
-async function singleflight(key, producer) {
-    const isLeader = !inFlight.has(key);
-    if (isLeader) {
-        // 领导者请求, 执行producer并记录
-        const p = (async () => {
-            try { return await producer(); }
-            finally {
-                setTimeout(() => {
-                    inFlight.delete(key);
-                    inFlightTimestamps.delete(key);
-                }, 0);
-            }
-        })();
-        inFlight.set(key, p);
-        inFlightTimestamps.set(key, Date.now());
-        // 领导者不设超时（核心缓存创写）
-        return p;
-    } else {
-        // 跟随者最多等待 INFLIGHT_TIMEOUT_MS, 避免挂死所有等待者
-        const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('singleflight_timeout')), INFLIGHT_TIMEOUT_MS));
-        return Promise.race([inFlight.get(key), timeout]);
-    }
 }
 
 /** 单次最大可缓存体积 1MB */
@@ -260,21 +264,102 @@ function cache(duration) {
             }
 
             // 缓存未命中逻辑
-            cacheStats.misses++;
-            res.setHeader('X-Cache', 'MISS');
             res.setHeader('Vary', 'Authorization');
             res.setHeader('Cache-Control', cacheControlValue);
 
-            // 先附加 writer 钩子保证只要响应经过都能被缓存
-            attachWritersWithCache(res, key, cacheDuration);
+            const handleLeaderResponse = (flightOwner) => {
+                cacheStats.misses++;
+                res.setHeader('X-Cache', 'MISS');
+                attachWritersWithCache(res, key, cacheDuration);
 
-            // 使用 singleflight 限流构建逻辑，领导者负责缓存创写，跟随者等待
-            singleflight(`build:${key}`, async () => {}).catch(() => {
-                // 跟随者超时，容错直通主业务
+                let settled = false;
+                const settle = (err) => {
+                    if (settled) return;
+                    settled = true;
+                    if (!flightOwner?.entry) return;
+                    if (err) {
+                        const reason = err && err.message ? err.message : 'unknown';
+                        const logLevel = reason === 'response_aborted' ? 'warn' : 'error';
+                        const logMessage = reason === 'response_aborted'
+                            ? `[CACHE] SingleFlight 领导者响应在构建缓存时中断: ${req.originalUrl}`
+                            : `[CACHE] SingleFlight 领导者执行异常: ${req.originalUrl} -> ${reason}`;
+                        logger[logLevel](logMessage);
+                        if (flightOwner?.entry) {
+                            rejectSingleFlight(key, flightOwner.entry, err);
+                        }
+                    } else {
+                        if (flightOwner?.entry) {
+                            resolveSingleFlight(key, flightOwner.entry);
+                        }
+                    }
+                };
+
+                const finishHandler = () => settle();
+                const closeHandler = () => {
+                    if (!res.writableEnded) settle(new Error('response_aborted'));
+                };
+                const errorHandler = (err) => settle(err || new Error('response_error'));
+
+                res.once('finish', finishHandler);
+                res.once('close', closeHandler);
+                res.once('error', errorHandler);
+
                 next();
-            });
+            };
 
-            next();
+            const serveFromCache = async () => {
+                let cachedAfterLeader = await safeRedisGet(redis, key, '路由缓存等待后的读取');
+                if (!cachedAfterLeader) return false;
+                cacheStats.hits++;
+                // 将之前计入的 totalRequests 仍保留，缓存命中无需修改
+                res.setHeader('X-Cache', 'HIT');
+                try {
+                    const parsed = JSON.parse(cachedAfterLeader);
+                    if (parsed && parsed.__cached_envelope === 1) {
+                        replayEnvelope(res, parsed);
+                        return true;
+                    }
+                } catch (error) {
+                    logger.debug(`[CACHE] follower 解析缓存失败 ${key}: ${error && error.message}`);
+                }
+                res.setHeader('Content-Type', 'application/json; charset=utf-8');
+                res.setHeader('Cache-Control', cacheControlValue);
+                res.setHeader('Vary', 'Authorization');
+                res.send(cachedAfterLeader);
+                return true;
+            };
+
+            const waitAndServe = async (flightPromise) => {
+                try {
+                    await waitWithTimeout(flightPromise, SINGLE_FLIGHT_WAIT_TIMEOUT_MS);
+                    return await serveFromCache();
+                } catch (waitError) {
+                    logger.debug(`[CACHE] SingleFlight follower 等待失败 ${key}: ${waitError && waitError.message}`);
+                    return false;
+                }
+            };
+
+            const initialFlight = acquireSingleFlight(key);
+            if (!initialFlight.isLeader) {
+                res.setHeader('X-Cache', 'WAIT');
+                const served = await waitAndServe(initialFlight.promise);
+                if (served) {
+                    return;
+                }
+                // 等待失败或领导者未缓存，尝试成为新的领导者
+                rejectSingleFlight(key, initialFlight.entry, new Error('follower_retry'));
+                const retryFlight = acquireSingleFlight(key);
+                if (!retryFlight.isLeader) {
+                    // 极少数情况下仍无法成为领导者，直接放弃SingleFlight以保证可用性
+                    logger.debug(`[CACHE] SingleFlight follower 重试仍非领导者，直接回源 ${key}`);
+                    handleLeaderResponse(null);
+                    return;
+                }
+                handleLeaderResponse(retryFlight);
+                return;
+            }
+
+            handleLeaderResponse(initialFlight);
         } catch (err) {
             logger.debug(`缓存中间件出错 for key ${key}:`, err.message);
             next();

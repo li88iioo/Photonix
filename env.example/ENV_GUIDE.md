@@ -263,6 +263,20 @@
 - 代码引用：backend/services/settings.service.js
 - 示例：SETTINGS_REDIS_CACHE=true
 
+13) CACHE_SINGLEFLIGHT_WAIT_TIMEOUT_MS / CACHE_SINGLEFLIGHT_STALE_MS / CACHE_SINGLEFLIGHT_CLEANUP_INTERVAL_MS
+- 作用：控制路由缓存 SingleFlight 的等待/失效/清理节奏，保障缓存 miss 时只有一个请求回源
+- 默认值：10000 / 30000 / 60000
+- 取值/格式：正整数毫秒
+- 推荐配置方案：
+  - 小流量或开发：保持默认即可
+  - 高频热点接口：可将 WAIT_TIMEOUT 提升到 15000-20000，保证跟随者有足够时间等待领导者写入缓存
+  - 慢存储/高延迟环境：可将 STALE_MS 提高到 45000-60000，以免长任务被过早判定为失效
+- 风险：WAIT_TIMEOUT 过低会导致跟随者频繁放弃等待重新回源；STALE_MS 过高可能让挂死的领导者阻塞跟随者过久；CLEANUP_INTERVAL 过低则增加后台扫描开销
+- 代码引用：backend/middleware/cache.js（SingleFlight 控制）
+- 示例：CACHE_SINGLEFLIGHT_WAIT_TIMEOUT_MS=15000
+- 示例：CACHE_SINGLEFLIGHT_STALE_MS=45000
+- 示例：CACHE_SINGLEFLIGHT_CLEANUP_INTERVAL_MS=60000
+
 ---
 
 ### C. 可选（按场景启用）

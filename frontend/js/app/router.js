@@ -318,6 +318,8 @@ async function handleSearchRoute(navigation, pageSignal) {
  * @param {AbortSignal} pageSignal
  */
 async function handleBrowseRoute(navigation, pageSignal) {
+    const previousPath = state.currentBrowsePath;
+    const enhancedNavigation = { ...navigation, previousPath };
     state.currentSort = navigation.currentSortValue;
     state.currentBrowsePath = navigation.pathOnly;
     renderBreadcrumb(navigation.pathOnly);
@@ -331,7 +333,8 @@ async function handleBrowseRoute(navigation, pageSignal) {
         return;
     }
 
-    await streamPath(navigation.pathOnly, pageSignal);
+    await streamPath(navigation.pathOnly, pageSignal, enhancedNavigation);
+    enhancedNavigation.previousPath = navigation.pathOnly;
 
     try {
         setManagedTimeout(async () => {
@@ -342,7 +345,7 @@ async function handleBrowseRoute(navigation, pageSignal) {
             const allowRetry = !hasErrorState && !hasEmptyState;
             if (stillSameRoute && noRealContent && allowRetry) {
                 const retrySignal = AbortBus.next('page');
-                await streamPath(navigation.pathOnly, retrySignal);
+                await streamPath(navigation.pathOnly, retrySignal, enhancedNavigation);
             }
         }, ROUTER.ROUTE_RETRY_DELAY, 'route-retry-delay');
     } catch { }
@@ -448,9 +451,9 @@ async function renderRecentHistory(path, signal) {
  * @param {string} path 路径
  * @param {AbortSignal} signal
  */
-export async function streamPath(path, signal) {
+export async function streamPath(path, signal, navigation = null) {
     const requestStart = performance.now();
-    const prepareControl = await prepareForNewContent();
+    const prepareControl = await prepareForNewContent(navigation);
     state.isBrowseLoading = true;
     state.currentBrowsePage = 1;
     state.totalBrowsePages = 1;
@@ -476,6 +479,7 @@ export async function streamPath(path, signal) {
                 }
             },
             {
+                maxRetries: 0, // 重试交由 fetchBrowseResults 内部处理
                 context: { path, operation: 'streamPath' },
                 errorType: ErrorTypes.NETWORK,
                 errorSeverity: ErrorSeverity.MEDIUM,
@@ -629,6 +633,7 @@ async function executeSearch(query, signal) {
         const data = await executeAsync(
             () => fetchSearchResults(query, state.currentSearchPage, signal),
             {
+                maxRetries: 0, // 搜索接口重试统一在 fetchSearchResults 内处理
                 context: { query, operation: 'executeSearch' },
                 errorType: ErrorTypes.NETWORK,
                 errorSeverity: ErrorSeverity.MEDIUM,
@@ -734,9 +739,10 @@ async function executeSearch(query, signal) {
 
 /**
  * 准备新内容渲染，清理旧页面与状态，并处理loading效果。
+ * @param {Object} [navigation] - 导航上下文对象
  * @returns {Promise<{ cancelSkeleton():void }>} 控制对象
  */
-function prepareForNewContent() {
+function prepareForNewContent(navigation = null) {
     return new Promise(resolve => {
 
         // 1. 先清空内容，避免滚动时看到旧内容移动
@@ -751,16 +757,21 @@ function prepareForNewContent() {
         // 但不清除以下情况：
         // - 当前路径的位置（用于modal返回）
         // - 上级路径的位置（用于返回上级目录）
-        if (navigation && navigation.pathOnly && navigation.pathOnly !== state.currentBrowsePath) {
-            // 判断是否是返回上级目录
-            const isGoingBack = state.currentBrowsePath &&
-                state.currentBrowsePath.startsWith(navigation.pathOnly + '/');
+        if (navigation && navigation.pathOnly) {
+            const targetPath = navigation.pathOnly;
+            const previousPath = navigation.previousPath;
+            const pathChanged = !previousPath || targetPath !== previousPath;
 
-            // 只有前进到新页面时才清除，返回上级时保留
-            if (!isGoingBack) {
-                const newScrollPositions = new Map(state.scrollPositions);
-                newScrollPositions.delete(navigation.pathOnly);
-                state.scrollPositions = newScrollPositions;
+            if (pathChanged) {
+                // 判断是否是返回上级目录
+                const isGoingBack = previousPath && previousPath.startsWith(`${targetPath}/`);
+
+                // 只有前进到新页面时才清除，返回上级时保留
+                if (!isGoingBack) {
+                    const newScrollPositions = new Map(state.scrollPositions);
+                    newScrollPositions.delete(targetPath);
+                    state.scrollPositions = newScrollPositions;
+                }
             }
         }
 

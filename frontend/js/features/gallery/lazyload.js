@@ -677,16 +677,29 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
  * @param {HTMLImageElement} img
  * @param {boolean} fromQueue 是否来自队列
  */
-export function requestLazyImage(img) {
+export function requestLazyImage(img, options = {}) {
     const thumbnailUrl = img.dataset.src;
     if (!thumbnailUrl || thumbnailUrl.includes('undefined') || thumbnailUrl.includes('null')) {
         lazyloadLogger.error('懒加载失败: 无效的图片URL', { thumbnailUrl });
         img.dispatchEvent(new Event('error'));
         return;
     }
-    // 已加载或已有真实 src 不重复请求
-    if (safeClassList(img, 'contains', 'loaded')) return;
-    if (img.src && !img.src.startsWith('data:') && !img.src.startsWith('blob:')) return;
+    const forceReload = Boolean(options && options.force);
+    if (forceReload) {
+        safeClassList(img, 'remove', 'loaded');
+        safeClassList(img, 'remove', 'error');
+        if (img.src && !img.src.startsWith('data:') && !img.src.startsWith('blob:')) {
+            try {
+                img.removeAttribute('src');
+            } catch {
+                img.src = '';
+            }
+        }
+    } else {
+        // 已加载或已有真实 src 不重复请求
+        if (safeClassList(img, 'contains', 'loaded')) return;
+        if (img.src && !img.src.startsWith('data:') && !img.src.startsWith('blob:')) return;
+    }
     // 处理快速加载标记
     if (img.dataset.wasLoaded === 'true') {
         delete img.dataset.wasLoaded;
