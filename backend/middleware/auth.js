@@ -75,6 +75,12 @@ module.exports = async function (req, res, next) {
 
         // 6. 获取 Token
         let token = req.header('Authorization')?.replace('Bearer ', '');
+        if (!token) {
+            const queryToken = req.query?.access_token || req.query?.token;
+            if (typeof queryToken === 'string' && queryToken.trim()) {
+                token = queryToken.trim();
+            }
+        }
 
         // 7. 处理公开访问模式
         if (isPublicAccessAllowed && isPublicResource && !token) {

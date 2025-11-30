@@ -155,60 +155,21 @@ const blobCleanupInterval = setInterval(() => {
  * 统一资源清理管理器
  * 管理所有懒加载相关的资源清理
  */
-const resourceCleanupManager = {
-    /** @type {Set<Object>} 存储所有需要清理的资源 */
-    resources: new Set(),
-    /** @type {Set<number>} 定时器引用 */
-    timers: new Set(),
+const managedTimers = new Set();
 
-    /**
-     * 注册需要清理的资源
-     * @param {Object} resource 资源对象，包含 cleanup 方法
-     */
-    register(resource) {
-        this.resources.add(resource);
-    },
+function trackManagedTimer(timerId) {
+    if (timerId == null) return timerId;
+    managedTimers.add(timerId);
+    return timerId;
+}
 
-    /**
-     * 注册定时器
-     * @param {number} timerId setTimeout/setInterval 的返回值
-     */
-    registerTimer(timerId) {
-        this.timers.add(timerId);
-    },
-
-    /**
-     * 清理所有资源
-     */
-    cleanup() {
-        for (const resource of this.resources) {
-            try {
-                if (resource && typeof resource.cleanup === 'function') {
-                    resource.cleanup();
-                }
-            } catch (error) {
-                lazyloadLogger.warn('清理资源时出错', error);
-            }
-        }
-        for (const timerId of this.timers) {
-            try {
-                clearTimeout(timerId);
-                clearInterval(timerId);
-            } catch (error) {
-                // 忽略清理错误
-            }
-        }
-        this.timers.clear();
-    },
-
-    /**
-     * 销毁管理器
-     */
-    destroy() {
-        this.cleanup();
-        this.resources.clear();
+function clearManagedTimers() {
+    for (const timerId of managedTimers) {
+        clearTimeout(timerId);
+        clearInterval(timerId);
     }
-};
+    managedTimers.clear();
+}
 
 /**
  * 图片观察器资源对象，用于清理全局 IntersectionObserver
@@ -224,22 +185,24 @@ const imageObserverResource = {
     }
 };
 
-// 注册现有的清理资源
-resourceCleanupManager.register(blobUrlManager);
-resourceCleanupManager.register(imageObserverResource);
+function cleanupLazyloadResources() {
+    clearManagedTimers();
+    blobUrlManager.cleanupAll();
+    imageObserverResource.cleanup();
+}
 
 // 注册定时器到资源清理管理器
-resourceCleanupManager.registerTimer(blobCleanupInterval);
+trackManagedTimer(blobCleanupInterval);
 
 /** 导出资源清理相关对象 */
-export { blobUrlManager, resourceCleanupManager };
+export { blobUrlManager };
 
 // 将 blob URL 管理器暴露到全局 window 对象，供 SSE 等其他模块使用
 if (typeof window !== 'undefined') {
     window.blobUrlManager = blobUrlManager;
     // 页面卸载时清理所有资源
     window.addEventListener('beforeunload', () => {
-        resourceCleanupManager.cleanup();
+        cleanupLazyloadResources();
         // 清理虚拟滚动懒加载器
         if (window.virtualScrollLazyLoader) {
             window.virtualScrollLazyLoader.cleanup();
@@ -279,7 +242,7 @@ function handleImageLoad(event) {
                     indicator.remove();
                 }
             }, 3000);
-            resourceCleanupManager.registerTimer(indicatorTimeoutId);
+            trackManagedTimer(indicatorTimeoutId);
         }
         return;
     }
@@ -455,7 +418,7 @@ function scheduleSlowProcessingRetry(img) {
         requestLazyImage(img);
     }, delay);
     img.dataset.slowRetryTimerId = String(timerId);
-    resourceCleanupManager.registerTimer(timerId);
+    trackManagedTimer(timerId);
 }
 
 /**
@@ -526,7 +489,7 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
                         requestLazyImage(img);
                     }
                 }, delay);
-                resourceCleanupManager.registerTimer(retryTimeoutId);
+                trackManagedTimer(retryTimeoutId);
             } else {
                 // 达到最大重试次数，但不立即标记为失败，可能还在生成
                 lazyloadLogger.warn('缩略图生成超时，已达最大重试次数，将降低重试频率', { thumbnailUrl });
@@ -540,7 +503,7 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
                             requestLazyImage(img);
                         }
                     }, 30000); // 30秒间隔
-                    resourceCleanupManager.registerTimer(finalRetryTimeoutId);
+                    trackManagedTimer(finalRetryTimeoutId);
                 } else {
                     delete img.dataset.retryAttempt;
                     delete img.dataset.finalRetryAttempt;
@@ -557,7 +520,7 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
                 if (!img.isConnected) return;
                 requestLazyImage(img);
             }, delay);
-            resourceCleanupManager.registerTimer(retryTimeoutId);
+            trackManagedTimer(retryTimeoutId);
             return;
         }
         
@@ -577,7 +540,7 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
                         requestLazyImage(img);
                     }
                 }, delay);
-                resourceCleanupManager.registerTimer(retryTimeoutId);
+                trackManagedTimer(retryTimeoutId);
                 return;
             } else {
                 lazyloadLogger.warn('缩略图未找到，已达最大重试次数', { thumbnailUrl });
@@ -615,7 +578,7 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
                         requestLazyImage(img);
                     }
                 }, delay);
-                resourceCleanupManager.registerTimer(retryTimeoutId);
+                trackManagedTimer(retryTimeoutId);
                 return;
             }
             
@@ -639,7 +602,7 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
                     requestLazyImage(img);
                 }
             }, delay);
-            resourceCleanupManager.registerTimer(retryTimeoutId);
+            trackManagedTimer(retryTimeoutId);
             return;
         }
         
@@ -660,7 +623,7 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
                         requestLazyImage(img);
                     }
                 }, delay);
-                resourceCleanupManager.registerTimer(retryTimeoutId);
+                trackManagedTimer(retryTimeoutId);
                 return;
             }
             
@@ -817,7 +780,7 @@ export function restorePageLazyState(pageKey) {
             const layoutTimeoutId = setTimeout(() => {
                 triggerMasonryUpdate();
             }, 50);
-            resourceCleanupManager.registerTimer(layoutTimeoutId);
+            trackManagedTimer(layoutTimeoutId);
         });
         return true;
     }
@@ -858,7 +821,7 @@ function getOrCreateImageObserver() {
                 const cleanupTimeoutId = setTimeout(() => {
                     img._processingLazyLoad = false;
                 }, 100);
-                resourceCleanupManager.registerTimer(cleanupTimeoutId);
+                trackManagedTimer(cleanupTimeoutId);
             }
         });
     }, {

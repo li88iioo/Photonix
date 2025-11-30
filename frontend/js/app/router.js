@@ -35,7 +35,6 @@ import {
 } from '../features/gallery/loading-states.js';
 import { routerLogger } from '../core/logger.js';
 import { safeSetInnerHTML, safeGetElementById, safeClassList, safeSetStyle } from '../shared/dom-utils.js';
-import { executeAsync, ErrorTypes, ErrorSeverity } from '../core/error-handler.js';
 import { showNotification } from '../shared/utils.js';
 import { setManagedTimeout } from '../core/timer-manager.js';
 import { CACHE, ROUTER } from '../core/constants.js';
@@ -466,34 +465,7 @@ export async function streamPath(path, signal, navigation = null) {
     }
 
     try {
-        const data = await executeAsync(
-            async () => {
-                try {
-                    const browseData = await fetchBrowseResults(path, state.currentBrowsePage, signal);
-                    return browseData;
-                } catch (fetchError) {
-                    if (fetchError?.code === 'ALBUM_NOT_FOUND') {
-                        throw fetchError;
-                    }
-                    throw fetchError;
-                }
-            },
-            {
-                maxRetries: 0, // 重试交由 fetchBrowseResults 内部处理
-                context: { path, operation: 'streamPath' },
-                errorType: ErrorTypes.NETWORK,
-                errorSeverity: ErrorSeverity.MEDIUM,
-                onError: (error, ctx) => {
-                    if (error?.code === 'ALBUM_NOT_FOUND') {
-                        throw error;
-                    }
-                    routerLogger.warn(`路径流式加载失败 (尝试 ${ctx.attempt})`, {
-                        path,
-                        error: error.message
-                    });
-                }
-            }
-        );
+        const data = await fetchBrowseResults(path, state.currentBrowsePage, signal);
 
         if (!data || signal.aborted || AbortBus.get('page') !== signal || getPathOnlyFromHash() !== path) return;
 
@@ -602,10 +574,12 @@ export async function streamPath(path, signal, navigation = null) {
             state.isBrowseLoading = false;
             return;
         }
-        if (error.name !== 'AbortError') {
-            showNetworkError();
+        if (error.name === 'AbortError') {
             return;
         }
+        routerLogger.warn('路径流式加载失败', { path, error: error.message });
+        showNetworkError();
+        return;
     } finally {
         state.isBrowseLoading = false;
         if (!safeClassList(elements.contentGrid, 'contains', 'error-container')) {
@@ -630,21 +604,7 @@ async function executeSearch(query, signal) {
     removeSortControls();
 
     try {
-        const data = await executeAsync(
-            () => fetchSearchResults(query, state.currentSearchPage, signal),
-            {
-                maxRetries: 0, // 搜索接口重试统一在 fetchSearchResults 内处理
-                context: { query, operation: 'executeSearch' },
-                errorType: ErrorTypes.NETWORK,
-                errorSeverity: ErrorSeverity.MEDIUM,
-                onError: (error, ctx) => {
-                    routerLogger.warn(`搜索请求失败 (尝试 ${ctx.attempt})`, {
-                        query,
-                        error: error.message
-                    });
-                }
-            }
-        );
+        const data = await fetchSearchResults(query, state.currentSearchPage, signal);
 
         const searchPathKey = `search?q=${query}`;
         if (signal.aborted || AbortBus.get('page') !== signal) return;
@@ -718,15 +678,16 @@ async function executeSearch(query, signal) {
             adjustScrollOptimization(searchPathKey);
         }, 50, 'search-layout-post-render');
     } catch (error) {
-        if (error.name !== 'AbortError') {
-            routerLogger.error("执行搜索失败", error);
-            if (error.message && error.message.includes('搜索索引正在构建中')) {
-                showIndexBuildingError();
-            } else {
-                showNetworkError();
-            }
+        if (error.name === 'AbortError') {
             return;
         }
+        routerLogger.warn('搜索请求失败', { query, error: error.message });
+        if (error.message && error.message.includes('搜索索引正在构建中')) {
+            showIndexBuildingError();
+        } else {
+            showNetworkError();
+        }
+        return;
     } finally {
         state.isSearchLoading = false;
         if (!safeClassList(elements.contentGrid, 'contains', 'error-container')) {

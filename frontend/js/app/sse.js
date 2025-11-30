@@ -6,7 +6,7 @@
  */
 
 import { registerThumbnailBuffer } from '../core/event-buffer.js';
-import { getAuthToken } from './auth.js';
+import { getAuthToken, clearAuthToken } from './auth.js';
 import { triggerMasonryUpdate } from '../features/gallery/masonry.js';
 import { createModuleLogger } from '../core/logger.js';
 import { safeClassList, safeQuerySelectorAll } from '../shared/dom-utils.js';
@@ -19,7 +19,6 @@ const sseLogger = createModuleLogger('SSE');
 
 // 活动连接与重连相关变量
 let eventSource = null;
-let streamAbortController = null;
 let retryCount = 0;
 
 // 日志函数
@@ -162,10 +161,6 @@ function clearActiveConnection() {
         try { eventSource.close(); } catch { }
     }
     eventSource = null;
-    if (streamAbortController) {
-        try { streamAbortController.abort(); } catch { }
-    }
-    streamAbortController = null;
 }
 
 /**
@@ -219,136 +214,45 @@ function dispatchSseEvent(evtType, payload) {
  * 解析原始 SSE 事件字符串并分发
  * @param {string} rawEvent - 原始事件字符串
  */
-function parseAndDispatch(rawEvent) {
-    const lines = rawEvent.split(/\r?\n/);
-    let eventType = 'message';
-    let dataLines = [];
-    for (const line of lines) {
-        if (!line) continue;
-        if (line.startsWith(':')) continue;
-        if (line.startsWith('event:')) {
-            eventType = line.slice(6).trim() || 'message';
-            continue;
-        }
-        if (line.startsWith('data:')) {
-            dataLines.push(line.slice(5).trim());
-        }
-    }
-
-    if (dataLines.length === 0) {
-        // 即使没有数据，如果是特定事件类型，也可能需要分发（视具体业务而定，目前保持原逻辑）
-        // 但为了安全起见，避免分发 undefined
-        if (eventType !== 'message') {
-            dispatchSseEvent(eventType, null);
-        }
-        return;
-    }
-
-    const rawData = dataLines.join('\n');
-
-    // 针对 Firefox 可能出现的空对象字符串 "{}" 或 "[]" 做预处理不是必须的，
-    // 但 try-catch 是必须的。
-    try {
-        // 尝试解析 JSON
-        const parsed = JSON.parse(rawData);
-        dispatchSseEvent(eventType, parsed);
-    } catch (error) {
-        // 仅在非空数据解析失败时记录警告，避免干扰正常日志
-        if (rawData.trim().length > 0) {
-            sseWarn('解析 SSE 数据失败:', error, 'Raw Data:', rawData.substring(0, 100));
-        }
-    }
-}
-
-/**
- * 建立带认证的流式 SSE 连接
- * @param {string} token - 认证令牌
- * @returns {Promise<void>}
- */
-async function streamWithAuth(token) {
-    streamAbortController = new AbortController();
-    const controller = streamAbortController;
-    const decoder = new TextDecoder('utf-8');
-    let buffer = '';
-
-    try {
-        const response = await fetch('/api/events', {
-            headers: { 'Authorization': `Bearer ${token}` },
-            cache: 'no-store',
-            signal: controller.signal,
-        });
-
-        // 检测到 401（认证失败）时，清除本地无效 token 并触发登录流程，不再尝试重连
-        if (response.status === 401) {
-            sseLog('SSE 认证失败（401），清除无效 token');
-            localStorage.removeItem('photonix_auth_token');
-            // 触发 auth:required 事件，通知应用显示登录页
-            window.dispatchEvent(new CustomEvent('auth:required'));
-            return; // 停止重试
-        }
-
-        if (!response.ok || !response.body) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-
-        retryCount = 0;
-        sseLog('SSE 认证流已建立');
-
-        const reader = response.body.getReader();
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            if (controller.signal.aborted) return;
-            buffer += decoder.decode(value, { stream: true });
-            let boundary = buffer.indexOf('\n\n');
-            while (boundary !== -1) {
-                const chunk = buffer.slice(0, boundary);
-                buffer = buffer.slice(boundary + 2);
-                if (chunk.trim().length > 0) {
-                    parseAndDispatch(chunk);
-                }
-                boundary = buffer.indexOf('\n\n');
-            }
-        }
-        buffer += decoder.decode();
-        if (buffer.trim().length > 0) {
-            parseAndDispatch(buffer);
-        }
-        scheduleReconnect();
-    } catch (error) {
-        if (!controller.signal.aborted) {
-            sseError('SSE 认证流错误:', error);
-            scheduleReconnect();
-        }
-    } finally {
-        if (!controller.signal.aborted) {
-            controller.abort();
-        }
-    }
-}
-
-/**
- * 建立带认证的 SSE 连接
- * @param {string} token - 认证令牌
- */
-function connectWithAuth(token) {
-    streamWithAuth(token);
-}
-
-/**
- * 建立到后端的 SSE 连接，包含自动重连和认证逻辑
- */
-function connect() {
-    clearActiveConnection();
-
+function buildEventsUrl() {
     const token = getAuthToken();
-    if (token) {
-        connectWithAuth(token);
+    if (!token) return '/api/events';
+    const params = new URLSearchParams();
+    params.set('access_token', token);
+    return `/api/events?${params.toString()}`;
+}
+
+async function verifySseAuthorization(token) {
+    try {
+        const response = await fetch('/api/events/status', {
+            headers: { 'Authorization': `Bearer ${token}` },
+            cache: 'no-store'
+        });
+        if (response.status === 401) {
+            sseLog('SSE 授权校验失败，触发重新登录');
+            clearAuthToken();
+            window.dispatchEvent(new CustomEvent('auth:required'));
+            return false;
+        }
+        if (!response.ok) {
+            sseWarn('SSE 授权状态检查失败', { status: response.status });
+        }
+        return true;
+    } catch (error) {
+        sseWarn('SSE 授权校验异常', error);
+        return true;
+    }
+}
+
+function startEventSource() {
+    const url = buildEventsUrl();
+    try {
+        eventSource = new EventSource(url);
+    } catch (error) {
+        sseError('创建 EventSource 失败', error);
+        scheduleReconnect();
         return;
     }
-
-    const url = '/api/events';
-    eventSource = new EventSource(url);
 
     eventSource.onopen = () => {
         retryCount = 0;
@@ -378,6 +282,29 @@ function connect() {
             sseError('解析 thumbnail-generated 事件失败:', error);
         }
     });
+}
+
+/**
+ * 建立到后端的 SSE 连接，包含自动重连和认证逻辑
+ */
+function connect() {
+    clearActiveConnection();
+
+    const token = getAuthToken();
+    if (token) {
+        verifySseAuthorization(token)
+            .then((authorized) => {
+                if (!authorized) return;
+                startEventSource();
+            })
+            .catch((error) => {
+                sseWarn('SSE 授权校验出错，继续尝试连接', error);
+                startEventSource();
+            });
+        return;
+    }
+
+    startEventSource();
 }
 
 /**
