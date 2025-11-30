@@ -197,6 +197,24 @@ function shouldUseRedisForRateLimit() {
   return isRedisAvailable() && (process.env.RATE_LIMIT_USE_REDIS || 'false').toLowerCase() === 'true';
 }
 
+async function waitForRedisReady(timeoutMs = 5000) {
+  if (!WANT_REDIS) {
+    return false;
+  }
+  if (__redisReady && realRedis) {
+    return true;
+  }
+  const start = Date.now();
+  const pollInterval = Math.min(200, Math.max(50, Number(process.env.REDIS_READY_POLL_INTERVAL_MS || 100)));
+  while (Date.now() - start < timeoutMs) {
+    if (__redisReady && realRedis) {
+      return true;
+    }
+    await new Promise(resolve => setTimeout(resolve, pollInterval));
+  }
+  return __redisReady && !!realRedis;
+}
+
 module.exports = {
   /**
    * Redis 客户端实例（KV 读写通用，含 No-Op 回退）
@@ -229,4 +247,8 @@ module.exports = {
    * 判断是否启用 Redis 限流
    */
   shouldUseRedisForRateLimit,
+  /**
+   * 等待 Redis 就绪
+   */
+  waitForRedisReady,
 };

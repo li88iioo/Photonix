@@ -38,126 +38,8 @@ if (enableMemoryMonitoring) {
 }
 
 // ======== 请求频率控制参数区 ========
-/** 智能限流：单窗口请求计数器 */
-const requestCounter = new Map();
 /** 批量补全频率限制Map */
 const batchThrottleMap = new Map();
-const REQUEST_WINDOW_MS = 1000;                // 1秒时间窗口
-const BASE_REQUESTS_PER_WINDOW = 100;          // 默认单窗口最大请求数
-const BURST_MULTIPLIER = 3.0;                  // 突发流量允许倍数
-const NORMAL_BURST_DURATION = 5000;            // 突发时长(毫秒)
-let currentMaxRequests = BASE_REQUESTS_PER_WINDOW;
-let lastAdjustmentTime = 0;
-const ADJUSTMENT_COOLDOWN = 30000;             // 30秒动态调整冷却
-
-/** 记录窗口内所有请求时间，为突发流量判定做准备 */
-let recentRequestTimes = [];
-let burstModeStartTime = 0;
-let isInBurstMode = false;
-
-/** 日志抑制机制，减少重复警告输出 */
-let lastRateLimitLogTime = 0;
-let lastRejectionLogTime = 0;
-const LOG_SUPPRESSION_MS = 5000; // 5秒同类日志只输出一次
-
-/**
- * 检查请求频率是否超限（支持突发判定，智能动态调节）。
- * @param {object} req Express请求对象（用于判定是否为重试请求）
- * @returns {boolean} 若允许请求则返回true，否则返回false。
- */
-function checkRequestRate(req = null) {
-    const now = Date.now();
-    const windowStart = now - REQUEST_WINDOW_MS;
-
-    // 清理窗口外旧计数
-    for (const [timestamp] of requestCounter) {
-        if (timestamp < windowStart) {
-            requestCounter.delete(timestamp);
-        }
-    }
-
-    // 清理过期的请求时间（用于突发检测，保留5s内数据）
-    recentRequestTimes = recentRequestTimes.filter(time => now - time < 5000);
-
-    // 统计当前窗口内请求数
-    let currentRequests = 0;
-    for (const count of requestCounter.values()) {
-        currentRequests += count;
-    }
-
-    // 记录本次请求发生时间
-    recentRequestTimes.push(now);
-
-    // 判断是否进入或离开突发模式
-    const recentRequests = recentRequestTimes.length;
-    const burstThreshold = Math.max(25, currentMaxRequests * 0.6);
-
-    if (recentRequests > burstThreshold && !isInBurstMode) {
-        isInBurstMode = true;
-        burstModeStartTime = now;
-        logger.debug(`${LOG_PREFIXES.FREQUENCY_CONTROL} 进入突发模式，最近5秒${recentRequests}请求 (阈值: ${burstThreshold})`);
-    } else if (isInBurstMode && (now - burstModeStartTime > NORMAL_BURST_DURATION)) {
-        isInBurstMode = false;
-        logger.debug(`${LOG_PREFIXES.FREQUENCY_CONTROL} 退出突发模式`);
-    }
-
-    // 限制计数器大小，防止内存泄漏
-    if (requestCounter.size > 20) {
-        const keys = Array.from(requestCounter.keys()).sort();
-        const keysToDelete = keys.slice(0, keys.length - 20);
-        keysToDelete.forEach(key => requestCounter.delete(key));
-    }
-
-    // 动态自适应调节阈值
-    if (now - lastAdjustmentTime > ADJUSTMENT_COOLDOWN) {
-        const avgRequestsPerSecond = recentRequests / 5;
-        if (avgRequestsPerSecond > 30 && currentMaxRequests < BASE_REQUESTS_PER_WINDOW * 1.5) {
-            currentMaxRequests = Math.min(currentMaxRequests + 10, BASE_REQUESTS_PER_WINDOW * 1.5);
-            lastAdjustmentTime = now;
-            logger.debug(`${LOG_PREFIXES.FREQUENCY_CONTROL} 动态增加限制到: ${currentMaxRequests}`);
-        } else if (avgRequestsPerSecond < 10 && currentMaxRequests > BASE_REQUESTS_PER_WINDOW * 0.8) {
-            currentMaxRequests = Math.max(currentMaxRequests - 5, BASE_REQUESTS_PER_WINDOW * 0.8);
-            lastAdjustmentTime = now;
-            logger.debug(`${LOG_PREFIXES.FREQUENCY_CONTROL} 动态减少限制到: ${currentMaxRequests}`);
-        }
-    }
-
-    // 根据是否突发模式切换实际限流值
-    let effectiveLimit;
-    if (isInBurstMode) {
-        effectiveLimit = Math.round(currentMaxRequests * BURST_MULTIPLIER);
-    } else {
-        effectiveLimit = currentMaxRequests;
-    }
-
-    // 针对重试请求给予更宽松限流
-    const isRetryRequest = req?.headers?.['x-thumbnail-retry'] === 'true';
-    if (isRetryRequest) {
-        effectiveLimit += 5;
-    }
-
-    // 超限时判定
-    if (currentRequests >= effectiveLimit) {
-        const now = Date.now();
-        if (now - lastRateLimitLogTime > LOG_SUPPRESSION_MS) {
-            logger.debug(`${LOG_PREFIXES.FREQUENCY_CONTROL} 请求频率较高: ${currentRequests}/${effectiveLimit} (${isInBurstMode ? '突发模式' : '正常模式'})`);
-            lastRateLimitLogTime = now;
-        }
-        if (isInBurstMode && currentRequests < effectiveLimit * 1.5) {
-            // 突发模式允许部分超限
-        } else if (!isInBurstMode) {
-            return false;
-        } else {
-            return false;
-        }
-    }
-
-    // 记录本秒请求
-    const currentSecond = Math.floor(now / 1000) * 1000;
-    requestCounter.set(currentSecond, (requestCounter.get(currentSecond) || 0) + 1);
-
-    return true;
-}
 
 /**
  * 获取（按需生成）单个缩略图。
@@ -167,21 +49,6 @@ function checkRequestRate(req = null) {
  */
 async function getThumbnail(req, res) {
     try {
-        if (!checkRequestRate(req)) {
-            const now = Date.now();
-            if (now - lastRejectionLogTime > LOG_SUPPRESSION_MS) {
-                logger.debug(`${LOG_PREFIXES.THUMB_REQUEST} 请求频率过高，暂时拒绝`);
-                lastRejectionLogTime = now;
-            }
-            const errorSvg = generateErrorSvg();
-            res.set({
-                'Content-Type': 'image/svg+xml',
-                'Cache-Control': 'no-cache',
-                'X-Rate-Limit': 'exceeded'
-            });
-            return res.status(429).send(errorSvg);
-        }
-
         const { path: relativePath } = req.query;
 
         // 节流打印缩略图日志
@@ -518,7 +385,8 @@ function generateErrorSvg() {
 module.exports = {
     getThumbnail,
     batchGenerateThumbnails,
-    getThumbnailStats
+    getThumbnailStats,
+    generateErrorSvg
 };
 async function purgeOrphanMedia(pathValue) {
     const cleanPath = typeof pathValue === 'string' ? pathValue.trim() : '';

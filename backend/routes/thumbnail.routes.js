@@ -3,8 +3,10 @@
  * 处理缩略图生成和获取相关的API请求
  */
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const router = express.Router();
 const thumbnailController = require('../controllers/thumbnail.controller');
+const { generateErrorSvg } = thumbnailController;
 const { validate, Joi, asyncHandler } = require('../middleware/validation');
 const { cache } = require('../middleware/cache');
 const { requirePermission, PERMISSIONS } = require('../middleware/permissions');
@@ -20,6 +22,28 @@ const adaptQueryPathToBody = (req, res, next) => {
 };
 
 const validatePath = require('../middleware/pathValidator');
+
+const thumbnailRateLimiter = rateLimit({
+    windowMs: Math.max(500, Number(process.env.THUMBNAIL_RATE_WINDOW_MS || 1000)),
+    max: Math.max(30, Number(process.env.THUMBNAIL_RATE_MAX_REQUESTS || 120)),
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+        if (req.user && req.user.id) {
+            return `user:${req.user.id}`;
+        }
+        return req.ip || req.headers['x-forwarded-for'] || 'anonymous';
+    },
+    handler: (_req, res) => {
+        const errorSvg = generateErrorSvg();
+        res.set({
+            'Content-Type': 'image/svg+xml',
+            'Cache-Control': 'no-cache',
+            'X-Rate-Limit': 'exceeded'
+        });
+        res.status(429).send(errorSvg);
+    }
+});
 
 // 缩略图获取路由
 // 根据查询参数中的文件路径生成或获取对应的缩略图
@@ -40,6 +64,7 @@ const thumbQuerySchema = Joi.object({
 // 缩略图获取路由 - 需要查看权限
 // 验证流程：Joi schema → adaptQueryPathToBody → validatePath → cache → controller
 router.get('/',
+    thumbnailRateLimiter,
     validate(thumbQuerySchema, 'query'),
     adaptQueryPathToBody,
     validatePath('body'),
