@@ -1,15 +1,16 @@
 /**
- * @file Express 应用主配置文件
+ * @file app.js
  * @module app
  * @author Photonix
  * @version 1.0.0
- * @description
- * 主要职责:
- * 1. 创建并配置 Express 应用实例
- * 2. 配置全局中间件: JSON 解析、安全、请求追踪等
- * 3. 配置静态资源（原图/缩略图/前端打包）
- * 4. 注册 API 路由及认证/限流中间件
- * 5. 健康检查、404 和全局错误处理
+ * @description Express 主应用配置
+ * 
+ * 职责：
+ * 1. 创建与配置 Express 应用实例
+ * 2. 注册全局中间件（如安全、JSON 解析、请求追踪等）
+ * 3. 提供静态资源服务（原图、缩略图、前端构建产物）
+ * 4. 注册 API 路由及相关中间件（认证、限流等）
+ * 5. 健康检查、404 及全局错误处理
  */
 
 const express = require('express');
@@ -25,21 +26,41 @@ const authMiddleware = require('./middleware/auth');
 const authRouter = require('./routes/auth.routes');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 
+const HEALTH_CACHE_TTL_MS = Number(process.env.HEALTH_CACHE_TTL_MS || 30000);
+let healthCache = { snapshot: null, expiresAt: 0 };
+let pendingHealthCheckPromise = null;
+
+function parseWorkerList(value, fallback = []) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+        return value.split(',').map((name) => name.trim()).filter(Boolean);
+    }
+    return fallback;
+}
+
+const REQUIRED_WORKERS = new Set(parseWorkerList(process.env.HEALTH_REQUIRED_WORKERS, ['indexing']));
+const OPTIONAL_WORKERS = new Set(
+    parseWorkerList(process.env.HEALTH_OPTIONAL_WORKERS, ['settings', 'video'])
+        .filter((name) => !REQUIRED_WORKERS.has(name))
+);
+
 /**
- * @const {express.Application} app Express 应用实例
+ * @constant {express.Application} app Express 应用实例
  */
 const app = express();
 
-// ========== 中间件配置 ==========
+/* =========================
+   中间件配置
+   ========================= */
 
 /**
- * 设置信任代理, 以便在反向代理后获取真实客户端 IP
+ * 配置代理信任，用于获取真实客户端 IP。
  */
 app.set('trust proxy', 1);
 
 /**
- * 配置安全头。对于 CSP、COOP 和 O-AC，仅在需要时按请求动态设置，
- * 默认由前置反代/网关控制。
+ * 安全相关 HTTP 头设置。
+ * - CSP 依据 ENV 动态启用；
+ * - COOP, O-AC 另由自定义中间件动态设置（下方）。
  */
 const ENABLE_APP_CSP = (process.env.ENABLE_APP_CSP || 'false').toLowerCase() === 'true';
 app.use(helmet({
@@ -54,16 +75,16 @@ app.use(helmet({
             connectSrc: ["'self'"],
             objectSrc: ["'none'"],
             frameAncestors: ["'self'"],
-            upgradeInsecureRequests: null
-        }
+            upgradeInsecureRequests: null,
+        },
     } : false,
     crossOriginOpenerPolicy: false,
-    originAgentCluster: false
+    originAgentCluster: false,
 }));
 
 /**
- * 动态设置 Cross-Origin-Opener-Policy & Origin-Agent-Cluster
- * 只在 HTTPS 或 localhost 环境下设置，避免内网 HTTP 警告
+ * 动态设置 Cross-Origin-Opener-Policy/Origin-Agent-Cluster。
+ * 仅当 HTTPS 或 localhost 时设置。
  */
 app.use((req, res, next) => {
     try {
@@ -71,13 +92,10 @@ app.use((req, res, next) => {
         const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
         const forwardedProto = (req.headers['x-forwarded-proto'] || '').toString().toLowerCase();
         const isSecure = req.secure || forwardedProto === 'https';
-
         if (isSecure || isLocalhost) {
-            // 可信请求设置 COOP 和 O-AC
             res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
             res.setHeader('Origin-Agent-Cluster', '?1');
         } else {
-            // 非可信环境下移除
             res.removeHeader('Cross-Origin-Opener-Policy');
             res.removeHeader('Origin-Agent-Cluster');
         }
@@ -88,119 +106,129 @@ app.use((req, res, next) => {
 });
 
 /**
- * 请求 ID 与分布式追踪中间件
+ * 请求追踪与分布式 Trace。
  */
 app.use(requestId());
 app.use(traceMiddleware);
 
 /**
- * JSON 请求体解析，大小限制为 1MB
+ * JSON 请求体解析，限制体积 1MB。
  */
 app.use(express.json({ limit: '1mb' }));
 
 /**
- * 条件 Gzip 压缩，仅针对 JSON 内容且 ≥2KB。未安装 compression 时警告但不阻断。
+ * 有条件启用 Gzip 压缩，仅压缩 ≥2KB 且类型为 JSON 的响应。
+ * 未安装依赖时仅报警告。
  */
 try {
     const compression = require('compression');
-    app.use(compression({
-        threshold: 2048,
-        filter: (req, res) => {
-            if (!compression.filter(req, res)) {
-                return false;
-            }
-            try {
-                const explicitType = res.getHeader('Content-Type');
-                if (explicitType) {
-                    return /application\/json/i.test(String(explicitType));
+    app.use(
+        compression({
+            threshold: 2048,
+            filter: (req, res) => {
+                if (!compression.filter(req, res)) return false;
+                try {
+                    const explicitType = res.getHeader('Content-Type');
+                    if (explicitType) return /application\/json/i.test(String(explicitType));
+                    const acceptHeader = req.headers['accept'];
+                    if (typeof acceptHeader === 'string' && acceptHeader.length > 0)
+                        return /application\/json|\*\//i.test(acceptHeader);
+                    return true;
+                } catch (error) {
+                    logger.debug('检查Content-Type失败', { error: error.message });
+                    return true;
                 }
-                const acceptHeader = req.headers['accept'];
-                if (typeof acceptHeader === 'string' && acceptHeader.length > 0) {
-                    return /application\/json|\*\//i.test(acceptHeader);
-                }
-                return true;
-            } catch (error) {
-                logger.debug('检查Content-Type失败', { error: error.message });
-                return true;
-            }
-        }
-    }));
+            },
+        })
+    );
 } catch (error) {
     logger.warn('Compression中间件加载失败，使用未压缩模式', { error: error.message });
 }
 
-// ========== API 路由配置 ==========
+/* =========================
+   API 路由配置
+   ========================= */
 
 /**
- * 认证相关路由（无需认证）
+ * 认证相关接口（不需登录）
+ * 路径前缀：/api/auth
  */
 app.use('/api/auth', authRouter);
 
 /**
- * 受保护的 API 路由，依次经过限流、认证、总路由
+ * 其他 API（需登录、限流、再到主路由）
+ * 路径前缀：/api
  */
 app.use('/api', rateLimiterMiddleware, authMiddleware, mainRouter);
 
-// ========== 静态文件服务 ==========
+/* =========================
+   静态文件服务
+   ========================= */
 
 /**
- * @section 照片原图静态服务
- * 路径: /static
- * 位置: PHOTOS_DIR
- * 支持多媒体类型：图片(jpeg/png/webp/gif), 视频(mp4/webm/mov)
- * 缓存策略：30 天
+ * 原图静态资源服务
+ * 路径：/static
+ * 目录：PHOTOS_DIR
+ * 类型：图片、视频
+ * 缓存：30 天
  */
-app.use('/static', express.static(PHOTOS_DIR, {
-    maxAge: '30d',
-    etag: true,
-    lastModified: true,
-    acceptRanges: true,
-    setHeaders: (res, filePath) => {
-        if (/\.(jpe?g|png|webp|gif|mp4|webm|mov)$/i.test(filePath)) {
-            res.setHeader('Cache-Control', 'public, max-age=2592000, immutable, no-transform');
+app.use(
+    '/static',
+    express.static(PHOTOS_DIR, {
+        maxAge: '30d',
+        etag: true,
+        lastModified: true,
+        acceptRanges: true,
+        setHeaders: (res, filePath) => {
+            if (/\.(jpe?g|png|webp|gif|mp4|webm|mov)$/i.test(filePath)) {
+                res.setHeader('Cache-Control', 'public, max-age=2592000, immutable, no-transform');
+                res.setHeader('Accept-Ranges', 'bytes');
+            }
+        },
+    })
+);
+
+/**
+ * 缩略图静态服务
+ * 路径：/thumbs
+ * 目录：THUMBS_DIR
+ * 恒定可缓存 30 天，不存在则立即 404。
+ * 特定扩展额外指定 Content-Type。
+ */
+app.use(
+    '/thumbs',
+    express.static(THUMBS_DIR, {
+        maxAge: '30d',
+        immutable: true,
+        fallthrough: false,
+        setHeaders: (res, filePath) => {
+            if (/\.m3u8$/i.test(filePath)) {
+                res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+            }
+            if (/\.(ts)$/i.test(filePath)) {
+                res.setHeader('Content-Type', 'video/mp2t');
+            }
             res.setHeader('Accept-Ranges', 'bytes');
-        }
-    }
-}));
+        },
+    })
+);
 
 /**
- * @section 缩略图静态服务
- * 路径: /thumbs
- * 位置: THUMBS_DIR
- * 所有缩略图均为不可变，30 天缓存，不存在时直接 404
- * 包含 HLS/TS 格式分片额外声明 Content-Type
- */
-app.use('/thumbs', express.static(THUMBS_DIR, {
-    maxAge: '30d',
-    immutable: true,
-    fallthrough: false,
-    setHeaders: (res, filePath) => {
-        if (/\.m3u8$/i.test(filePath)) {
-            res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-        }
-        if (/\.(ts)$/i.test(filePath)) {
-            res.setHeader('Content-Type', 'video/mp2t');
-        }
-        res.setHeader('Accept-Ranges', 'bytes');
-    }
-}));
-
-/**
- * @section 前端静态文件（合并部署场景）
- * 根目录 public 下资源由前端构建工具生成
+ * 前端静态资源服务（如合并部署）
+ * 目录：public
  */
 const frontendBuildPath = path.join(__dirname, 'public');
 app.use(express.static(frontendBuildPath));
 
-// ========== 健康检查 ==========
+/* =========================
+   健康检查
+   ========================= */
 
 /**
- * 健康检查 API
- * @route GET /health
- * @returns {object} 服务状态摘要
- * 用于负载均衡器、容器编排平台自动探活与监控
+ * 构建健康检查摘要信息
+ * @returns {Promise<object>} 服务健康状态报告
  */
-app.get('/health', async (req, res) => {
+async function computeHealthSummary() {
     const timestamp = new Date().toISOString();
     const summary = {
         status: 'ok',
@@ -209,13 +237,12 @@ app.get('/health', async (req, res) => {
         dependencies: {
             database: {},
             redis: {},
-            workers: {}
-        }
+            workers: {},
+        },
     };
 
     let healthy = true;
 
-    // 数据库健康检查
     try {
         const { dbAll, checkDatabaseHealth, dbHealthStatus } = require('./db/multi-db');
         await checkDatabaseHealth();
@@ -225,7 +252,9 @@ app.get('/health', async (req, res) => {
         }
         summary.dependencies.database.connections = connections;
         const connectionStates = Object.values(connections);
-        const connectionsHealthy = connectionStates.length === 0 || connectionStates.every((state) => state === 'connected');
+        const connectionsHealthy =
+            connectionStates.length === 0 ||
+            connectionStates.every((state) => state === 'connected');
         if (!connectionsHealthy) {
             healthy = false;
             summary.issues.push('database_connections');
@@ -233,7 +262,7 @@ app.get('/health', async (req, res) => {
 
         const schema = {};
         try {
-            await dbAll('main', "SELECT 1 FROM items LIMIT 1");
+            await dbAll('main', 'SELECT 1 FROM items LIMIT 1');
             schema.items = { status: 'ok' };
         } catch (error) {
             schema.items = { status: 'missing', error: error.message };
@@ -242,7 +271,7 @@ app.get('/health', async (req, res) => {
         }
 
         try {
-            await dbAll('main', "SELECT 1 FROM items_fts LIMIT 1");
+            await dbAll('main', 'SELECT 1 FROM items_fts LIMIT 1');
             schema.itemsFts = { status: 'ok' };
         } catch (error) {
             schema.itemsFts = { status: 'missing', error: error.message };
@@ -257,12 +286,12 @@ app.get('/health', async (req, res) => {
         summary.dependencies.database.error = error.message;
     }
 
-    // Redis 健康检查
     try {
         const { getAvailability, redis } = require('./config/redis');
         const availability = getAvailability();
         summary.dependencies.redis.availability = availability;
-        const redisRequired = (process.env.ENABLE_REDIS || 'false').toLowerCase() === 'true';
+        const redisRequired =
+            (process.env.ENABLE_REDIS || 'false').toLowerCase() === 'true';
 
         if (availability === 'ready') {
             try {
@@ -282,27 +311,47 @@ app.get('/health', async (req, res) => {
         summary.dependencies.redis.error = error.message;
     }
 
-    // Worker 健康检查
     try {
         const { performWorkerHealthCheck } = require('./services/worker.manager');
-        const workerStatus = performWorkerHealthCheck();
-        summary.dependencies.workers = workerStatus;
-        const unhealthyWorkers = [];
-        ['indexing', 'settings', 'video'].forEach((key) => {
-            const stateInfo = workerStatus[key];
-            if (!stateInfo) {
-                unhealthyWorkers.push(key);
-                return;
-            }
-            const workerState = typeof stateInfo === 'string' ? stateInfo : stateInfo.state;
-            if (!workerState || workerState !== 'active') {
-                unhealthyWorkers.push(key);
+        const workerStatus = performWorkerHealthCheck() || {};
+        const decoratedWorkers = {};
+        const requiredWorkers = REQUIRED_WORKERS.size > 0 ? REQUIRED_WORKERS : new Set(['indexing']);
+        const optionalWorkers = OPTIONAL_WORKERS;
+
+        Object.entries(workerStatus).forEach(([key, stateInfo]) => {
+            const normalizedInfo = typeof stateInfo === 'object' && stateInfo !== null
+                ? stateInfo
+                : { state: stateInfo };
+            const baseActive = typeof normalizedInfo.state === 'string'
+                ? normalizedInfo.state === 'active'
+                : Boolean(normalizedInfo.active);
+            const workerActive = Boolean(baseActive);
+            const isRequired = requiredWorkers.has(key);
+            const status = workerActive
+                ? 'active'
+                : (isRequired ? 'unavailable' : (optionalWorkers.has(key) ? 'inactive_optional' : 'inactive'));
+
+            decoratedWorkers[key] = {
+                ...normalizedInfo,
+                active: workerActive,
+                status
+            };
+
+            if (isRequired && !workerActive) {
+                healthy = false;
+                summary.issues.push(`worker_${key}`);
             }
         });
-        if (unhealthyWorkers.length > 0) {
-            healthy = false;
-            unhealthyWorkers.forEach((name) => summary.issues.push(`worker_${name}`));
-        }
+
+        requiredWorkers.forEach((key) => {
+            if (!decoratedWorkers[key]) {
+                decoratedWorkers[key] = { active: false, status: 'missing' };
+                healthy = false;
+                summary.issues.push(`worker_${key}`);
+            }
+        });
+
+        summary.dependencies.workers = decoratedWorkers;
     } catch (error) {
         healthy = false;
         summary.issues.push('worker_error');
@@ -311,34 +360,85 @@ app.get('/health', async (req, res) => {
 
     if (!healthy) {
         summary.status = 'error';
-        return res.status(503).json(summary);
     }
 
-    return res.json(summary);
+    return summary;
+}
+
+/**
+ * 返回并缓存健康检查摘要
+ * @returns {Promise<object>}
+ */
+async function getHealthSummary() {
+    const now = Date.now();
+    if (healthCache.snapshot && now < healthCache.expiresAt) {
+        return healthCache.snapshot;
+    }
+    if (pendingHealthCheckPromise) {
+        return pendingHealthCheckPromise;
+    }
+
+    pendingHealthCheckPromise = computeHealthSummary()
+        .then((summary) => {
+            const ttl =
+                summary.status === 'ok'
+                    ? HEALTH_CACHE_TTL_MS
+                    : Math.min(HEALTH_CACHE_TTL_MS, 5000);
+            healthCache = {
+                snapshot: summary,
+                expiresAt: Date.now() + ttl,
+            };
+            return summary;
+        })
+        .finally(() => {
+            pendingHealthCheckPromise = null;
+        });
+
+    return pendingHealthCheckPromise;
+}
+
+/**
+ * GET /health
+ * 健康检查接口，返回服务状态报告
+ * 200/503，根据状态
+ */
+app.get('/health', async (req, res) => {
+    try {
+        const summary = await getHealthSummary();
+        const statusCode = summary.status === 'ok' ? 200 : 503;
+        return res.status(statusCode).json(summary);
+    } catch (error) {
+        logger.error('Health endpoint failed', { error: error.message });
+        return res.status(500).json({
+            status: 'error',
+            timestamp: new Date().toISOString(),
+            issues: ['health_unhandled'],
+            dependencies: {},
+            error: error.message,
+        });
+    }
 });
 
 /**
- * API 404 处理，响应所有未匹配的 /api/* 路由
- * 必须在错误处理中间件与前端 SPA catch-all 之前注册
+ * API 未匹配路径 404 处理（应放在 SPA 和全局错误之前）
  */
 app.use('/api/*', notFoundHandler);
 
 /**
- * 全局错误处理中间件，要放在所有路由之后
+ * 全局错误处理（必须 Router 之后）
  */
 app.use(errorHandler);
 
 /**
- * SPA 应用入口的 Catch-all 路由，错误中间件之后最后注册
- * 若前端 index.html 缺失则直接返回 404
+ * SPA 前端单页支持（兜底，index.html 不存在则返回 404）
  */
 app.get('*', (req, res) => {
-	const indexPath = path.resolve(frontendBuildPath, 'index.html');
-	res.sendFile(indexPath, (err) => {
-		if (err) {
-			res.status(404).send('Not Found');
-		}
-	});
+    const indexPath = path.resolve(frontendBuildPath, 'index.html');
+    res.sendFile(indexPath, (err) => {
+        if (err) {
+            res.status(404).send('Not Found');
+        }
+    });
 });
 
 /**

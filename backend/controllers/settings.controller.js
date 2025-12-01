@@ -252,8 +252,15 @@ exports.triggerSync = async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    logger.error(`触发${req.params.type}补全失败:`, error);
-    if (error instanceof AppError) throw error;
+    const isAuthError = error instanceof AuthorizationError;
+    const loggerFn = typeof logger[isAuthError ? 'warn' : 'error'] === 'function'
+      ? logger[isAuthError ? 'warn' : 'error']
+      : logger.error;
+    loggerFn(`触发${req.params.type}补全失败: ${error?.message || 'unknown error'}`);
+
+    if (error instanceof AppError) {
+      throw error;
+    }
     throw new AppError(error?.message || '补全操作失败', 500, 'SYNC_OPERATION_FAILED', {
       originalError: error?.message,
       type: req.params.type

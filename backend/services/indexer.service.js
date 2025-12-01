@@ -610,6 +610,25 @@ async function runIndexingTask(type, payload) {
     });
 }
 
+async function runStartupBackfill(options = {}) {
+    const requireMtime = options.requireMtime !== false;
+    const requireDimensions = options.requireDimensions !== false;
+    if (!requireMtime && !requireDimensions) {
+        logger.debug('[Index] 启动回填检查：当前无需补数据');
+        return;
+    }
+
+    const photosDir = options.photosDir || PHOTOS_DIR;
+    if (requireMtime) {
+        logger.info('[Index] 启动回填：执行缺失 mtime 修复');
+        await runIndexingTask('backfill_missing_mtime', { photosDir });
+    }
+    if (requireDimensions) {
+        logger.info('[Index] 启动回填：执行缺失尺寸修复');
+        await runIndexingTask('backfill_missing_dimensions', { photosDir });
+    }
+}
+
 /**
  * 构建搜索索引
  * 执行全量索引重建
@@ -855,6 +874,7 @@ module.exports = {
     processManualChanges,    // 手动变更处理（同步）
     enqueueManualChanges,    // 手动变更排队（异步）
     attachVideoWorkerListeners,
+    runStartupBackfill,
 };
 
 /**

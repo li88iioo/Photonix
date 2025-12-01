@@ -1,7 +1,13 @@
+const { CronJob, CronTime } = require('cron');
 const logger = require('../config/logger');
 const { LOG_PREFIXES } = logger;
 const settingsService = require('./settings.service');
 const albumManagementService = require('./albumManagement.service');
+const {
+  thumbnailSyncService,
+  triggerSyncOperation,
+  triggerCleanupOperation
+} = require('./settings/maintenance.service');
 
 /**
  * 默认调度配置
@@ -9,16 +15,12 @@ const albumManagementService = require('./albumManagement.service');
 const DEFAULT_SCHEDULE = 'off';
 
 /**
- * 查找下次 cron 时间的最大分钟数（1年）
- */
-const MAX_CRON_LOOKAHEAD_MINUTES = 525600; // 1 year
-
-/**
  * 调度器状态对象
  */
 const state = {
   current: { type: 'off', raw: DEFAULT_SCHEDULE }, // 当前调度配置
   timer: null,                                      // 定时器句柄
+  cronJob: null,                                    // Cron 任务
   running: false,                                   // 是否正在运行
   lastRunAt: null,                                  // 上次运行时间
   nextRunAt: null                                   // 下次运行时间
@@ -31,6 +33,14 @@ function clearTimer() {
   if (state.timer) {
     clearTimeout(state.timer);
     state.timer = null;
+  }
+  if (state.cronJob) {
+    try {
+      state.cronJob.stop();
+    } catch (error) {
+      logger.debug(`${LOG_PREFIXES.AUTO_SYNC} 停止 Cron 任务失败`, error);
+    }
+    state.cronJob = null;
   }
 }
 
@@ -63,124 +73,8 @@ function normalizeScheduleInput(input) {
   }
 
   // 否则视为 Cron 表达式
-  const cron = parseCronExpression(rawValue);
-  return { type: 'cron', raw: cron.raw, cron };
-}
-
-/**
- * 解析 cron 字符串为内部结构
- * @param {string} expression - Cron 表达式
- * @returns {object} - 包含匹配器等信息
- * @throws {Error} - 表达式不合法时抛出异常
- */
-function parseCronExpression(expression) {
-  const parts = expression.split(/\s+/).filter(Boolean);
-  if (parts.length !== 5) {
-    throw new Error('Cron 表达式必须包含 5 个字段 (分 时 日 月 星期)');
-  }
-
-  const ranges = [
-    { min: 0, max: 59 },  // 分钟
-    { min: 0, max: 23 },  // 小时
-    { min: 1, max: 31 },  // 日
-    { min: 1, max: 12 },  // 月
-    { min: 0, max: 6 }    // 星期
-  ];
-
-  const matchers = parts.map((part, idx) => buildCronMatcher(part, ranges[idx]));
-
-  return {
-    raw: expression,
-    matchers,
-    isDayOfMonthWildcard: isWildcard(parts[2]),
-    isDayOfWeekWildcard: isWildcard(parts[4])
-  };
-}
-
-/**
- * 检查 cron 字段是否为通配符
- * @param {string} segment 
- * @returns {boolean}
- */
-function isWildcard(segment) {
-  return segment === '*' || segment === '*/1';
-}
-
-/**
- * 生成某一 cron 字段的数值判定函数
- * @param {string} segment - 字段内容
- * @param {object} range - { min, max }
- * @returns {function(number):boolean}
- */
-function buildCronMatcher(segment, range) {
-  const cleaned = segment.trim();
-  if (!cleaned) {
-    throw new Error('Cron 字段不能为空');
-  }
-
-  const parts = cleaned.split(',');
-  const matchers = parts.map((part) => buildCronPartMatcher(part, range));
-
-  return (value) => matchers.some((matcher) => matcher(value));
-}
-
-/**
- * 生成 cron 单个部分匹配器
- * @param {string} part - 字段片段，如"3-5/2"
- * @param {object} range - { min, max }
- * @returns {function(number):boolean}
- */
-function buildCronPartMatcher(part, range) {
-  let base = part;
-  let step = 1;
-
-  // 解析步长
-  if (part.includes('/')) {
-    const [rangePart, stepPart] = part.split('/');
-    if (!stepPart) {
-      throw new Error(`Cron 步长缺失: ${part}`);
-    }
-    step = Number(stepPart);
-    if (!Number.isFinite(step) || step <= 0) {
-      throw new Error(`Cron 步长无效: ${part}`);
-    }
-    base = rangePart || '*';
-  }
-
-  let start = range.min;
-  let end = range.max;
-
-  if (base !== '*' && base.length > 0) {
-    if (base.includes('-')) {
-      // 范围
-      const [startStr, endStr] = base.split('-');
-      start = Number(startStr);
-      end = Number(endStr);
-      if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) {
-        throw new Error(`Cron 范围无效: ${part}`);
-      }
-    } else {
-      // 单一值
-      const exact = Number(base);
-      if (!Number.isFinite(exact)) {
-        throw new Error(`Cron 数值无效: ${part}`);
-      }
-      start = exact;
-      end = exact;
-    }
-  }
-
-  if (start < range.min || end > range.max) {
-    throw new Error(`Cron 数值超出范围: ${part}`);
-  }
-
-  // 匹配器函数
-  return (value) => {
-    if (value < start || value > end) {
-      return false;
-    }
-    return ((value - start) % step) === 0;
-  };
+  const cronExpression = validateCronExpression(rawValue);
+  return { type: 'cron', raw: cronExpression };
 }
 
 /**
@@ -198,20 +92,18 @@ async function runManualSync(trigger, raw) {
   try {
     logger.info(`${LOG_PREFIXES.AUTO_SYNC} 触发手动同步: trigger=${trigger}, schedule=${raw}`);
     const result = await albumManagementService.syncAlbumsAndMedia();
-    state.lastRunAt = new Date();
     logger.info(`${LOG_PREFIXES.AUTO_SYNC} 手动同步完成: changes=${result?.summary?.totalChanges || 0}`);
 
     // 获取增量变化
     const diff = result?.diff || {};
-    const addedPhotos = diff?.addedMedia?.photo || [];
-    const addedVideos = diff?.addedMedia?.video || [];
-    const removedPhotos = diff?.removedMedia?.photo || [];
-    const removedVideos = diff?.removedMedia?.video || [];
+    const addedPhotos = Array.isArray(diff?.addedMedia?.photo) ? diff.addedMedia.photo : [];
+    const addedVideos = Array.isArray(diff?.addedMedia?.video) ? diff.addedMedia.video : [];
+    const removedPhotos = Array.isArray(diff?.removedMedia?.photo) ? diff.removedMedia.photo : [];
+    const removedVideos = Array.isArray(diff?.removedMedia?.video) ? diff.removedMedia.video : [];
     const removalList = [...removedPhotos, ...removedVideos];
 
     // 进行缩略图增量或全量同步
     if (addedPhotos.length || addedVideos.length || removalList.length) {
-      const { thumbnailSyncService } = require('./settings/maintenance.service');
       const incrementalResult = thumbnailSyncService.updateThumbnailStatusIncremental({
         addedPhotos,
         addedVideos,
@@ -249,14 +141,36 @@ async function runManualSync(trigger, raw) {
   } catch (error) {
     logger.error(`${LOG_PREFIXES.AUTO_SYNC} 手动同步失败:`, error);
   } finally {
+    state.lastRunAt = new Date();
     state.running = false;
-    scheduleNextRun();
+    if (state.current.type === 'interval') {
+      scheduleNextRun();
+    } else if (state.current.type === 'cron') {
+      refreshCronNextRun();
+    }
   }
 }
 
 async function runScheduledMaintenancePipeline() {
   try {
-    const { triggerSyncOperation, triggerCleanupOperation } = require('./settings/maintenance.service');
+    try {
+      logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：启动缩略图同步`);
+      const resyncResult = await thumbnailSyncService.resyncThumbnailStatus({
+        trigger: 'auto-sync',
+        waitForCompletion: true,
+        skipIfRunning: true
+      });
+      if (resyncResult?.skipped || resyncResult?.inProgress) {
+        logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：缩略图同步已在运行，跳过本次触发`);
+      } else if (resyncResult) {
+        logger.info(
+          `${LOG_PREFIXES.AUTO_SYNC} 自动维护：缩略图同步完成 (total=${resyncResult.syncedCount}, exists=${resyncResult.existsCount}, missing=${resyncResult.missingCount})`
+        );
+      }
+    } catch (thumbResyncError) {
+      logger.error(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：缩略图同步失败`, thumbResyncError);
+    }
+
     logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：启动缩略图补全`);
     const thumbSyncResult = await triggerSyncOperation('thumbnail');
     logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：缩略图补全完成 ${thumbSyncResult?.message ? `(${thumbSyncResult.message})` : ''}`.trim());
@@ -286,81 +200,6 @@ async function runScheduledMaintenancePipeline() {
 }
 
 /**
- * 计算下次应运行的时间（根据当前调度）
- * @returns {Date|null} 若未找到合适时间则返回null
- */
-function computeNextRun() {
-  if (state.current.type === 'off') {
-    return null;
-  }
-
-  if (state.current.type === 'interval') {
-    const base = state.lastRunAt ? state.lastRunAt.getTime() : Date.now();
-    const nextTs = base + state.current.intervalMinutes * 60000;
-    return new Date(Math.max(nextTs, Date.now() + 1000));
-  }
-
-  const now = new Date();
-  now.setSeconds(0, 0);
-  const start = new Date(now.getTime() + 60000); // 下一分钟开始
-
-  for (let i = 0; i < MAX_CRON_LOOKAHEAD_MINUTES; i++) {
-    const candidate = new Date(start.getTime() + i * 60000);
-    if (matchesCron(state.current.cron, candidate)) {
-      return candidate;
-    }
-  }
-
-  logger.warn(`${LOG_PREFIXES.AUTO_SYNC} 未能在 1 年内找到下次运行时间，停止调度。`);
-  return null;
-}
-
-/**
- * 检查给定时间是否满足 cron 匹配
- * @param {object} cron - 由parseCronExpression生成的cron对象
- * @param {Date} date - 时间点
- * @returns {boolean}
- */
-function matchesCron(cron, date) {
-  const minute = date.getMinutes();
-  const hour = date.getHours();
-  const day = date.getDate();
-  const month = date.getMonth() + 1;
-  const dow = date.getDay();
-
-  const minuteMatch = cron.matchers[0](minute);
-  const hourMatch = cron.matchers[1](hour);
-  const domMatch = cron.matchers[2](day);
-  const monthMatch = cron.matchers[3](month);
-  const dowMatch = cron.matchers[4](dow);
-
-  // 必须分钟、小时、月份都满足
-  if (!minuteMatch || !hourMatch || !monthMatch) {
-    return false;
-  }
-
-  const domWildcard = cron.isDayOfMonthWildcard;
-  const dowWildcard = cron.isDayOfWeekWildcard;
-
-  // 日和星期均为通配符则通过
-  if (domWildcard && dowWildcard) {
-    return true;
-  }
-
-  // 只要有一个指定且命中即可
-  if (!domWildcard && domMatch) {
-    return true;
-  }
-
-  if (!dowWildcard && dowMatch) {
-    return true;
-  }
-
-  // 皆指定时必须皆命中
-  return domMatch && dowMatch;
-}
-
-/**
  * 安排下次自动同步任务
  */
 function scheduleNextRun() {
@@ -372,15 +211,57 @@ function scheduleNextRun() {
     return;
   }
 
-  const nextRun = computeNextRun();
-  if (!nextRun) {
-    state.nextRunAt = null;
+  if (state.current.type === 'interval') {
+    const nextRun = computeNextIntervalRun();
+    if (!nextRun) {
+      state.nextRunAt = null;
+      return;
+    }
+    state.nextRunAt = nextRun;
+    const delay = Math.max(nextRun.getTime() - Date.now(), 1000);
+    logNextRunTime(nextRun);
+    state.timer = setTimeout(() => runManualSync('schedule', state.current.raw), delay);
     return;
   }
 
-  state.nextRunAt = nextRun;
-  const delay = Math.max(nextRun.getTime() - Date.now(), 1000);
-  const localTime = nextRun.toLocaleString('zh-CN', {
+  try {
+    state.cronJob = new CronJob(state.current.raw, () => runManualSync('schedule', state.current.raw), null, false);
+    refreshCronNextRun();
+    logNextRunTime(state.nextRunAt);
+    state.cronJob.start();
+  } catch (error) {
+    state.nextRunAt = null;
+    logger.error(`${LOG_PREFIXES.AUTO_SYNC} 启动 Cron 任务失败: ${error && error.message ? error.message : error}`);
+  }
+}
+
+function computeNextIntervalRun() {
+  const base = state.lastRunAt ? state.lastRunAt.getTime() : Date.now();
+  const nextTs = base + state.current.intervalMinutes * 60000;
+  return new Date(Math.max(nextTs, Date.now() + 1000));
+}
+
+function refreshCronNextRun() {
+  if (state.current.type !== 'cron') {
+    return;
+  }
+  state.nextRunAt = getNextCronDate(state.current.raw);
+}
+
+function getNextCronDate(expression) {
+  try {
+    const cronTime = new CronTime(expression);
+    const next = cronTime.sendAt();
+    return next ? next.toDate() : null;
+  } catch (error) {
+    logger.debug(`${LOG_PREFIXES.AUTO_SYNC} 计算 Cron 下次运行时间失败`, error && error.message ? error.message : error);
+    return null;
+  }
+}
+
+function logNextRunTime(date) {
+  if (!date) return;
+  const localTime = date.toLocaleString('zh-CN', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -390,7 +271,17 @@ function scheduleNextRun() {
     hour12: false
   });
   logger.info(`${LOG_PREFIXES.AUTO_SYNC} 下次手动同步时间: ${localTime}`);
-  state.timer = setTimeout(() => runManualSync('schedule', state.current.raw), delay);
+}
+
+function validateCronExpression(expression) {
+  try {
+    // CronTime 会在构造时校验表达式
+    // eslint-disable-next-line no-new
+    new CronTime(expression);
+    return expression;
+  } catch (error) {
+    throw new Error(error && error.message ? error.message : 'Cron 表达式无效');
+  }
 }
 
 /**

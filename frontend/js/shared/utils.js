@@ -46,37 +46,6 @@ function transformValidationMessage(rawMessage) {
 }
 
 /**
- * 带重试机制的动态导入，解决 PWA 环境下的路径解析问题
- * @param {string} modulePath - 模块路径
- * @param {number} maxRetries - 最大重试次数
- * @returns {Promise} 导入的模块
- */
-export async function importWithRetry(modulePath, maxRetries = 3) {
-    for (let i = 0; i < maxRetries; i++) {
-        try {
-            return await import(modulePath);
-        } catch (error) {
-            utilsLogger.warn('动态导入失败', { attempt: i + 1, maxRetries, modulePath, error });
-
-            // 如果是 PWA 环境且出现扩展相关错误，尝试使用绝对路径
-            if (error.message && error.message.includes('chrome-extension')) {
-                try {
-                    const absolutePath = new URL(modulePath, window.location.origin + '/js/').href;
-                    return await import(absolutePath);
-                } catch (absoluteError) {
-                    utilsLogger.warn('绝对路径导入也失败', absoluteError);
-                }
-            }
-
-            if (i === maxRetries - 1) throw error;
-
-            // 指数退避重试
-            await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * NETWORK.RETRY_BASE_DELAY));
-        }
-    }
-}
-
-/**
  * 显示通知消息
  * @param {string} message - 要显示的消息内容
  * @param {string} type - 通知类型 ('info', 'success', 'warning', 'error')

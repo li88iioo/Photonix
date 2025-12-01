@@ -20,8 +20,6 @@ const path = require('path');
 const baseLogger = require('./config/logger');
 const { formatLog, LOG_PREFIXES } = baseLogger;
 const logger = baseLogger;
-const { TraceManager } = require('./utils/trace');
-const { normalizeWorkerMessage } = require('./utils/workerMessage');
 const { validateCriticalConfig } = require('./config/validator');
 const { handleUncaughtException, handleUnhandledRejection } = require('./middleware/errorHandler');
 // 延后加载 Redis，避免无 Redis 环境下启动即触发连接
@@ -30,101 +28,17 @@ const { initializeConnections, closeAllConnections, withTimeout, dbAllOnPath } =
 const { initializeAllDBs } = require('./db/migrations');
 const { migrateToMultiDB } = require('./db/migrate-to-multi-db');
 const { startAdaptiveScheduler } = require('./services/adaptive.service');
-const { setupWorkerListeners, buildSearchIndex } = require('./services/indexer.service');
+const { setupWorkerListeners } = require('./services/indexer.service');
 const { timeUtils, TIME_CONSTANTS } = require('./utils/time.utils');
 const { getCount, getThumbProcessingStats, getDataIntegrityStats } = require('./repositories/stats.repo');
 
-/**
- * 索引调度器类
- * 管理启动时索引重建的调度逻辑
- */
-class IndexScheduler {
-    constructor() {
-        this.disableStartupIndex = (process.env.DISABLE_STARTUP_INDEX || 'false').toLowerCase() === 'true';
-        this.startDelayMs = Number(process.env.INDEX_START_DELAY_MS || 5000);
-        this.retryIntervalMs = Number(process.env.INDEX_RETRY_INTERVAL_MS || 60000);
-        this.timeoutMs = Number(process.env.INDEX_TIMEOUT_MS || timeUtils.minutes(20));
-        this.lockTtlSec = Number(process.env.INDEX_LOCK_TTL_SEC || 7200);
-        this.hasPendingJob = false;
-    }
-
-    shouldSkipStartupIndex() {
-        if (this.disableStartupIndex) {
-            logger.info('检测到 DISABLE_STARTUP_INDEX=true，跳过启动时索引构建。');
-            return true;
-        }
-        return false;
-    }
-
-    async performIndexCleanup() {
-        try {
-            const { redis } = require('./config/redis');
-            const { safeRedisDel } = require('./utils/helpers');
-            await safeRedisDel(redis, 'indexing_in_progress', '清理索引标记');
-            logger.debug('[IndexScheduler] 已清理索引进行中旗标');
-        } catch (e) {
-            logger.debug('[IndexScheduler] 清理索引旗标失败：' + (e && e.message));
-        }
-    }
-
-    async performIndexBuild() {
-        try {
-            const { buildSearchIndex } = require('./services/indexer.service');
-            await buildSearchIndex();
-        } catch (err) {
-            const { fromNativeError } = require('./utils/errors');
-            throw fromNativeError(err, { operation: 'buildSearchIndex' });
-        }
-    }
-
-    scheduleIndexRebuild(reasonText) {
-        if (this.shouldSkipStartupIndex()) {
-            return;
-        }
-
-        if (this.hasPendingJob) {
-            if (reasonText) {
-                logger.debug(`[IndexScheduler] 已存在待执行的索引任务，忽略新的调度请求：${reasonText}`);
-            }
-            return;
-        }
-
-        const releasePending = () => {
-            if (this.hasPendingJob) {
-                this.hasPendingJob = false;
-            }
-        };
-
-        try {
-            const { runWhenIdle } = require('./services/orchestrator');
-            logger.info(reasonText || '计划在空闲窗口重建索引（runWhenIdle）。');
-
-            this.hasPendingJob = true;
-
-            runWhenIdle('startup-rebuild-index', async () => {
-                try {
-                    logger.info('[Startup-Index] 进入空闲窗口回调，准备触发全量索引...');
-
-                    await this.performIndexCleanup();
-                    await this.performIndexBuild();
-                } catch (err) {
-                    logger.debug('runWhenIdle 启动索引失败（忽略）：' + (err && err.message));
-                } finally {
-                    releasePending();
-                }
-            }, {
-                startDelayMs: this.startDelayMs,
-                retryIntervalMs: this.retryIntervalMs,
-                timeoutMs: this.timeoutMs,
-                lockTtlSec: this.lockTtlSec,
-                category: 'index-maintenance'
-            });
-        } catch (e) {
-            releasePending();
-            logger.debug('延后安排索引失败（忽略）：' + (e && e.message));
-        }
-    }
-}
+const STARTUP_INDEX_OPTIONS = {
+    startDelayMs: Number(process.env.INDEX_START_DELAY_MS || 5000),
+    retryIntervalMs: Number(process.env.INDEX_RETRY_INTERVAL_MS || 60000),
+    timeoutMs: Number(process.env.INDEX_TIMEOUT_MS || timeUtils.minutes(20)),
+    lockTtlSec: Number(process.env.INDEX_LOCK_TTL_SEC || 7200),
+};
+const DISABLE_STARTUP_INDEX = (process.env.DISABLE_STARTUP_INDEX || 'false').toLowerCase() === 'true';
 
 async function performQuickDirectoryCheck(rootDir, maxDepth = 2) {
     const stack = [{ dir: rootDir, depth: 0 }];
@@ -239,15 +153,52 @@ async function isThumbsDirEffectivelyEmpty(rootDir) {
     }
 }
 
-// 单例索引调度器实例
-const indexScheduler = new IndexScheduler();
+function shouldSkipStartupIndex() {
+    if (!DISABLE_STARTUP_INDEX) {
+        return false;
+    }
+    logger.info('检测到 DISABLE_STARTUP_INDEX=true，跳过启动时索引构建。');
+    return true;
+}
 
-/**
- * 兼容性外部调度方法
- * @param {string} reasonText
- */
+async function clearIndexingLockFlag() {
+    try {
+        const { redis } = require('./config/redis');
+        const { safeRedisDel } = require('./utils/helpers');
+        await safeRedisDel(redis, 'indexing_in_progress', '清理索引标记');
+        logger.debug('[Startup-Index] 已清理索引进行中旗标');
+    } catch (e) {
+        logger.debug('[Startup-Index] 清理索引旗标失败：' + (e && e.message));
+    }
+}
+
 function scheduleIndexRebuild(reasonText) {
-    return indexScheduler.scheduleIndexRebuild(reasonText);
+    if (shouldSkipStartupIndex()) {
+        return;
+    }
+
+    try {
+        const { runWhenIdle } = require('./services/orchestrator');
+        logger.info(reasonText || '计划在空闲窗口重建索引（runWhenIdle）。');
+        return runWhenIdle('startup-rebuild-index', async () => {
+            try {
+                logger.info('[Startup-Index] 进入空闲窗口回调，准备触发全量索引...');
+                await clearIndexingLockFlag();
+                const { buildSearchIndex } = require('./services/indexer.service');
+                await buildSearchIndex();
+            } catch (err) {
+                logger.debug('runWhenIdle 启动索引失败（忽略）：' + (err && err.message));
+            }
+        }, {
+            startDelayMs: STARTUP_INDEX_OPTIONS.startDelayMs,
+            retryIntervalMs: STARTUP_INDEX_OPTIONS.retryIntervalMs,
+            timeoutMs: STARTUP_INDEX_OPTIONS.timeoutMs,
+            lockTtlSec: STARTUP_INDEX_OPTIONS.lockTtlSec,
+            category: 'index-maintenance'
+        });
+    } catch (e) {
+        logger.debug('延后安排索引失败（忽略）：' + (e && e.message));
+    }
 }
 
 
@@ -462,6 +413,12 @@ async function startServices() {
     ];
 
     await Promise.allSettled(tasks);
+
+    try {
+        setupWorkerListeners();
+    } catch (error) {
+        logger.debug('初始化索引/视频工作线程监听失败（忽略）：', error && error.message);
+    }
 }
 
 /**
@@ -502,9 +459,7 @@ async function setupIndexingAndMonitoring() {
                         logger.debug('删除索引断点失败（忽略）:', e && e.message);
                     }
                 }
-                try { const { redis } = require('./config/redis'); const { safeRedisDel } = require('./utils/helpers'); await safeRedisDel(redis, 'indexing_in_progress', '清理索引标记'); } catch (e) {
-                    logger.debug('清理Redis索引旗标失败（忽略）:', e && e.message);
-                }
+                await clearIndexingLockFlag();
             } catch (e) {
                 logger.debug('索引自愈过程失败（忽略）:', e && e.message);
             }
@@ -531,118 +486,18 @@ async function setupIndexingAndMonitoring() {
         // 启动期自动回填任务（runWhenIdle触发）
         try {
             const { runWhenIdle } = require('./services/orchestrator');
+            const { runStartupBackfill } = require('./services/indexer.service');
             runWhenIdle(LOG_PREFIXES.STARTUP_BACKFILL, async () => {
                 const integrityStats = await getDataIntegrityStats();
                 const needM = integrityStats.missingMtime > 0;
                 const needD = integrityStats.missingDimensions > 0;
                 if (!needM && !needD) return;
-
-                const { createDisposableWorker } = require('./services/worker.manager');
-                const w = createDisposableWorker('indexing', { reason: LOG_PREFIXES.STARTUP_BACKFILL });
-                const photosDir = PHOTOS_DIR;
-                const TIMEOUT_MS = 20 * 60 * 1000;
-
-                await new Promise((resolve) => {
-                    const timer = setTimeout(() => {
-                        logger.warn(formatLog(LOG_PREFIXES.SERVER, '回填任务超时，终止 worker'));
-                        try { w.terminate(); } catch (e) {
-                            logger.debug(formatLog(LOG_PREFIXES.SERVER, `终止回填worker失败（忽略）：${e && e.message}`));
-                        }
-                        resolve();
-                    }, TIMEOUT_MS);
-
-                    w.on('message', (rawMessage) => {
-                        const processMessage = () => {
-                            try {
-                                const message = normalizeWorkerMessage(rawMessage);
-                                const payload = message.payload || {};
-                                const eventType = payload.type || (rawMessage && rawMessage.type) || message.kind;
-
-                                if (message.kind === 'log') {
-                                    const level = (payload.level || 'debug').toLowerCase();
-                                    const text = payload.message || payload.text || '';
-                                    const fn = typeof logger[level] === 'function' ? level : 'debug';
-                                    logger[fn](formatLog(LOG_PREFIXES.SERVER, `回填worker日志: ${text}`));
-                                    return;
-                                }
-
-                                if (message.kind === 'error') {
-                                    const errMsg = (payload.error && payload.error.message) || payload.message || JSON.stringify(payload);
-                                    logger.warn(formatLog(LOG_PREFIXES.SERVER, `回填任务子消息错误：${errMsg}`));
-                                    return;
-                                }
-
-                                if (eventType === 'backfill_mtime_complete') {
-                                    const updated = typeof payload.updated === 'number' ? payload.updated : rawMessage && rawMessage.updated;
-                                    logger.info(formatLog(LOG_PREFIXES.SERVER, `mtime 回填完成（更新 ${updated} 条），开始尺寸回填`));
-                                    try {
-                                        const nextMessage = TraceManager.injectToWorkerMessage({ type: 'backfill_missing_dimensions', payload: { photosDir } });
-                                        w.postMessage(nextMessage);
-                                    } catch (e) {
-                                        logger.debug(formatLog(LOG_PREFIXES.SERVER, `发送尺寸回填消息失败（忽略）：${e && e.message}`));
-                                    }
-                                    return;
-                                }
-
-                                if (eventType === 'backfill_dimensions_complete') {
-                                    const updated = typeof payload.updated === 'number' ? payload.updated : rawMessage && rawMessage.updated;
-                                    logger.info(formatLog(LOG_PREFIXES.SERVER, `尺寸回填完成（更新 ${updated} 条），回填任务结束`));
-                                    clearTimeout(timer);
-                                    try { w.terminate(); } catch (e) {
-                                        logger.debug(formatLog(LOG_PREFIXES.SERVER, `终止回填worker失败（忽略）：${e && e.message}`));
-                                    }
-                                    resolve();
-                                    return;
-                                }
-
-                                logger.debug(formatLog(LOG_PREFIXES.SERVER, `回填任务收到未知事件: ${eventType}`));
-                            } catch (error) {
-                                logger.debug(formatLog(LOG_PREFIXES.SERVER, `回填worker消息解析失败（忽略）：${error && error.message}`));
-                            }
-                        };
-
-                        try {
-                            const traceContext = TraceManager.fromWorkerMessage(rawMessage);
-                            if (traceContext) {
-                                TraceManager.run(traceContext, processMessage);
-                            } else {
-                                processMessage();
-                            }
-                        } catch (error) {
-                            logger.debug(formatLog(LOG_PREFIXES.SERVER, `回填worker追踪恢复失败（忽略）：${error && error.message}`));
-                            processMessage();
-                        }
-                    });
-                    w.on('error', (e) => logger.debug(formatLog(LOG_PREFIXES.SERVER, `回填 worker 错误：${e && e.message}`)));
-                    w.on('exit', (code) => { if (code !== 0) logger.warn(formatLog(LOG_PREFIXES.SERVER, `回填 worker 非零退出码：${code}`)); });
-
-                    if (needM) {
-                        const message = TraceManager.injectToWorkerMessage({ type: 'backfill_missing_mtime', payload: { photosDir } });
-                        w.postMessage(message);
-                        logger.info(formatLog(LOG_PREFIXES.SERVER, '启动期回填任务已触发：mtime → dimensions'));
-                    } else {
-                        const message = TraceManager.injectToWorkerMessage({ type: 'backfill_missing_dimensions', payload: { photosDir } });
-                        w.postMessage(message);
-                        logger.info(formatLog(LOG_PREFIXES.SERVER, '启动期回填任务已触发：dimensions'));
-                    }
-                });
+                await runStartupBackfill({ requireMtime: needM, requireDimensions: needD });
             }, { startDelayMs: 8000, retryIntervalMs: 30000, timeoutMs: 20 * 60 * 1000, lockTtlSec: 7200, category: 'index-maintenance' });
         } catch (e) {
             logger.debug(formatLog(LOG_PREFIXES.SERVER, `启动期回填装载失败（忽略）：${e && e.message}`));
         }
 
-        // 启动时后台回填缺失的 mtime/width/height，降低运行时 fs.stat 与动态尺寸探测
-        try {
-            const { getIndexingWorker } = require('./services/worker.manager');
-            const worker = getIndexingWorker();
-            const mtimeMessage = TraceManager.injectToWorkerMessage({ type: 'backfill_missing_mtime', payload: { photosDir: PHOTOS_DIR } });
-            const dimensionsMessage = TraceManager.injectToWorkerMessage({ type: 'backfill_missing_dimensions', payload: { photosDir: PHOTOS_DIR } });
-            worker.postMessage(mtimeMessage);
-            worker.postMessage(dimensionsMessage);
-            logger.info('已触发启动期的 mtime 与 尺寸 回填后台任务。');
-        } catch (e) {
-            logger.debug('触发启动期回填任务失败（忽略）：', e && e.message);
-        }
     } catch (dbError) {
         logger.debug('检查索引状态失败（降噪）：', dbError && dbError.message);
         logger.info('由于检查失败，开始构建搜索索引...');

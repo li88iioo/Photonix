@@ -42,6 +42,18 @@ class CoreWorkerRegistry {
 
 const coreWorkerRegistry = new CoreWorkerRegistry();
 
+function getCoreWorkerSnapshot(name) {
+    const worker = coreWorkerRegistry.getExisting(name);
+    if (!worker) {
+        return { active: false };
+    }
+    return {
+        active: true,
+        threadId: worker.threadId,
+        resourceLimits: worker.resourceLimits || null
+    };
+}
+
 const workerScripts = {
     indexing: path.resolve(__dirname, '..', 'workers', 'indexing-worker.js'),
     settings: path.resolve(__dirname, '..', 'workers', 'settings-worker.js'),
@@ -195,9 +207,9 @@ function getThumbnailPoolStats() {
 function performWorkerHealthCheck() {
     const thumbStats = getThumbnailPoolStats();
     return {
-        indexing: { active: !!indexingWorker },
-        settings: { active: !!settingsWorker },
-        video: { active: !!videoWorker },
+        indexing: getCoreWorkerSnapshot('indexing'),
+        settings: getCoreWorkerSnapshot('settings'),
+        video: getCoreWorkerSnapshot('video'),
         thumbnail: {
             total: thumbStats.total,
             idle: thumbStats.idle,

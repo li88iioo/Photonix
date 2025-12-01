@@ -100,6 +100,14 @@ export function setupManagementTab() {
         };
         renderManualSyncScheduleStatus(initialSettings.manualSyncStatus);
 
+        if (scheduleInput) {
+          scheduleInput.value = initialSettings.manualSyncSchedule || 'off';
+        }
+        if (typeof state?.update === 'function') {
+          state.update('manualSyncSchedule', initialSettings.manualSyncSchedule);
+        }
+        showNotification('自动维护计划未保存，当前仍按已保存的计划执行', 'info');
+
         await loadStatusTables({ silent: true });
 
         return true;
