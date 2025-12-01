@@ -4,6 +4,8 @@
  */
 
 const logger = require('../config/logger');
+// 注意：不在此处导入 RetryManager，避免与 retry.js 形成循环依赖
+// RetryManager 在 retry() 函数内动态加载
 
 /**
  * 安全执行函数并捕获错误（日志输出）
@@ -274,35 +276,38 @@ async function withTimeout(promise, timeoutMs, timeoutMessage = '操作超时') 
 }
 
 /**
- * 重试执行函数
+ * 重试执行函数（兼容性别名，实际使用 RetryManager）
+ *
+ * 注意：此函数已迁移到 utils/retry.js 的 RetryManager.executeWithRetry
+ * 保留此导出仅为向后兼容，新代码请直接使用 RetryManager
+ *
+ * @deprecated 请使用 RetryManager.executeWithRetry 替代
  * @param {Function} fn - 要执行的函数
  * @param {Object} options - 选项
+ * @param {string} options.context - 操作上下文（用于日志）
  * @param {number} options.maxRetries - 最大重试次数
- * @param {number} options.delay - 重试延迟（毫秒）
- * @param {Function} options.shouldRetry - 判断是否应该重试的函数
+ * @param {number} options.baseDelay - 基础延迟（毫秒）
+ * @param {number} options.maxDelay - 最大延迟（毫秒）
  * @returns {Promise<any>}
  */
 async function retry(fn, options = {}) {
+    // 动态加载 RetryManager，避免循环依赖
+    const { RetryManager } = require('./retry');
+
+    // 兼容旧的 API 参数格式
     const {
-        maxRetries = 3,
-        delay = 1000,
-        shouldRetry = () => true
+        context = 'unknown',
+        maxRetries = options.maxRetries || 3,
+        baseDelay = options.delay || 1000,
+        maxDelay = 30000
     } = options;
 
-    let lastError;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-            return await fn();
-        } catch (error) {
-            lastError = error;
-            if (attempt < maxRetries && shouldRetry(error, attempt)) {
-                await sleep(delay * Math.pow(2, attempt)); // 指数退避
-            } else {
-                throw error;
-            }
-        }
-    }
-    throw lastError;
+    return RetryManager.executeWithRetry(fn, {
+        context,
+        maxRetries,
+        baseDelay,
+        maxDelay
+    });
 }
 
 module.exports = {

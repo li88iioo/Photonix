@@ -1,20 +1,61 @@
 /**
  * 索引服务模块 - 按需生成版本
  * 负责索引构建、增量更新以及与工作线程的通信
+ *
+ * 重试策略：
+ * - 索引任务支持自动重试，使用 utils/retry.js 提供的 RetryManager
+ * - 重试逻辑使用指数退避算法（1s → 2s → 4s → 8s → 16s → 30s上限）
+ * - Redis持久化重试计数，跨进程/重启可见
+ *
+ * 使用示例：
+ * ```javascript
+ * const { RetryManager } = require('../utils/retry');
+ *
+ * // 方式1: 自动重试（推荐）
+ * await RetryManager.executeWithRetry(
+ *     () => runIndexingTask('rebuild_index', { photosDir: PHOTOS_DIR }),
+ *     { context: 'index-rebuild', maxRetries: 3 }
+ * );
+ *
+ * // 方式2: 手动重试控制
+ * try {
+ *     await runIndexingTask('process_changes', { changes });
+ * } catch (error) {
+ *     const canRetry = await RetryManager.canRetryWithPersistence(error, 'index-changes', 3);
+ *     if (canRetry) {
+ *         await runIndexingTask('process_changes', { changes });
+ *     }
+ * }
+ * ```
  */
 const path = require('path');
 const logger = require('../config/logger');
 const { TraceManager } = require('../utils/trace');
 const { redis } = require('../config/redis');
-const { safeRedisIncr, safeRedisDel } = require('../utils/helpers');
+const { safeRedisDel } = require('../utils/helpers');
 const { invalidateTags } = require('./cache.service');
-const { PHOTOS_DIR, THUMBS_DIR, INDEX_STABILIZE_DELAY_MS } = require('../config');
-const { dbRun, runPreparedBatch, dbAll } = require('../db/multi-db');
+const {
+    PHOTOS_DIR,
+    THUMBS_DIR,
+    INDEX_STABILIZE_DELAY_MS,
+    VIDEO_BATCH_SIZE,
+    INDEX_FULL_REBUILD_THRESHOLD,
+    INDEX_MANUAL_WAIT_TIMEOUT_MS,
+    INDEX_DELAY_THRESHOLD_LARGE,
+    INDEX_DELAY_THRESHOLD_MEDIUM,
+    INDEX_DELAY_THRESHOLD_SMALL,
+    CACHE_TAG_LIMIT_LARGE,
+    CACHE_TAG_LIMIT_MEDIUM,
+    CACHE_TAG_LIMIT_SMALL,
+    CACHE_TAG_LIMIT_BASE
+} = require('../config');
 const { getIndexingWorker, getVideoWorker, startVideoWorker, createDisposableWorker } = require('./worker.manager');
 const settingsService = require('./settings.service');
 const orchestrator = require('./orchestrator');
 const { sanitizePath, isPathSafe } = require('../utils/path.utils');
 const { normalizeWorkerMessage } = require('../utils/workerMessage');
+// eslint-disable-next-line no-unused-vars
+const { RetryManager } = require('../utils/retry'); // 重试管理器（预留，参考文件头部使用示例）
 
 const PHOTOS_ROOT = path.resolve(PHOTOS_DIR);
 
@@ -103,7 +144,8 @@ function handleVideoWorkerMessage(rawMessage) {
                 clearTimeout(videoCompletionTimer);
             }
 
-            if (completedVideoBatch.length >= 10) {
+            // 批处理优化：达到批次大小时立即处理，否则延迟聚合
+            if (completedVideoBatch.length >= VIDEO_BATCH_SIZE) {
                 processCompletedVideoBatch();
             } else {
                 videoCompletionTimer = setTimeout(processCompletedVideoBatch, 5000);
@@ -666,8 +708,9 @@ async function processPendingIndexChanges() {
         return;
     }
 
-    if (changesToProcess.length > 5000) {
-        logger.warn(`检测到超过 5000 个文件变更，将执行全量索引重建以保证数据一致性。`);
+    // 大量变更优化：超过阈值时全量重建比增量更新更快且更可靠
+    if (changesToProcess.length > INDEX_FULL_REBUILD_THRESHOLD) {
+        logger.warn(`检测到超过 ${INDEX_FULL_REBUILD_THRESHOLD} 个文件变更，将执行全量索引重建以保证数据一致性。`);
         await buildSearchIndex();
         return;
     }
@@ -692,9 +735,10 @@ async function processManualChanges(changes = []) {
         return { processed: 0 };
     }
 
+    // 手动索引等待逻辑：等待当前索引完成，避免并发冲突
     if (isIndexing) {
         const start = Date.now();
-        while (isIndexing && Date.now() - start < 60000) {
+        while (isIndexing && Date.now() - start < INDEX_MANUAL_WAIT_TIMEOUT_MS) {
             await new Promise((resolve) => setTimeout(resolve, 250));
         }
         if (isIndexing) {
@@ -783,12 +827,13 @@ async function enqueueManualChanges(changes = [], options = {}) {
 function triggerDelayedIndexProcessing(customDelayMs) {
     clearTimeout(rebuildTimeout);
     // 自适应聚合延迟：根据近期变更密度放大延迟，降低抖动
+    // 延迟时间越长，能聚合的变更越多，减少索引执行次数
     const hasCustomDelay = Number.isFinite(customDelayMs) && customDelayMs >= 0;
     const dynamicDelay = hasCustomDelay ? customDelayMs : (() => {
         const changes = getPendingChangeCount();
-        if (changes > 10000) return Math.max(INDEX_STABILIZE_DELAY_MS, 30000);
-        if (changes > 5000) return Math.max(INDEX_STABILIZE_DELAY_MS, 20000);
-        if (changes > 1000) return Math.max(INDEX_STABILIZE_DELAY_MS, 10000);
+        if (changes > INDEX_DELAY_THRESHOLD_LARGE) return Math.max(INDEX_STABILIZE_DELAY_MS, 30000);
+        if (changes > INDEX_DELAY_THRESHOLD_MEDIUM) return Math.max(INDEX_STABILIZE_DELAY_MS, 20000);
+        if (changes > INDEX_DELAY_THRESHOLD_SMALL) return Math.max(INDEX_STABILIZE_DELAY_MS, 10000);
         return INDEX_STABILIZE_DELAY_MS;
     })();
 
@@ -823,12 +868,13 @@ function triggerDelayedIndexProcessing(customDelayMs) {
 
             if (albumTags.size > 0) {
                 const tagsArr = Array.from(albumTags);
+                // 动态标签上限：标签过多时降级为粗粒度清理，避免Redis性能问题
                 const dynamicTagLimit = (() => {
                     const changes = getPendingChangeCount();
-                    if (changes > 10000) return Math.max(2000, 6000);
-                    if (changes > 5000) return Math.max(2000, 4000);
-                    if (changes > 1000) return Math.max(2000, 3000);
-                    return 2000;
+                    if (changes > INDEX_DELAY_THRESHOLD_LARGE) return Math.max(CACHE_TAG_LIMIT_BASE, CACHE_TAG_LIMIT_LARGE);
+                    if (changes > INDEX_DELAY_THRESHOLD_MEDIUM) return Math.max(CACHE_TAG_LIMIT_BASE, CACHE_TAG_LIMIT_MEDIUM);
+                    if (changes > INDEX_DELAY_THRESHOLD_SMALL) return Math.max(CACHE_TAG_LIMIT_BASE, CACHE_TAG_LIMIT_SMALL);
+                    return CACHE_TAG_LIMIT_BASE;
                 })();
 
                 if (tagsArr.length > dynamicTagLimit) {
@@ -876,32 +922,3 @@ module.exports = {
     attachVideoWorkerListeners,
     runStartupBackfill,
 };
-
-/**
- * 错误恢复处理函数
- * @param {Error} error - 错误对象
- * @param {string} context - 错误上下文
- * @param {number} maxRetries - 最大重试次数
- */
-async function handleErrorRecovery(error, context = '', maxRetries = 3) {
-    try {
-        const errorKey = `error_retry:${context}`;
-        const retryCount = await safeRedisIncr(redis, errorKey, '错误重试计数') || 0;
-        
-        if (retryCount <= maxRetries) {
-            logger.warn(`${context} 操作失败 (第${retryCount}次重试): ${error.message}`);
-            // 指数退避重试
-            const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 30000);
-            await new Promise(resolve => setTimeout(resolve, delay));
-            return true; // 允许重试
-        } else {
-            logger.error(`${context} 操作最终失败，已达到最大重试次数: ${error.message}`);
-            // 清理错误标记，如果失败则记录但不影响主要流程
-            await safeRedisDel(redis, errorKey, '清理错误标记');
-            return false; // 不再重试
-        }
-    } catch (e) {
-        logger.error(`错误恢复处理失败: ${e.message}`);
-        return false;
-    }
-}

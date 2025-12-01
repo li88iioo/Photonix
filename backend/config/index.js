@@ -86,6 +86,22 @@ const INDEX_STABILIZE_DELAY_MS = parseInt(process.env.INDEX_STABILIZE_DELAY_MS) 
 const INDEX_BATCH_SIZE = __rt.INDEX_BATCH_SIZE; // 索引批量大小
 const INDEX_CONCURRENCY = __rt.INDEX_CONCURRENCY; // 索引并发数
 
+// 索引服务高级配置（从 indexer.service.js 迁移，用于性能调优）
+const VIDEO_BATCH_SIZE = Number(process.env.VIDEO_BATCH_SIZE || 10); // 视频批处理大小：单次处理的视频数量上限，避免内存占用过高
+const INDEX_FULL_REBUILD_THRESHOLD = Number(process.env.INDEX_FULL_REBUILD_THRESHOLD || 5000); // 全量索引重建阈值：当待处理文件变更数超过此值时，直接触发全量索引重建而非增量更新（大量增量更新的性能可能不如全量重建，且能保证数据一致性）
+const INDEX_MANUAL_WAIT_TIMEOUT_MS = Number(process.env.INDEX_MANUAL_WAIT_TIMEOUT_MS || 60000); // 手动索引等待超时：手动触发索引时等待当前索引完成的最大时长（毫秒）
+
+// 索引延迟阈值：根据待处理变更数量动态调整聚合延迟，减少抖动
+const INDEX_DELAY_THRESHOLD_LARGE = Number(process.env.INDEX_DELAY_THRESHOLD_LARGE || 10000); // 大量变更（>10000）：延迟30秒以聚合更多变更
+const INDEX_DELAY_THRESHOLD_MEDIUM = Number(process.env.INDEX_DELAY_THRESHOLD_MEDIUM || 5000); // 中等变更（>5000）：延迟20秒
+const INDEX_DELAY_THRESHOLD_SMALL = Number(process.env.INDEX_DELAY_THRESHOLD_SMALL || 1000); // 少量变更（>1000）：延迟10秒
+
+// 缓存标签动态上限：当标签数量超过上限时，降级为粗粒度缓存清理（SCAN route:browse:*）
+const CACHE_TAG_LIMIT_LARGE = Number(process.env.CACHE_TAG_LIMIT_LARGE || 6000); // 大量变更（>10000）：上限6000个标签
+const CACHE_TAG_LIMIT_MEDIUM = Number(process.env.CACHE_TAG_LIMIT_MEDIUM || 4000); // 中等变更（>5000）：上限4000个标签
+const CACHE_TAG_LIMIT_SMALL = Number(process.env.CACHE_TAG_LIMIT_SMALL || 3000); // 少量变更（>1000）：上限3000个标签
+const CACHE_TAG_LIMIT_BASE = Number(process.env.CACHE_TAG_LIMIT_BASE || 2000); // 基础上限：默认2000个标签
+
 // --- 文件服务配置 ---
 const FILE_BATCH_SIZE = Number(process.env.FILE_BATCH_SIZE || 200); // 文件批处理大小
 const FILE_CACHE_DURATION = Number(process.env.FILE_CACHE_DURATION || 604800); // 文件缓存时长（秒）
@@ -164,6 +180,16 @@ module.exports = {
     INDEX_STABILIZE_DELAY_MS,
     INDEX_BATCH_SIZE,
     INDEX_CONCURRENCY,
+    VIDEO_BATCH_SIZE,
+    INDEX_FULL_REBUILD_THRESHOLD,
+    INDEX_MANUAL_WAIT_TIMEOUT_MS,
+    INDEX_DELAY_THRESHOLD_LARGE,
+    INDEX_DELAY_THRESHOLD_MEDIUM,
+    INDEX_DELAY_THRESHOLD_SMALL,
+    CACHE_TAG_LIMIT_LARGE,
+    CACHE_TAG_LIMIT_MEDIUM,
+    CACHE_TAG_LIMIT_SMALL,
+    CACHE_TAG_LIMIT_BASE,
 
     // 文件服务配置
     FILE_BATCH_SIZE,

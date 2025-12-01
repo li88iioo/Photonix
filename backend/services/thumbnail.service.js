@@ -10,6 +10,7 @@ const { LOG_PREFIXES } = logger;
 const { TraceManager } = require('../utils/trace');
 const { redis } = require('../config/redis');
 const { safeRedisIncr, safeRedisSet, safeRedisDel, safeRedisExpire, safeRedisGet } = require('../utils/helpers');
+const { RetryManager } = require('../utils/retry');
 const { THUMBS_DIR, PHOTOS_DIR, MAX_THUMBNAIL_RETRIES, INITIAL_RETRY_DELAY, NUM_WORKERS } = require('../config');
 const workerManager = require('./worker.manager');
 const {
@@ -53,7 +54,7 @@ function logThumbIgnore(scope, error) {
 
 // 简化的任务管理
 const activeTasks = new Set();          // 正在处理的任务集合
-const failureCounts = new Map();        // 任务失败次数统计
+// 注意：重试计数由 RetryManager 在 Redis 中持久化管理，此处仅保留时间戳用于指标
 const failureTimestamps = new Map();    // 失败记录的时间戳
 
 // 单一优先队列：0=ondemand, 1=batch
@@ -163,13 +164,19 @@ setInterval(() => {
     let cleanedFailures = 0;
     let cleanedTasks = 0;
 
-    // 清理失败计数记录
+    // 清理失败时间戳记录（重试计数由 RetryManager 通过 Redis TTL 自动清理）
+    const expiredPaths = [];
     for (const [path, timestamp] of failureTimestamps.entries()) {
         if ((now - timestamp) > FAILURE_ENTRY_TTL_MS) {
-            failureCounts.delete(path);
             failureTimestamps.delete(path);
+            expiredPaths.push(`thumb:${path}`); // 收集需要清理的 RetryManager 上下文
             cleanedFailures++;
         }
+    }
+
+    // 清理 RetryManager 的降级计数（仅在 Redis 不可用时才存在）
+    if (expiredPaths.length > 0) {
+        RetryManager.clearFallbackCounts(expiredPaths);
     }
 
     // 清理活动任务记录（防止任务卡住）
@@ -448,7 +455,9 @@ async function handleWorkerResult(task, workerResult) {
 async function processWorkerSuccess(task, skipped) {
     const relativePath = task.relativePath;
     const failureKey = `thumb_failed_permanently:${relativePath}`;
-    failureCounts.delete(relativePath);
+
+    // 清理重试计数（成功后重置）
+    await RetryManager.resetRetryCount(`thumb:${relativePath}`);
     failureTimestamps.delete(relativePath);
 
     if (skipped) {
@@ -521,7 +530,7 @@ async function processWorkerFailure(task, errorPayload) {
                 try {
                     await fs.unlink(task.filePath).catch(() => { });
                     logger.error(`[THUMB] [CORRUPTED_IMAGE_DELETED] 已因出现 ${corruptCount} 次"${CORRUPT_PARSE_SNIPPET}"而删除源文件: ${task.filePath}`);
-                    failureCounts.delete(relativePath);
+                    await RetryManager.resetRetryCount(`thumb:${relativePath}`);
                     failureTimestamps.delete(relativePath);
                     await safeRedisSet(redis, failureKey, '1', 'EX', 3600 * 24 * 7, '缩略图永久失败标记');
                     await safeRedisDel(redis, corruptionKey, '清理缩略图损坏标记');
@@ -536,11 +545,17 @@ async function processWorkerFailure(task, errorPayload) {
         logger.debug(`[THUMB] 损坏文件检测逻辑失败: ${err.message}`);
     }
 
-    const currentFailures = (failureCounts.get(relativePath) || 0) + 1;
-    failureCounts.set(relativePath, currentFailures);
+    // 使用 RetryManager 管理重试计数（Redis 持久化 + 指数退避）
+    const retryInfo = await RetryManager.incrementRetryCount(
+        `thumb:${relativePath}`,
+        MAX_THUMBNAIL_RETRIES,
+        INITIAL_RETRY_DELAY,
+        30000 // 最大延迟 30 秒
+    );
+
     failureTimestamps.set(relativePath, Date.now());
     updateTaskTimestamp(relativePath);
-    logger.error(`[THUMB] 处理任务失败: ${relativePath} (第 ${currentFailures} 次)。错误: ${message}`);
+    logger.error(`[THUMB] 处理任务失败: ${relativePath} (第 ${retryInfo.retryCount} 次)。错误: ${message}`);
     await safeRedisIncr(redis, 'metrics:thumb:fail', '缩略图失败指标');
 
     thumbMetrics.failures += 1;
@@ -550,12 +565,11 @@ async function processWorkerFailure(task, errorPayload) {
     let statusForDb = 'failed';
     if (deletedByCorruptionRule) {
         thumbMetrics.permanentFailures += 1;
-        failureCounts.delete(relativePath);
+        await RetryManager.resetRetryCount(`thumb:${relativePath}`);
         failureTimestamps.delete(relativePath);
         statusForDb = 'permanent_failed';
-    } else if (currentFailures < MAX_THUMBNAIL_RETRIES) {
-        const retryDelay = INITIAL_RETRY_DELAY * Math.pow(2, currentFailures - 1);
-        logger.warn(`任务 ${relativePath} 将在 ${retryDelay / 1000}秒 后重试...`);
+    } else if (retryInfo.shouldRetry) {
+        logger.warn(`任务 ${relativePath} 将在 ${retryInfo.delay / 1000}秒 后重试 (第 ${retryInfo.retryCount}/${MAX_THUMBNAIL_RETRIES} 次)...`);
         thumbMetrics.retries += 1;
         setTimeout(() => {
             dispatchThumbnailTask({
@@ -563,13 +577,12 @@ async function processWorkerFailure(task, errorPayload) {
                 relativePath: task.relativePath,
                 type: task.type,
             });
-        }, retryDelay);
+        }, retryInfo.delay);
     } else {
         logger.error(`任务 ${relativePath} 已达到最大重试次数 (${MAX_THUMBNAIL_RETRIES}次)，标记为永久失败。`);
         await safeRedisSet(redis, failureKey, '1', 'EX', 3600 * 24 * 7, '缩略图永久失败标记');
         await safeRedisIncr(redis, 'metrics:thumb:permanent_fail', '缩略图永久失败指标');
         thumbMetrics.permanentFailures += 1;
-        failureCounts.delete(relativePath);
         failureTimestamps.delete(relativePath);
         statusForDb = 'permanent_failed';
     }

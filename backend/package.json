@@ -27,7 +27,6 @@
         "joi": "^17.11.0",
         "jsonwebtoken": "^9.0.2",
         "mime-types": "^2.1.35",
-        "node-cron": "^3.0.3",
         "p-queue": "^8.0.1",
         "piscina": "^5.1.4",
         "rate-limit-redis": "^3.1.0",

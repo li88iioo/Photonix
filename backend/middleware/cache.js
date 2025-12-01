@@ -279,9 +279,9 @@ function cache(duration) {
                     if (!flightOwner?.entry) return;
                     if (err) {
                         const reason = err && err.message ? err.message : 'unknown';
-                        const logLevel = reason === 'response_aborted' ? 'warn' : 'error';
+                        const logLevel = reason === 'response_aborted' ? 'debug' : 'error';
                         const logMessage = reason === 'response_aborted'
-                            ? `[CACHE] SingleFlight 领导者响应在构建缓存时中断: ${req.originalUrl}`
+                            ? `[CACHE] SingleFlight 领导者响应在构建缓存时中断（客户端主动断开）: ${req.originalUrl}`
                             : `[CACHE] SingleFlight 领导者执行异常: ${req.originalUrl} -> ${reason}`;
                         logger[logLevel](logMessage);
                         if (flightOwner?.entry) {

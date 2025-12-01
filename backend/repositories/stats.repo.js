@@ -4,6 +4,7 @@
  */
 const { dbAll, dbGet } = require('../db/multi-db');
 const logger = require('../config/logger');
+const { RetryManager } = require('../utils/retry');
 
 /**
  * 获取表中记录总数
@@ -162,32 +163,33 @@ async function getThumbProcessingStats() {
     }
 
     // 缓存失效，执行查询（带重试机制）
-    const maxRetries = 3;
-    const retryDelay = 1000; // 1秒基础延迟
+    try {
+        const count = await RetryManager.executeWithRetry(
+            async () => {
+                const row = await dbGet('main', "SELECT COUNT(*) as count FROM thumb_status WHERE status IN ('missing','pending','failed','processing')");
+                const result = Number(row?.count || 0);
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-            const row = await dbGet('main', "SELECT COUNT(*) as count FROM thumb_status WHERE status IN ('missing','pending','failed','processing')");
-            const count = Number(row?.count || 0);
+                // 更新缓存
+                thumbStatsCache = {
+                    count: result,
+                    timestamp: now
+                };
 
-            // 更新缓存
-            thumbStatsCache = {
-                count,
-                timestamp: now
-            };
-
-            return count;
-        } catch (error) {
-            if (attempt === maxRetries) {
-                logger.warn(`获取缩略图处理状态统计失败 (重试${maxRetries}次后放弃):`, error.message);
-                // 查询失败时返回缓存的旧值（如果有的话）
-                return thumbStatsCache.count;
+                return result;
+            },
+            {
+                context: 'thumb-processing-stats-query',
+                maxRetries: 3,
+                baseDelay: 1000,
+                maxDelay: 8000
             }
+        );
 
-            logger.debug(`缩略图统计查询失败，重试 ${attempt}/${maxRetries}:`, error.message);
-            // 指数退避延迟
-            await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
-        }
+        return count;
+    } catch (error) {
+        // 查询失败时返回缓存的旧值（降级策略）
+        logger.warn(`获取缩略图处理状态统计失败，返回缓存值 (${thumbStatsCache.count}):`, error.message);
+        return thumbStatsCache.count;
     }
 }
 

@@ -3,7 +3,7 @@
  * @description 任务调度管理器，负责RSS任务的定时执行和调度
  */
 
-const cron = require('node-cron');
+const { CronJob } = require('cron');
 const { Mutex } = require('async-mutex');
 
 class TaskScheduler {
@@ -67,14 +67,17 @@ class TaskScheduler {
     if (typeof resolved === 'string') {
       // Cron表达式
       try {
-        const job = cron.schedule(resolved, () => {
-          executeCallback(task.id).catch((error) => {
-            console.error('自动执行任务失败', { taskId: task.id, error: error.message });
-          });
-        }, {
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
-        });
-        job.start();
+        const job = new CronJob(
+          resolved, // cronTime
+          () => {   // onTick
+            executeCallback(task.id).catch((error) => {
+              console.error('自动执行任务失败', { taskId: task.id, error: error.message });
+            });
+          },
+          null,     // onComplete
+          true,     // start immediately
+          Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' // timeZone
+        );
         this.cronJobs.set(task.id, job);
         task.schedule.next = null;
         if (immediate) {
