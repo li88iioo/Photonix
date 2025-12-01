@@ -2,27 +2,22 @@
  * 缓存服务模块
  * 提供基于标签的、更精细的缓存管理策略
  */
-const { redis, waitForRedisReady } = require('../config/redis');
+const { redis } = require('../config/redis');
 const logger = require('../config/logger');
 const { safeRedisGet, safeRedisDel, safeRedisSet } = require('../utils/helpers');
 
 const TAG_PREFIX = 'tag:';
 const QUERY_CACHE_PREFIX = 'query:';
 const QUERY_CACHE_TTL = 300; // 5分钟缓存时间
-const CACHE_REDIS_WAIT_MS = Math.max(0, Number(process.env.CACHE_REDIS_WAIT_MS || 2000));
-
 let redisNoOpWarned = false;
 
-async function resolveRedisClient(scope = '缓存操作') {
+function resolveRedisClient(scope = '缓存操作') {
     if (!redis || redis.isNoRedis) {
-        const ready = await waitForRedisReady(CACHE_REDIS_WAIT_MS);
-        if (!ready || !redis || redis.isNoRedis) {
-            if (!redisNoOpWarned) {
-                redisNoOpWarned = true;
-                logger.info(`Redis 未连接或处于 No-Op 模式，已跳过${scope}。`);
-            }
-            return null;
+        if (!redisNoOpWarned) {
+            redisNoOpWarned = true;
+            logger.info(`Redis 未连接或处于 No-Op 模式，已跳过${scope}。`);
         }
+        return null;
     }
     return redis;
 }
@@ -32,7 +27,7 @@ async function resolveRedisClient(scope = '缓存操作') {
  * @param {string|string[]} tags - 要使其失效的单个标签或标签数组
  */
 async function invalidateTags(tags) {
-    const client = await resolveRedisClient('路由缓存失效操作');
+    const client = resolveRedisClient('路由缓存失效操作');
     if (!client) return;
     const tagsToInvalidate = Array.isArray(tags) ? tags : [tags];
     if (tagsToInvalidate.length === 0) {
@@ -84,7 +79,7 @@ async function invalidateTags(tags) {
  * @returns {Promise<void>}
  */
 async function addTagsToKey(key, tags) {
-    const client = await resolveRedisClient('缓存标签添加');
+    const client = resolveRedisClient('缓存标签添加');
     if (!client) return;
     const tagsToAdd = Array.isArray(tags) ? tags : [tags];
     if (tagsToAdd.length === 0) {
@@ -110,7 +105,7 @@ async function addTagsToKey(key, tags) {
  * @param {number} ttl - 缓存时间（秒）
  */
 async function cacheQueryResult(queryKey, data, tags = [], ttl = QUERY_CACHE_TTL) {
-    const client = await resolveRedisClient('查询结果缓存写入');
+    const client = resolveRedisClient('查询结果缓存写入');
     if (!client) return;
     try {
         const cacheKey = `${QUERY_CACHE_PREFIX}${queryKey}`;
@@ -136,7 +131,7 @@ async function cacheQueryResult(queryKey, data, tags = [], ttl = QUERY_CACHE_TTL
  * @returns {Promise<any|null>} 缓存的数据或null
  */
 async function getCachedQueryResult(queryKey) {
-    const client = await resolveRedisClient('查询缓存读取');
+    const client = resolveRedisClient('查询缓存读取');
     if (!client) return null;
 
     const cacheKey = `${QUERY_CACHE_PREFIX}${queryKey}`;
@@ -161,7 +156,7 @@ async function getCachedQueryResult(queryKey) {
  * @param {string|string[]} queryKeys - 要失效的查询键
  */
 async function invalidateQueryCache(queryKeys) {
-    const client = await resolveRedisClient('查询缓存失效');
+    const client = resolveRedisClient('查询缓存失效');
     if (!client) return;
 
     const keysToInvalidate = Array.isArray(queryKeys) ? queryKeys : [queryKeys];
