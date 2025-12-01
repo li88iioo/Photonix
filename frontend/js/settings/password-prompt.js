@@ -4,8 +4,6 @@
  */
 
 import { resolveMessage } from '../shared/utils.js';
-import { safeGetElementById, safeClassList, safeSetStyle, safeGetStyle } from '../shared/dom-utils.js';
-
 /**
  * 显示密码或管理员密钥确认弹窗并处理用户响应。
  * @param {Object} options - 弹窗配置
@@ -22,7 +20,7 @@ export function showPasswordPrompt({
   descriptionText,
   placeholderText
 }) {
-  const template = safeGetElementById('password-prompt-template');
+  const template = document.getElementById('password-prompt-template');
   if (!template) return;
 
   const promptElement = template.content.cloneNode(true).firstElementChild;
@@ -50,7 +48,7 @@ export function showPasswordPrompt({
   let closeReason = 'cancel';
 
   const closePrompt = () => {
-    safeClassList(promptElement, 'remove', 'active');
+    promptElement?.classList.remove('active');
     promptElement.addEventListener('transitionend', () => promptElement.remove(), { once: true });
     if (closeReason === 'cancel' && onCancel) {
       onCancel();
@@ -58,40 +56,40 @@ export function showPasswordPrompt({
   };
 
   requestAnimationFrame(() => {
-    safeClassList(promptElement, 'add', 'active');
+    promptElement?.classList.add('active');
     input.focus();
   });
 
   toggleBtn.addEventListener('click', () => {
     const isPassword = input.type === 'password';
     input.type = isPassword ? 'text' : 'password';
-    safeSetStyle(toggleBtn.querySelector('.eye-open'), 'display', isPassword ? 'none' : 'block');
-    safeSetStyle(toggleBtn.querySelector('.eye-closed'), 'display', isPassword ? 'block' : 'none');
+    toggleBtn.querySelector('.eye-open').style.display = isPassword ? 'none' : 'block';
+    toggleBtn.querySelector('.eye-closed').style.display = isPassword ? 'block' : 'none';
     input.focus();
   });
 
   confirmBtn.addEventListener('click', async () => {
-    safeClassList(inputGroup, 'remove', 'error');
+    inputGroup?.classList.remove('error');
     errorMsg.textContent = '';
-    safeClassList(cardEl, 'remove', 'shake');
+    cardEl?.classList.remove('shake');
 
     if (!input.value) {
       errorMsg.textContent = '密码不能为空。';
-      safeClassList(inputGroup, 'add', 'error');
-      safeClassList(cardEl, 'add', 'shake');
+      inputGroup?.classList.add('error');
+      cardEl?.classList.add('shake');
       input.focus();
       return;
     }
 
-    safeClassList(confirmBtn, 'add', 'loading');
+    confirmBtn?.classList.add('loading');
     confirmBtn.disabled = true;
     cancelBtn.disabled = true;
 
     try {
       const success = await onConfirm(input.value);
       if (success !== false) {
-        safeClassList(inputGroup, 'add', 'success');
-        safeClassList(confirmBtn, 'remove', 'loading');
+        inputGroup?.classList.add('success');
+        confirmBtn?.classList.remove('loading');
         confirmBtn.disabled = false;
         cancelBtn.disabled = false;
         closeReason = 'success';
@@ -101,11 +99,11 @@ export function showPasswordPrompt({
         throw new Error(manualMessage);
       }
     } catch (err) {
-      safeClassList(confirmBtn, 'remove', 'loading');
+      confirmBtn?.classList.remove('loading');
       confirmBtn.disabled = false;
       cancelBtn.disabled = false;
-      safeClassList(cardEl, 'add', 'shake');
-      safeClassList(inputGroup, 'add', 'error');
+      cardEl?.classList.add('shake');
+      inputGroup?.classList.add('error');
       const fallbackMessage = useAdminSecret ? '管理员密钥错误，请重新输入' : '密码错误或验证失败';
       errorMsg.textContent = resolveMessage(err, fallbackMessage);
       input.focus();
@@ -116,7 +114,7 @@ export function showPasswordPrompt({
   });
 
   input.addEventListener('input', () => {
-    safeClassList(inputGroup, 'remove', 'error');
+    inputGroup?.classList.remove('error');
     errorMsg.textContent = '';
   });
 

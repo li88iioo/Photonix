@@ -3,7 +3,6 @@
  * @description 维护设置模块共享上下文，提供元素引用与初始状态
  */
 
-import { safeGetElementById } from '../shared/dom-utils.js';
 
 const settingsContext = {
   modal: null,
@@ -27,9 +26,9 @@ const settingsContext = {
  * @returns {typeof settingsContext} 更新后的上下文对象
  */
 export function initializeContext() {
-  settingsContext.modal = safeGetElementById('settings-modal');
-  settingsContext.card = safeGetElementById('settings-card');
-  settingsContext.template = safeGetElementById('settings-form-template');
+  settingsContext.modal = document.getElementById('settings-modal');
+  settingsContext.card = document.getElementById('settings-card');
+  settingsContext.template = document.getElementById('settings-form-template');
   return settingsContext;
 }
 

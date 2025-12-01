@@ -6,7 +6,7 @@
 import { elements } from '../../shared/dom-elements.js';
 import { getMasonryBreakpoints, getMasonryColumnsConfig, getMasonryConfig, VIRTUAL_SCROLL } from '../../core/constants.js';
 import { createModuleLogger } from '../../core/logger.js';
-import { safeSetInnerHTML, safeSetStyle, safeClassList } from '../../shared/dom-utils.js';
+import { safeSetInnerHTML} from '../../shared/dom-utils.js';
 import { displayAlbum } from './ui.js';
 
 const masonryLogger = createModuleLogger('Masonry');
@@ -68,7 +68,7 @@ let virtualScroller = null;
  */
 export function applyMasonryLayoutIncremental(newItems) {
     const { contentGrid } = elements;
-    if (!safeClassList(contentGrid, 'contains', 'masonry-mode')) return;
+    if (!contentGrid?.classList.contains('masonry-mode')) return;
     if (!newItems || newItems.length === 0) return;
     if (isLayingOut) return;
 
@@ -123,9 +123,9 @@ export function applyMasonryLayoutIncremental(newItems) {
                 item.style.opacity = '';
                 item.style.pointerEvents = '';
             });
-            
+
             // 更新容器高度
-            safeSetStyle(contentGrid, 'height', `${Math.max(...masonryColumnHeights)}px`);
+            contentGrid.style.height = `${Math.max(...masonryColumnHeights)}px`;
         });
         
     } finally {
@@ -139,7 +139,7 @@ export function applyMasonryLayoutIncremental(newItems) {
  */
 export function applyMasonryLayout() {
     const { contentGrid } = elements;
-    if (!safeClassList(contentGrid, 'contains', 'masonry-mode')) return;
+    if (!contentGrid?.classList.contains('masonry-mode')) return;
     if (isLayingOut) return;
 
     const items = Array.from(contentGrid.children);
@@ -208,7 +208,7 @@ export function applyMasonryLayout() {
         
         // 设置容器高度
         const maxHeight = Math.max(...masonryColumnHeights);
-        safeSetStyle(contentGrid, 'height', `${maxHeight}px`);
+        contentGrid.style.height = `${maxHeight}px`;
         
         // ✅ 调试信息
         masonryLogger.debug('Masonry layout applied', {
@@ -370,7 +370,7 @@ export function initializeVirtualScroll(items, renderCallback) {
                     renderCallback: enhancedRenderCallback
                 });
                 virtualScroller.setItems(items);
-                safeClassList(contentGrid, 'add', 'virtual-scroll-mode');
+                contentGrid?.classList.add('virtual-scroll-mode');
                 // 添加滚动事件监听，触发懒加载
                 setupVirtualScrollLazyLoading();
                 // 确保懒加载系统初始化
@@ -387,7 +387,7 @@ export function initializeVirtualScroll(items, renderCallback) {
             });
         } else {
             virtualScroller.setItems(items);
-            safeClassList(contentGrid, 'add', 'virtual-scroll-mode');
+            contentGrid?.classList.add('virtual-scroll-mode');
             setTimeout(() => {
                 if (!globalImageObserverRef) {
                     getLazyloadModule().then(lazyload => {
@@ -410,7 +410,7 @@ export function initializeVirtualScroll(items, renderCallback) {
             virtualScroller.destroy();
             virtualScroller = null;
         }
-        safeClassList(contentGrid, 'remove', 'virtual-scroll-mode');
+        contentGrid?.classList.remove('virtual-scroll-mode');
         return false;
     }
 }
@@ -532,7 +532,7 @@ const virtualScrollLazyLoader = {
             const { contentGrid } = elements;
             if (!contentGrid) return;
             // 检查是否处于虚拟滚动模式
-            const isVirtualScroll = safeClassList(contentGrid, 'contains', 'virtual-scroll-mode');
+            const isVirtualScroll = contentGrid?.classList.contains('virtual-scroll-mode');
             if (!isVirtualScroll) return;
             // 获取懒加载模块
             const { enqueueLazyImage } = await getLazyloadModule();
@@ -553,7 +553,7 @@ const virtualScrollLazyLoader = {
                 const imgTop = currentScrollTop + rect.top;
                 const imgBottom = currentScrollTop + rect.bottom;
                 if (imgTop >= visibleTop && imgBottom <= visibleBottom) {
-                    if (img.dataset.src && !safeClassList(img, 'contains', 'loaded') && img.dataset.thumbStatus !== 'processing') {
+                    if (img.dataset.src && !img?.classList.contains('loaded') && img.dataset.thumbStatus !== 'processing') {
                         masonryLogger.debug('虚拟滚动备用：触发图片懒加载', { src: img.dataset.src });
                         enqueueLazyImage(img, { rect });
                         this.processedImages.add(imgId);
@@ -624,7 +624,7 @@ export function createVirtualScrollRenderCallback(item, element, index) {
  */
 function renderAlbumForVirtualScroll(albumData, element, index) {
     const albumNode = displayAlbum(albumData);
-    safeClassList(albumNode, 'add', 'virtual-scroll-item');
+    albumNode?.classList.add('virtual-scroll-item');
     albumNode.dataset.index = index;
     albumNode.style.position = 'absolute';
     albumNode.style.top = '0px';
@@ -649,7 +649,7 @@ function renderMediaForVirtualScroll(type, mediaData, element, index) {
 
     // 设置基本样式
     element.className = 'photo-item virtual-item group block bg-gray-800 rounded-lg overflow-hidden cursor-pointer';
-    safeSetStyle(element, {
+    Object.assign(element.style, {
         position: 'absolute',
         aspectRatio: aspectRatio
     });
@@ -662,13 +662,13 @@ function renderMediaForVirtualScroll(type, mediaData, element, index) {
     // 创建相对定位容器
     const relativeDiv = document.createElement('div');
     relativeDiv.className = 'relative w-full h-full';
-    safeSetStyle(relativeDiv, 'aspectRatio', aspectRatio);
+    relativeDiv.style.aspectRatio = aspectRatio;
 
     // 占位层
     const placeholder = document.createElement('div');
     placeholder.className = 'image-placeholder absolute inset-0';
     if (!mediaData.height || !mediaData.width) {
-        safeClassList(placeholder, 'add', 'min-h-[200px]');
+        placeholder?.classList.add('min-h-[200px]');
     }
     relativeDiv.appendChild(placeholder);
 
@@ -694,12 +694,12 @@ function renderMediaForVirtualScroll(type, mediaData, element, index) {
 
     // 图片事件监听
     img.onload = () => {
-        safeClassList(img, 'add', 'loaded');
+        img?.classList.add('loaded');
         // ✅ 虚拟滚动模式下不触发重排，位置已由虚拟滚动器管理
         // triggerMasonryUpdate();
     };
     img.onerror = () => {
-        safeClassList(img, 'add', 'error');
+        img?.classList.add('error');
         // ✅ 虚拟滚动模式下不触发重排
         // triggerMasonryUpdate();
     };
@@ -707,7 +707,7 @@ function renderMediaForVirtualScroll(type, mediaData, element, index) {
 
     // 将新渲染的图片添加到 Intersection Observer
     setTimeout(async () => {
-        if (!img._observed && safeClassList(img, 'contains', 'lazy-image')) {
+        if (!img._observed && img?.classList.contains('lazy-image')) {
             try {
                 if (!globalImageObserverRef) {
                     const lazyload = await getLazyloadModule();

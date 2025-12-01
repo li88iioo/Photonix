@@ -6,7 +6,7 @@
 import { escapeHtml } from '../../shared/security.js';
 import { createModuleLogger } from '../../core/logger.js';
 import { SEARCH_HISTORY } from '../../core/constants.js';
-import { safeSetInnerHTML, safeClassList } from '../../shared/dom-utils.js';
+import { safeSetInnerHTML} from '../../shared/dom-utils.js';
 
 const searchLogger = createModuleLogger('SearchHistory');
 
@@ -91,8 +91,8 @@ export function renderSearchHistory(searchInput, historyContainer) {
 
     if (history.length === 0) {
         safeSetInnerHTML(historyContainer, '');
-        safeClassList(historyContainer, 'add', 'hidden');
-        safeClassList(historyContainer, 'remove', 'search-panel-active');
+        historyContainer?.classList.add('hidden');
+        historyContainer?.classList.remove('search-panel-active');
         return;
     }
 
@@ -118,7 +118,7 @@ export function renderSearchHistory(searchInput, historyContainer) {
         </ul>
     `);
 
-    safeClassList(historyContainer, 'remove', 'hidden');
+    historyContainer?.classList.remove('hidden');
 
     // 绑定事件
     bindSearchHistoryEvents(searchInput, historyContainer);
@@ -138,7 +138,7 @@ function bindSearchHistoryEvents(searchInput, historyContainer) {
             const query = historyItem.dataset.query;
             searchInput.value = query;
             searchInput.focus();
-            safeClassList(historyContainer, 'add', 'hidden');
+            historyContainer?.classList.add('hidden');
 
             // 触发 input 事件以执行搜索
             const inputEvent = new Event('input', { bubbles: true });
@@ -163,7 +163,7 @@ function bindSearchHistoryEvents(searchInput, historyContainer) {
         if (clearBtn) {
             e.stopPropagation();
             clearSearchHistory();
-            safeClassList(historyContainer, 'add', 'hidden');
+            historyContainer?.classList.add('hidden');
         }
     });
 }
@@ -180,12 +180,12 @@ export function showSearchHistory(searchInput, historyContainer) {
 
     // 只有在容器不是hidden状态时才添加动画类
     // (renderSearchHistory在没有历史记录时会添加hidden类)
-    if (!safeClassList(historyContainer, 'contains', 'hidden')) {
+    if (!historyContainer?.classList.contains('hidden')) {
         // 移除hidden类并添加动画类
-        safeClassList(historyContainer, 'remove', 'hidden');
+        historyContainer?.classList.remove('hidden');
         // 触发重排以确保动画生效
         requestAnimationFrame(() => {
-            safeClassList(historyContainer, 'add', 'search-panel-active');
+            historyContainer?.classList.add('search-panel-active');
         });
     }
 }
@@ -196,9 +196,9 @@ export function showSearchHistory(searchInput, historyContainer) {
  * @returns {void}
  */
 export function hideSearchHistory(historyContainer) {
-    safeClassList(historyContainer, 'remove', 'search-panel-active');
+    historyContainer?.classList.remove('search-panel-active');
     // 等待动画完成后再隐藏
     setTimeout(() => {
-        safeClassList(historyContainer, 'add', 'hidden');
+        historyContainer?.classList.add('hidden');
     }, 200);
 }

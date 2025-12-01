@@ -6,7 +6,7 @@
 import { state, clearExpiredAlbumTombstones, getAlbumTombstonesMap } from '../core/state.js';
 import { elements } from '../shared/dom-elements.js';
 import { applyMasonryLayout, getMasonryColumns } from '../features/gallery/masonry.js';
-import { setupLazyLoading } from '../features/gallery/lazyload.js';
+import { setupLazyLoading, clearLazyloadQueue } from '../features/gallery/lazyload.js';
 import { fetchSearchResults, fetchBrowseResults } from './api.js';
 import {
     renderBreadcrumb,
@@ -34,7 +34,7 @@ import {
     showEmptyViewedHistory
 } from '../features/gallery/loading-states.js';
 import { routerLogger } from '../core/logger.js';
-import { safeSetInnerHTML, safeGetElementById, safeClassList, safeSetStyle } from '../shared/dom-utils.js';
+import { safeSetInnerHTML } from '../shared/dom-utils.js';
 import { showNotification } from '../shared/utils.js';
 import { setManagedTimeout } from '../core/timer-manager.js';
 import { CACHE, ROUTER } from '../core/constants.js';
@@ -133,6 +133,7 @@ export async function handleHashChange() {
     clearSortCache(); // 切换路由时清除排序缓存，确保浏览记录实时生效
     persistRouteState();
     AbortBus.abortMany(['page', 'scroll']);
+    clearLazyloadQueue(true); // 清空懒加载队列和缓存，避免页面切换后图片空白
     const pageSignal = AbortBus.next('page');
     const { cleanHashString, newDecodedPath } = sanitizeHash();
     refreshRouteEventListenersSafely();
@@ -339,7 +340,7 @@ async function handleBrowseRoute(navigation, pageSignal) {
         setManagedTimeout(async () => {
             const stillSameRoute = getPathOnlyFromHash() === navigation.pathOnly && AbortBus.get('page') === pageSignal;
             const noRealContent = !(elements.contentGrid && elements.contentGrid.querySelector('.grid-item'));
-            const hasErrorState = elements.contentGrid && safeClassList(elements.contentGrid, 'contains', 'error-container');
+            const hasErrorState = elements.contentGrid && elements.contentGrid?.classList.contains('error-container');
             const hasEmptyState = elements.contentGrid && elements.contentGrid.querySelector('.empty-state');
             const allowRetry = !hasErrorState && !hasEmptyState;
             if (stillSameRoute && noRealContent && allowRetry) {
@@ -392,7 +393,7 @@ async function renderRecentHistory(path, signal) {
         }
 
         const { contentElements, newMediaUrls } = renderBrowseGrid(items, 0);
-        const minimalLoader = safeGetElementById('minimal-loader');
+        const minimalLoader = document.getElementById('minimal-loader');
         if (minimalLoader) {
             minimalLoader.replaceWith(...contentElements);
         } else {
@@ -417,7 +418,7 @@ async function renderRecentHistory(path, signal) {
 
         import('../shared/dom-elements.js').then(({ reinitializeElements }) => {
             reinitializeElements();
-            const sortContainer = safeGetElementById('sort-container');
+            const sortContainer = document.getElementById('sort-container');
             if (sortContainer) {
                 if (hasMediaFiles) {
                     renderLayoutToggleOnly(true);
@@ -439,8 +440,8 @@ async function renderRecentHistory(path, signal) {
         showEmptyViewedHistory();
     } finally {
         state.isBrowseLoading = false;
-        if (!safeClassList(elements.contentGrid, 'contains', 'error-container')) {
-            safeSetStyle(elements.contentGrid, 'minHeight', '');
+        if (!elements.contentGrid?.classList.contains('error-container')) {
+            elements.contentGrid.style.minHeight = '';
         }
     }
 }
@@ -490,12 +491,12 @@ export async function streamPath(path, signal, navigation = null) {
 
 
         if (!data.items || data.items.length === 0) {
-            const sortContainer = safeGetElementById('sort-container');
+            const sortContainer = document.getElementById('sort-container');
             if (sortContainer) safeSetInnerHTML(sortContainer, '');
             state.totalBrowsePages = 0;
             state.currentBrowsePage = 1;
             // 隐藏无限加载器，提升UI性能
-            if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'remove', 'visible');
+            if (elements.infiniteScrollLoader) elements.infiniteScrollLoader?.classList.remove('visible');
             showEmptyAlbum();
             return;
         }
@@ -520,7 +521,7 @@ export async function streamPath(path, signal, navigation = null) {
 
         // 直接渲染所有项目（移除分批渲染逻辑）
         const { contentElements, newMediaUrls } = renderBrowseGrid(data.items, 0);
-        const minimalLoader = safeGetElementById('minimal-loader');
+        const minimalLoader = document.getElementById('minimal-loader');
         if (minimalLoader) {
             minimalLoader.replaceWith(...contentElements);
         } else {
@@ -544,7 +545,7 @@ export async function streamPath(path, signal, navigation = null) {
         // UI恢复与布局切换
         import('../shared/dom-elements.js').then(({ reinitializeElements }) => {
             reinitializeElements();
-            const sortContainer = safeGetElementById('sort-container');
+            const sortContainer = document.getElementById('sort-container');
             if (sortContainer) {
                 // 优化：布局切换始终显示，排序按钮仅在相册列表时显示
                 if (hasMediaFiles) {
@@ -582,8 +583,8 @@ export async function streamPath(path, signal, navigation = null) {
         return;
     } finally {
         state.isBrowseLoading = false;
-        if (!safeClassList(elements.contentGrid, 'contains', 'error-container')) {
-            safeSetStyle(elements.contentGrid, 'minHeight', '');
+        if (!elements.contentGrid?.classList.contains('error-container')) {
+            elements.contentGrid.style.minHeight = '';
         }
     }
 }
@@ -634,16 +635,16 @@ async function executeSearch(query, signal) {
             state.totalSearchPages = 0;
             state.currentSearchPage = 1;
             // 隐藏加载器
-            const loaderContainer = safeGetElementById('infinite-scroll-loader-container');
-            if (loaderContainer) safeClassList(loaderContainer, 'remove', 'visible');
+            const loaderContainer = document.getElementById('infinite-scroll-loader-container');
+            if (loaderContainer) loaderContainer?.classList.remove('visible');
             showEmptySearchResults(query);
-            safeSetStyle(elements.contentGrid, 'minHeight', '');
+            elements.contentGrid.style.minHeight = '';
             return;
         }
 
         // 直接渲染所有搜索结果（移除分批渲染逻辑）
         const { contentElements, newMediaUrls } = renderSearchGrid(data.results, 0);
-        const minimalLoader = safeGetElementById('minimal-loader');
+        const minimalLoader = document.getElementById('minimal-loader');
         if (minimalLoader) {
             minimalLoader.replaceWith(...contentElements);
         } else {
@@ -690,8 +691,8 @@ async function executeSearch(query, signal) {
         return;
     } finally {
         state.isSearchLoading = false;
-        if (!safeClassList(elements.contentGrid, 'contains', 'error-container')) {
-            safeSetStyle(elements.contentGrid, 'minHeight', '');
+        if (!elements.contentGrid?.classList.contains('error-container')) {
+            elements.contentGrid.style.minHeight = '';
         }
     }
 }
@@ -771,7 +772,7 @@ function prepareForNewContent(navigation = null) {
                 }
 
                 if (loaderShown) {
-                    const loader = safeGetElementById('minimal-loader');
+                    const loader = document.getElementById('minimal-loader');
                     if (loader && loader.parentNode) {
                         loader.remove();
                     }
@@ -785,10 +786,10 @@ function prepareForNewContent(navigation = null) {
 
         // 后台继续执行清理工作
         setManagedTimeout(() => {
-            safeSetStyle(elements.contentGrid, 'height', 'auto');
+            elements.contentGrid.style.height = 'auto';
             // 隐藏加载器
             if (elements.infiniteScrollLoader) {
-                safeClassList(elements.infiniteScrollLoader, 'remove', 'visible');
+                elements.infiniteScrollLoader?.classList.remove('visible');
             }
             // 仅路径切换才清空图片状态
             const currentPath = state.currentBrowsePath;
@@ -811,7 +812,7 @@ function finalizeNewContent(pathKey) {
         if (window.restorePageLazyState) {
             stateRestored = window.restorePageLazyState(pathKey);
         }
-        if (!stateRestored && safeClassList(elements.contentGrid, 'contains', 'masonry-mode')) {
+        if (!stateRestored && elements.contentGrid?.classList.contains('masonry-mode')) {
             // 延迟执行瀑布流布局，确保图片容器已正确渲染
             requestAnimationFrame(() => {
                 requestAnimationFrame(() => {
@@ -834,7 +835,7 @@ function finalizeNewContent(pathKey) {
     //     state.scrollPositions = newScrollPositions;
     // }
 
-    safeSetStyle(elements.contentGrid, 'minHeight', '');
+    elements.contentGrid.style.minHeight = '';
     state.update('isInitialLoad', false);
 }
 

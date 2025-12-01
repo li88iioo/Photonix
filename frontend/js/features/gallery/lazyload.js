@@ -8,9 +8,360 @@ import { AbortBus } from '../../core/abort-bus.js';
 import { triggerMasonryUpdate } from './masonry.js';
 import { getAuthToken } from '../../app/auth.js';
 import { createModuleLogger } from '../../core/logger.js';
-import { safeSetInnerHTML, safeSetStyle, safeClassList } from '../../shared/dom-utils.js';
+import { safeSetInnerHTML} from '../../shared/dom-utils.js';
 
 const lazyloadLogger = createModuleLogger('Lazyload');
+
+/**
+ * 高级请求队列管理器
+ * 特性：
+ * 1. 动态并发数调整（根据网络速度自适应）
+ * 2. 优先级队列（视口中心的图片优先加载）
+ * 3. 请求去重（避免重复请求）
+ * 4. 滚动方向预测（提前加载滚动方向的图片）
+ */
+const requestQueueManager = {
+    // ========== 1. 动态并发控制 ==========
+    /** @type {number} 当前最大并发数 */
+    maxConcurrent: 10,
+    /** @type {number} 最小并发数 */
+    minConcurrent: 4,
+    /** @type {number} 最大并发数上限 */
+    maxLimit: 20,
+    /** @type {number} 当前活跃的请求数 */
+    activeRequests: 0,
+
+    // 网络性能监控
+    /** @type {Array<number>} 最近的请求耗时（毫秒） */
+    recentRequestTimes: [],
+    /** @type {number} 平均响应时间 */
+    avgResponseTime: 0,
+
+    // ========== 2. 优先级队列 ==========
+    /** @type {Array<{img: HTMLImageElement, url: string, executor: Function, priority: number, timestamp: number}>} */
+    priorityQueue: [],
+
+    // ========== 3. 请求去重 ==========
+    /** @type {Map<string, Promise>} URL -> Promise 映射，避免重复请求 */
+    pendingRequests: new Map(),
+    /** @type {Set<string>} 已成功加载的 URL */
+    loadedUrls: new Set(),
+
+    // ========== 4. 滚动方向预测 ==========
+    /** @type {number} 上次滚动位置 */
+    lastScrollY: 0,
+    /** @type {'up'|'down'} 滚动方向 */
+    scrollDirection: 'down',
+    /** @type {number} 滚动速度 */
+    scrollVelocity: 0,
+    /** @type {number} 滚动监听器 ID */
+    scrollListenerId: null,
+
+    /**
+     * 初始化滚动监听
+     */
+    initScrollTracking() {
+        if (this.scrollListenerId) return;
+
+        let scrollTimer = null;
+        const updateScroll = () => {
+            const currentY = window.scrollY || window.pageYOffset || 0;
+            const delta = currentY - this.lastScrollY;
+
+            if (Math.abs(delta) > 5) {
+                this.scrollDirection = delta > 0 ? 'down' : 'up';
+                this.scrollVelocity = Math.abs(delta);
+
+                // 滚动时重新排序队列
+                if (this.priorityQueue.length > 0) {
+                    this.recalculateQueuePriorities();
+                }
+            }
+
+            this.lastScrollY = currentY;
+        };
+
+        const throttledScroll = () => {
+            if (scrollTimer) return;
+            scrollTimer = setTimeout(() => {
+                updateScroll();
+                scrollTimer = null;
+            }, 100);
+        };
+
+        window.addEventListener('scroll', throttledScroll, { passive: true });
+        this.scrollListenerId = true;
+    },
+
+    /**
+     * 计算图片的优先级
+     * @param {HTMLImageElement} img
+     * @returns {number} 优先级分数（越高越优先）
+     */
+    calculatePriority(img) {
+        try {
+            if (!img || !img.getBoundingClientRect) return 0;
+
+            const rect = img.getBoundingClientRect();
+            const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 800;
+            const viewportCenter = viewportHeight / 2;
+
+            // 1. 距离视口中心的距离（越近优先级越高）
+            const imgCenter = rect.top + rect.height / 2;
+            const distanceFromCenter = Math.abs(imgCenter - viewportCenter);
+            const distanceScore = Math.max(0, 1000 - distanceFromCenter);
+
+            // 2. 滚动方向加成
+            let scrollBonus = 0;
+            if (this.scrollDirection === 'down' && rect.top > -200 && rect.top < viewportHeight + 400) {
+                // 向下滚动时，下方即将进入视口的图片优先
+                scrollBonus = 200;
+            } else if (this.scrollDirection === 'up' && rect.bottom > -400 && rect.bottom < viewportHeight + 200) {
+                // 向上滚动时，上方即将进入视口的图片优先
+                scrollBonus = 200;
+            }
+
+            // 3. 是否在视口内（视口内的图片最高优先级）
+            const inViewport = rect.top < viewportHeight && rect.bottom > 0;
+            const viewportBonus = inViewport ? 500 : 0;
+
+            // 4. 滚动速度加成（快速滚动时增加预加载范围）
+            const velocityBonus = this.scrollVelocity > 100 ? 100 : 0;
+
+            return distanceScore + scrollBonus + viewportBonus + velocityBonus;
+        } catch (error) {
+            lazyloadLogger.warn('计算优先级失败，使用默认优先级', { error: error.message });
+            return 500; // 降级到中等优先级
+        }
+    },
+
+    /**
+     * 重新计算队列中所有图片的优先级并排序
+     */
+    recalculateQueuePriorities() {
+        try {
+            for (const item of this.priorityQueue) {
+                if (item.img && item.img.isConnected) {
+                    item.priority = this.calculatePriority(item.img);
+                }
+            }
+            this.sortQueue();
+        } catch (error) {
+            lazyloadLogger.error('重新计算优先级失败，保持原有顺序', { error: error.message });
+            // 失败时不排序，保持原有队列顺序继续工作
+        }
+    },
+
+    /**
+     * 队列排序（优先级高的在前）
+     */
+    sortQueue() {
+        this.priorityQueue.sort((a, b) => {
+            // 优先级高的排前面
+            if (a.priority !== b.priority) {
+                return b.priority - a.priority;
+            }
+            // 优先级相同，早加入队列的排前面
+            return a.timestamp - b.timestamp;
+        });
+    },
+
+    /**
+     * 动态调整并发数（根据网络性能）
+     */
+    adjustConcurrency() {
+        if (this.recentRequestTimes.length < 5) return;
+
+        const avgTime = this.avgResponseTime;
+
+        if (avgTime < 200) {
+            // 快速网络（< 200ms），增加并发
+            const newMax = Math.min(this.maxLimit, this.maxConcurrent + 2);
+            if (newMax !== this.maxConcurrent) {
+                this.maxConcurrent = newMax;
+                lazyloadLogger.debug(`网络快速，增加并发数至 ${this.maxConcurrent}`);
+            }
+        } else if (avgTime > 1000) {
+            // 慢速网络（> 1s），减少并发
+            const newMax = Math.max(this.minConcurrent, this.maxConcurrent - 1);
+            if (newMax !== this.maxConcurrent) {
+                this.maxConcurrent = newMax;
+                lazyloadLogger.debug(`网络慢速，降低并发数至 ${this.maxConcurrent}`);
+            }
+        }
+        // 200ms - 1000ms：保持当前并发数
+    },
+
+    /**
+     * 将请求加入队列（带优先级和去重）
+     * @param {HTMLImageElement} img
+     * @param {string} url
+     * @param {Function} executor
+     */
+    enqueue(img, url, executor) {
+        // 去重 1：检查图片实际加载状态（而非仅依赖 URL 记录）
+        // 修复：页面切换后 Blob URL 失效导致的空白问题
+        if (this.loadedUrls.has(url)) {
+            // 进一步检查图片是否真的已加载
+            const isActuallyLoaded = img?.classList.contains('loaded') &&
+                                     img.src &&
+                                     !img.src.startsWith('data:') &&
+                                     img.src.startsWith('blob:');
+            if (isActuallyLoaded) {
+                return; // 确认已加载，跳过
+            } else {
+                // URL 记录存在但图片未实际加载，清除记录并继续
+                this.loadedUrls.delete(url);
+            }
+        }
+
+        // 去重 2：检查是否正在请求中
+        if (this.pendingRequests.has(url)) {
+            return this.pendingRequests.get(url);
+        }
+
+        // 去重 3：检查是否已在队列中
+        const existingIndex = this.priorityQueue.findIndex(item => item.url === url);
+        if (existingIndex !== -1) {
+            // 已在队列，更新优先级
+            const newPriority = this.calculatePriority(img);
+            this.priorityQueue[existingIndex].priority = newPriority;
+            this.sortQueue();
+            return;
+        }
+
+        // 初始化滚动跟踪
+        this.initScrollTracking();
+
+        // 计算优先级并加入队列
+        const priority = this.calculatePriority(img);
+        this.priorityQueue.push({
+            img,
+            url,
+            executor,
+            priority,
+            timestamp: Date.now()
+        });
+
+        this.sortQueue();
+        this.processQueue();
+    },
+
+    /**
+     * 执行单个请求（带性能监控）
+     * @param {HTMLImageElement} img
+     * @param {string} url
+     * @param {Function} executor
+     */
+    async executeRequest(img, url, executor) {
+        const startTime = Date.now();
+        this.activeRequests++;
+
+        // 创建 Promise 用于去重
+        const requestPromise = (async () => {
+            try {
+                await executor(img, url);
+
+                // 记录请求耗时
+                const duration = Date.now() - startTime;
+                this.recentRequestTimes.push(duration);
+
+                // 只保留最近 20 次请求的数据
+                if (this.recentRequestTimes.length > 20) {
+                    this.recentRequestTimes.shift();
+                }
+
+                // 计算平均响应时间
+                this.avgResponseTime = this.recentRequestTimes.reduce((sum, time) => sum + time, 0) / this.recentRequestTimes.length;
+
+                // 标记为已加载
+                this.loadedUrls.add(url);
+
+                // 内存保护：限制 loadedUrls 大小，防止无限增长
+                if (this.loadedUrls.size > 1000) {
+                    // 转换为数组并清理最旧的 500 条记录（FIFO 策略）
+                    const urlsArray = Array.from(this.loadedUrls);
+                    const toRemove = urlsArray.slice(0, 500);
+                    toRemove.forEach(oldUrl => this.loadedUrls.delete(oldUrl));
+                    lazyloadLogger.debug(`内存保护：清理了 ${toRemove.length} 条旧的加载记录`, {
+                        before: urlsArray.length,
+                        after: this.loadedUrls.size
+                    });
+                }
+
+                // 动态调整并发数
+                this.adjustConcurrency();
+            } catch (error) {
+                // 请求失败，不标记为已加载，允许重试
+                lazyloadLogger.debug('请求执行失败', { url, error: error.message });
+            } finally {
+                this.activeRequests--;
+                this.pendingRequests.delete(url);
+                this.processQueue();
+            }
+        })();
+
+        this.pendingRequests.set(url, requestPromise);
+        return requestPromise;
+    },
+
+    /**
+     * 处理等待队列
+     */
+    processQueue() {
+        while (this.activeRequests < this.maxConcurrent && this.priorityQueue.length > 0) {
+            const item = this.priorityQueue.shift();
+
+            // 检查图片是否仍在 DOM 中
+            if (!item || !item.img || !item.img.isConnected) {
+                continue;
+            }
+
+            // 检查是否已加载
+            if (this.loadedUrls.has(item.url)) {
+                continue;
+            }
+
+            // 检查是否正在请求中
+            if (this.pendingRequests.has(item.url)) {
+                continue;
+            }
+
+            this.executeRequest(item.img, item.url, item.executor);
+        }
+    },
+
+    /**
+     * 清空队列
+     * @param {boolean} clearCache - 是否清空已加载记录（页面切换时应该为 true）
+     */
+    clear(clearCache = false) {
+        this.priorityQueue = [];
+        this.activeRequests = 0;
+        this.pendingRequests.clear();
+
+        if (clearCache) {
+            // 页面切换时清空加载记录，避免 Blob URL 失效后的空白问题
+            this.loadedUrls.clear();
+            lazyloadLogger.debug('已清空懒加载缓存');
+        }
+    },
+
+    /**
+     * 获取当前状态（用于调试）
+     */
+    getStatus() {
+        return {
+            maxConcurrent: this.maxConcurrent,
+            activeRequests: this.activeRequests,
+            queueLength: this.priorityQueue.length,
+            avgResponseTime: Math.round(this.avgResponseTime),
+            scrollDirection: this.scrollDirection,
+            scrollVelocity: Math.round(this.scrollVelocity),
+            loadedCount: this.loadedUrls.size
+        };
+    }
+};
 
 /**
  * Blob URL 管理器
@@ -218,7 +569,7 @@ function handleImageLoad(event) {
     const status = img.dataset.thumbStatus;
     // 处理中的缩略图不标记为 loaded
     if (status === 'processing') {
-        safeClassList(img, 'add', 'processing');
+        img?.classList.add('processing');
         // 添加 loading 指示器
         const container = img.parentElement;
         if (container && !container.querySelector('.processing-indicator')) {
@@ -246,13 +597,13 @@ function handleImageLoad(event) {
         return;
     }
     if (status === 'failed') {
-        safeClassList(img, 'add', 'error');
+        img?.classList.add('error');
         return;
     }
-    safeClassList(img, 'add', 'loaded');
+    img?.classList.add('loaded');
     // 清理残留的处理中/错误态样式
-    safeClassList(img, 'remove', 'processing');
-    safeClassList(img, 'remove', 'error');
+    img?.classList.remove('processing');
+    img?.classList.remove('error');
     img.dataset.thumbStatus = '';
     // 重置重试计数器
     delete img.dataset.retryAttempt;
@@ -260,7 +611,7 @@ function handleImageLoad(event) {
     // 清理父元素的生成状态类
     const parent = img.closest('.photo-item, .album-card');
     if (parent) {
-        safeClassList(parent, 'remove', 'thumbnail-generating');
+        parent?.classList.remove('thumbnail-generating');
     }
 
     const gridItem = img.closest('.grid-item');
@@ -307,14 +658,14 @@ function handleImageLoad(event) {
         const loadingOverlay = container.querySelector('.loading-overlay');
         const processingIndicator = container.querySelector('.processing-indicator');
         if (placeholder) {
-            safeSetStyle(placeholder, {
+            Object.assign(placeholder.style, {
                 opacity: '0',
                 animation: 'none',
                 pointerEvents: 'none'
             });
         }
         if (loadingOverlay) {
-            safeSetStyle(loadingOverlay, {
+            Object.assign(loadingOverlay.style, {
                 display: 'none',
                 opacity: '0'
             });
@@ -358,8 +709,8 @@ function handleImageError(event) {
             <text x="50" y="90" text-anchor="middle" fill="#9CA3AF" font-size="10" font-family="Arial, sans-serif">BROKEN</text>
         </svg>`;
     img.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(brokenSvg);
-    safeClassList(img, 'add', 'error');
-    safeClassList(img, 'remove', 'blurred');
+    img?.classList.add('error');
+    img?.classList.remove('blurred');
 
     // 隐藏占位符和加载覆盖层
     const container = img.parentElement;
@@ -367,14 +718,14 @@ function handleImageError(event) {
         const placeholder = container.querySelector('.image-placeholder');
         const loadingOverlay = container.querySelector('.loading-overlay');
         if (placeholder) {
-            safeSetStyle(placeholder, {
+            Object.assign(placeholder.style, {
                 opacity: '0',
                 animation: 'none',
                 pointerEvents: 'none'
             });
         }
         if (loadingOverlay) {
-            safeSetStyle(loadingOverlay, {
+            Object.assign(loadingOverlay.style, {
                 display: 'none',
                 opacity: '0'
             });
@@ -648,8 +999,8 @@ export function requestLazyImage(img, options = {}) {
     }
     const forceReload = Boolean(options && options.force);
     if (forceReload) {
-        safeClassList(img, 'remove', 'loaded');
-        safeClassList(img, 'remove', 'error');
+        img?.classList.remove('loaded');
+        img?.classList.remove('error');
         if (img.src && !img.src.startsWith('data:') && !img.src.startsWith('blob:')) {
             try {
                 img.removeAttribute('src');
@@ -659,7 +1010,7 @@ export function requestLazyImage(img, options = {}) {
         }
     } else {
         // 已加载或已有真实 src 不重复请求
-        if (safeClassList(img, 'contains', 'loaded')) return;
+        if (img?.classList.contains('loaded')) return;
         if (img.src && !img.src.startsWith('data:') && !img.src.startsWith('blob:')) return;
     }
     // 处理快速加载标记
@@ -670,9 +1021,9 @@ export function requestLazyImage(img, options = {}) {
             lazyloadLogger.debug('快速加载之前加载过的图片', { thumbnailUrl });
         }
     }
-    executeThumbnailRequest(img, thumbnailUrl).catch(() => {
-        // 捕获已在内部处理的错误，避免未处理的Promise异常
-    });
+
+    // 使用队列管理器控制并发
+    requestQueueManager.enqueue(img, thumbnailUrl, executeThumbnailRequest);
 }
 
 /**
@@ -699,9 +1050,9 @@ export function savePageLazyState(pageKey) {
         sessionId,
         images: Array.from(lazyImages).map(img => ({
             src: img.dataset.src,
-            loaded: safeClassList(img, 'contains', 'loaded'),
+            loaded: img?.classList.contains('loaded'),
             status: img.dataset.thumbStatus,
-            loadTime: safeClassList(img, 'contains', 'loaded') ? Date.now() : null
+            loadTime: img?.classList.contains('loaded') ? Date.now() : null
         }))
     };
     pageStateCache.set(pageKey, pageState);
@@ -768,7 +1119,7 @@ export function restorePageLazyState(pageKey) {
         requestAnimationFrame(() => {
             imagesToMark.forEach(({ img, cachedImage }) => {
                 // 🔧 修复问题1：不添加loaded类，让懒加载系统从浏览器缓存重新加载
-                // safeClassList(img, 'add', 'loaded'); // ❌ 会导致executeLazyLoad直接return
+                // img?.classList.add('loaded'); // ❌ 会导致executeLazyLoad直接return
                 img.dataset.thumbStatus = '';
                 img.dataset.wasLoaded = 'true'; // ✅ 标记为之前加载过，加速处理
                 img.dataset.loadTime = cachedImage.loadTime;
@@ -812,8 +1163,8 @@ function getOrCreateImageObserver() {
                 img.addEventListener('contextmenu', e => e.preventDefault());
                 img._noContextMenuBound = true;
             }
-            if (state.isBlurredMode) safeClassList(img, 'add', 'blurred');
-            if (safeClassList(img, 'contains', 'loaded') || img.dataset.thumbStatus === 'failed') {
+            if (state.isBlurredMode) img?.classList.add('blurred');
+            if (img?.classList.contains('loaded') || img.dataset.thumbStatus === 'failed') {
                 observer.unobserve(img);
                 img._processingLazyLoad = false;
             } else {
@@ -824,9 +1175,9 @@ function getOrCreateImageObserver() {
             }
         });
     }, {
-        // ✅ 增加rootMargin，提前触发懒加载，避免快速滚动时图片加载不及时
-        // 上下各2000px（针对平滑滚动优化），左右100px
-        rootMargin: '2000px 100px',
+        // ✅ 适度预加载：上下各 600px，配合并发队列管理避免请求过载
+        // 降低后可减少同时触发的请求数量，避免 429 错误
+        rootMargin: '600px 100px',
         threshold: 0.01 // 降低阈值，只要1%可见就触发
     });
     globalImageObserver = observer;
@@ -877,7 +1228,107 @@ export function reobserveImage(img) {
     if (!globalImageObserver) {
         globalImageObserver = setupLazyLoading();
     }
-    if (img._observed && !safeClassList(img, 'contains', 'loaded') && img.dataset.thumbStatus !== 'failed') {
+    if (img._observed && !img?.classList.contains('loaded') && img.dataset.thumbStatus !== 'failed') {
         globalImageObserver.observe(img);
     }
+}
+
+/**
+ * 清空请求队列（页面切换时调用）
+ * @param {boolean} clearCache - 是否清空已加载缓存（默认 true，页面切换时推荐清空）
+ */
+export function clearLazyloadQueue(clearCache = true) {
+    requestQueueManager.clear(clearCache);
+    lazyloadLogger.debug('已清空懒加载请求队列', { clearCache });
+}
+
+/**
+ * 获取懒加载队列状态（调试用）
+ * 使用方法：在浏览器控制台运行 window.lazyloadStatus()
+ * @returns {Object} 当前懒加载状态
+ */
+export function getLazyloadStatus() {
+    const status = requestQueueManager.getStatus();
+    console.log('📊 懒加载队列状态:');
+    console.log(`  ⚡ 当前并发数: ${status.activeRequests}/${status.maxConcurrent}`);
+    console.log(`  📋 队列长度: ${status.queueLength}`);
+    console.log(`  ⏱️  平均响应时间: ${status.avgResponseTime}ms`);
+    console.log(`  🔄 滚动方向: ${status.scrollDirection} (速度: ${status.scrollVelocity}px/s)`);
+    console.log(`  ✅ 已加载数量: ${status.loadedCount}`);
+    return status;
+}
+
+// 暴露到全局（仅开发环境）
+if (typeof window !== 'undefined') {
+    window.lazyloadStatus = getLazyloadStatus;
+}
+
+/**
+ * 性能监控：自动检测异常并告警
+ * 每 60 秒检查一次懒加载系统的健康状态
+ */
+let performanceMonitorTimer = null;
+
+function startPerformanceMonitor() {
+    // 避免重复启动
+    if (performanceMonitorTimer) return;
+
+    performanceMonitorTimer = setInterval(() => {
+        try {
+            const status = requestQueueManager.getStatus();
+
+            // 告警 1：队列堆积过多
+            if (status.queueLength > 50) {
+                lazyloadLogger.warn('⚠️ 懒加载队列堆积过多', {
+                    queueLength: status.queueLength,
+                    maxConcurrent: status.maxConcurrent,
+                    建议: '可能网络慢或并发数过低'
+                });
+            }
+
+            // 告警 2：已加载数量过多（内存风险）
+            if (status.loadedCount > 800) {
+                lazyloadLogger.warn('⚠️ 已加载URL数量较多', {
+                    loadedCount: status.loadedCount,
+                    建议: '即将触发内存保护清理（1000条时）'
+                });
+            }
+
+            // 告警 3：平均响应时间过长
+            if (status.avgResponseTime > 2000) {
+                lazyloadLogger.warn('⚠️ 缩略图加载速度慢', {
+                    avgResponseTime: status.avgResponseTime,
+                    maxConcurrent: status.maxConcurrent,
+                    建议: '网络可能很慢，系统会自动降低并发数'
+                });
+            }
+
+            // 正常状态日志（仅调试模式）
+            if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                lazyloadLogger.debug('懒加载系统健康检查', status);
+            }
+        } catch (error) {
+            lazyloadLogger.error('性能监控失败', { error: error.message });
+        }
+    }, 60000); // 每 60 秒检查一次
+}
+
+/**
+ * 停止性能监控
+ */
+export function stopPerformanceMonitor() {
+    if (performanceMonitorTimer) {
+        clearInterval(performanceMonitorTimer);
+        performanceMonitorTimer = null;
+        lazyloadLogger.debug('性能监控已停止');
+    }
+}
+
+// 自动启动性能监控（仅在浏览器环境）
+if (typeof window !== 'undefined') {
+    // 延迟 10 秒启动，避免影响页面初始化
+    setTimeout(() => {
+        startPerformanceMonitor();
+        lazyloadLogger.debug('懒加载性能监控已启动（每60秒检查一次）');
+    }, 10000);
 }

@@ -4,7 +4,6 @@
 
 import { map } from 'nanostores';
 import { createModuleLogger } from './logger.js';
-import { safeGetElementById } from '../shared/dom-utils.js';
 
 const stateLogger = createModuleLogger('State');
 
@@ -330,8 +329,8 @@ export const state = new Proxy(stateManager, {
  * @namespace backdrops
  */
 export const backdrops = {
-    one: safeGetElementById('modal-backdrop-one'),
-    two: safeGetElementById('modal-backdrop-two')
+    one: document.getElementById('modal-backdrop-one'),
+    two: document.getElementById('modal-backdrop-two')
 };
 
 // DOM 元素现在在 dom-elements.js 中定义

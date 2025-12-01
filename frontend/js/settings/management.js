@@ -8,7 +8,7 @@ import { settingsLogger } from './logger.js';
 import { state } from '../core/state.js';
 import { manualAlbumSync, toggleAlbumDeletion, updateManualSyncSchedule, verifyAdminSecret } from '../app/api.js';
 import { showNotification, resolveMessage } from '../shared/utils.js';
-import { safeSetInnerHTML, safeClassList, safeSetStyle } from '../shared/dom-utils.js';
+import { safeSetInnerHTML} from '../shared/dom-utils.js';
 import { showPasswordPrompt } from './password-prompt.js';
 import { loadStatusTables } from './status.js';
 import { closeSettingsModal } from './modal.js';

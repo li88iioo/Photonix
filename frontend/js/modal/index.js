@@ -11,7 +11,6 @@ import { recordHierarchyView } from '../features/history/history-service.js';
 import Hls from 'hls.js';
 import { enablePinchZoom } from '../features/gallery/touch.js';
 import { createModuleLogger } from '../core/logger.js';
-import { safeSetStyle, safeClassList } from '../shared/dom-utils.js';
 import {
     scheduleNavigationProgressBar,
     hideNavigationProgressBar,
@@ -28,7 +27,7 @@ const modalLogger = createModuleLogger('Modal');
 function resetModalImageTransition() {
     const img = elements?.modalImg;
     if (!img) return;
-    safeSetStyle(img, {
+    Object.assign(img.style, {
         transition: '',
         imageRendering: '',
         filter: '',
@@ -44,7 +43,7 @@ function resetModalImageTransition() {
 function triggerPixelatedReveal() {
     const img = elements?.modalImg;
     if (!img) return;
-    safeSetStyle(img, {
+    Object.assign(img.style, {
         transition: 'filter 420ms ease, transform 420ms ease, opacity 420ms ease',
         imageRendering: 'pixelated',
         filter: 'contrast(135%) brightness(1.05) saturate(0.9)',
@@ -53,12 +52,12 @@ function triggerPixelatedReveal() {
     });
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-            safeSetStyle(img, 'filter', 'none');
-            safeSetStyle(img, 'transform', 'scale(1)');
-            safeSetStyle(img, 'opacity', '1');
+            img.style.filter = 'none';
+            img.style.transform = 'scale(1)';
+            img.style.opacity = '1';
             setTimeout(() => {
-                safeSetStyle(img, 'transition', '');
-                safeSetStyle(img, 'imageRendering', '');
+                img.style.transition = '';
+                img.style.imageRendering = '';
             }, 440);
         });
     });
@@ -77,7 +76,7 @@ let activeVideoToken = 0; // 当前视频加载令牌，避免并发事件冲突
  * @returns {void}
  */
 function hideModalControls() {
-    safeClassList(elements.modalClose, 'add', 'opacity-0');
+    elements.modalClose?.classList.add('opacity-0');
 }
 
 /**
@@ -85,7 +84,7 @@ function hideModalControls() {
  * @returns {void}
  */
 function showModalControls() {
-    safeClassList(elements.modalClose, 'remove', 'opacity-0');
+    elements.modalClose?.classList.remove('opacity-0');
 }
 
 /**
@@ -100,7 +99,7 @@ function createVideoSpinner() {
     // XSS 安全修复：使用 DOM 操作替代 innerHTML
     const spinner = document.createElement('div');
     spinner.className = 'spinner';
-    safeSetStyle(spinner, {
+    Object.assign(spinner.style, {
         width: '3rem',
         height: '3rem'
     });
@@ -143,9 +142,9 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
     const activeBackdropElem = backdrops[state.activeBackdrop];
     const inactiveBackdropElem = backdrops[inactiveBackdropKey];
 
-    safeSetStyle(inactiveBackdropElem, 'backgroundImage', `url('${blurSource}')`);
-    safeClassList(activeBackdropElem, 'remove', 'active-backdrop');
-    safeClassList(inactiveBackdropElem, 'add', 'active-backdrop');
+    inactiveBackdropElem.style.backgroundImage = `url('${blurSource}')`;
+    activeBackdropElem?.classList.remove('active-backdrop');
+    inactiveBackdropElem?.classList.add('active-backdrop');
     state.activeBackdrop = inactiveBackdropKey;
 
     // 根据媒体类型和 AI 状态显示相应元素
@@ -156,13 +155,13 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
     updateAIChatContext(showAiElements ? originalPathForAI : null, { enabled: showAiElements });
 
     resetModalImageTransition();
-    safeClassList(modalVideo, 'toggle', 'hidden', !isVideo);
-    safeClassList(modalImg, 'toggle', 'hidden', isVideo);
+    modalVideo?.classList.toggle('hidden', !isVideo);
+    modalImg?.classList.toggle('hidden', isVideo);
 
     if (isVideo) {
         const myToken = ++activeVideoToken;
-        safeClassList(navigationHint, 'remove', 'show-hint');
-        safeSetStyle(navigationHint, 'display', 'none');
+        navigationHint?.classList.remove('show-hint');
+        navigationHint.style.display = 'none';
 
         const videoSpinner = createVideoSpinner();
         mediaPanel.appendChild(videoSpinner);
@@ -255,9 +254,9 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
             let width = maxW;
             let height = width / aspect;
             if (height > maxH) { height = maxH; width = height * aspect; }
-            safeSetStyle(modalVideo, 'width', `${Math.round(width)}px`);
-            safeSetStyle(modalVideo, 'height', `${Math.round(height)}px`);
-            try { safeSetStyle(modalVideo, 'aspectRatio', `${vw}/${vh}`); } catch { }
+            modalVideo.style.width = `${Math.round(width)}px`;
+            modalVideo.style.height = `${Math.round(height)}px`;
+            try { modalVideo.style.aspectRatio = `${vw}/${vh}`; } catch { }
         };
 
         /**
@@ -352,7 +351,7 @@ function updateModalContent(mediaSrc, index, originalPathForAI, thumbForBlur = n
 
     } else {
         // 图片处理逻辑
-        safeSetStyle(navigationHint, 'display', 'flex');
+        navigationHint.style.display = 'flex';
         if (modalImg._pendingPixelationHandler) {
             try { modalImg.removeEventListener('load', modalImg._pendingPixelationHandler); } catch { }
             modalImg._pendingPixelationHandler = null;
@@ -591,15 +590,15 @@ async function handleModalNavigationLoad(mediaSrc, index, navDirection = null) {
  * @returns {void}
  */
 export function closeModal() {
-    if (safeClassList(elements.modal, 'contains', 'opacity-0')) return;
+    if (elements.modal?.classList.contains('opacity-0')) return;
 
     // 移除模态框相关类
     // 注意：document.documentElement 和 document.body 的 classList 操作保持原样
     // 因为这些是特殊 DOM 元素，不在我们的封装范围内
     document.documentElement.classList.remove('modal-open');
     document.body.classList.remove('modal-open');
-    safeClassList(elements.modal, 'add', 'opacity-0');
-    safeClassList(elements.modal, 'add', 'pointer-events-none');
+    elements.modal?.classList.add('opacity-0');
+    elements.modal?.classList.add('pointer-events-none');
 
     // 确保停止快速导航，避免定时器泄漏
     if (typeof stopFastNavigate === 'function') {
@@ -615,8 +614,8 @@ export function closeModal() {
     elements.modalVideo.src = '';
 
     // 清理背景
-    safeSetStyle(backdrops.one, 'backgroundImage', 'none');
-    safeSetStyle(backdrops.two, 'backgroundImage', 'none');
+    backdrops.one.style.backgroundImage = 'none';
+    backdrops.two.style.backgroundImage = 'none';
 
     // 清理对象 URL
     if (state.currentObjectURL) {
@@ -676,7 +675,7 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
     state.activeThumbnail = element;
 
     const photoItem = element.querySelector('.photo-item');
-    if (!photoItem || safeClassList(photoItem, 'contains', 'is-loading')) return;
+    if (!photoItem || photoItem?.classList.contains('is-loading')) return;
 
     const isVideo = /\.(mp4|webm|mov)$/i.test(mediaSrc);
     const relativePath = extractRelativePathFromStaticUrl(mediaSrc);
@@ -711,16 +710,16 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
     if (progressCircle) {
         const radius = progressCircle.r.baseVal.value;
         const circumference = 2 * Math.PI * radius;
-        safeSetStyle(progressCircle, 'strokeDasharray', `${circumference} ${circumference}`);
-        safeSetStyle(progressCircle, 'strokeDashoffset', circumference);
+        progressCircle.style.strokeDasharray = `${circumference} ${circumference}`;
+        progressCircle.style.strokeDashoffset = circumference;
     }
     if (loadingOverlay) {
-        safeSetStyle(loadingOverlay, {
+        Object.assign(loadingOverlay.style, {
             display: 'none',
             opacity: '0'
         });
         overlayShowTimer = setTimeout(() => {
-            safeSetStyle(loadingOverlay, {
+            Object.assign(loadingOverlay.style, {
                 display: 'flex',
                 opacity: '1'
             });
@@ -728,7 +727,7 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
         }, 180);
     }
 
-    safeClassList(photoItem, 'add', 'is-loading');
+    photoItem?.classList.add('is-loading');
 
     // 创建新的加载控制器
     const controller = new AbortController();
@@ -772,7 +771,7 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
                                     const progress = receivedLength / headerContentLength;
                                     const circumference = 2 * Math.PI * progressCircle.r.baseVal.value;
                                     const offset = circumference - progress * circumference;
-                                    safeSetStyle(progressCircle, 'strokeDashoffset', offset);
+                                    progressCircle.style.strokeDashoffset = offset;
                                 }
                                 streamedChunkCount = Math.min(12, streamedChunkCount + 1);
                                 try { controller.enqueue(value); } catch { }
@@ -824,9 +823,9 @@ export function _handleThumbnailClick(element, mediaSrc, index) {
                 clearTimeout(overlayShowTimer);
                 overlayShowTimer = null;
             }
-            safeClassList(photoItem, 'remove', 'is-loading');
+            photoItem?.classList.remove('is-loading');
             if (loadingOverlay) {
-                safeSetStyle(loadingOverlay, {
+                Object.assign(loadingOverlay.style, {
                     display: 'none',
                     opacity: '0'
                 });
@@ -874,8 +873,8 @@ export function _openModal(mediaSrc, index = 0, isObjectURL = false, originalPat
         return;
     }
 
-    safeClassList(elements.modal, 'remove', 'opacity-0');
-    safeClassList(elements.modal, 'remove', 'pointer-events-none');
+    elements.modal?.classList.remove('opacity-0');
+    elements.modal?.classList.remove('pointer-events-none');
 
     // 更新模态框内容
     const aiPath = originalPathForAI || mediaSrc;
@@ -885,9 +884,9 @@ export function _openModal(mediaSrc, index = 0, isObjectURL = false, originalPat
 
     // 显示导航提示（仅首次）
     if (!state.hasShownNavigationHint && window.innerWidth > 768) {
-        safeClassList(elements.navigationHint, 'add', 'show-hint');
+        elements.navigationHint?.classList.add('show-hint');
         state.hasShownNavigationHint = true;
-        setTimeout(() => safeClassList(elements.navigationHint, 'remove', 'show-hint'), 4000);
+        setTimeout(() => elements.navigationHint?.classList.remove('show-hint'), 4000);
     }
 
     // 更新 URL 哈希
@@ -956,7 +955,7 @@ export function startFastNavigate(direction) {
     fastNavInterval = setInterval(() => {
         // 只有当 state.isModalNavigating 为 false (即上一张图片已加载且动画完成) 时，
         // 并且模态框是可见的，才进行翻页
-        if (!state.isModalNavigating && !safeClassList(elements.modal, 'contains', 'opacity-0')) {
+        if (!state.isModalNavigating && !elements.modal?.classList.contains('opacity-0')) {
             navigateModal(fastNavDirection);
         }
     }, 300); // 每 0.3 秒检查一次是否可以翻页

@@ -1,5 +1,5 @@
 import { safeSetInnerHTML } from '../../../shared/dom-utils.js';
-import { iconEye, iconEdit, iconPlay, iconStop, iconClose } from '../../../shared/svg-utils.js';
+import { iconEye, iconEdit, iconPlay, iconStop, iconClose } from '../../../shared/svg-templates.js';
 import { applyInteractiveEffects } from './effects.js';
 import { getRootElement } from './root.js';
 import { sanitize, formatRelativeTime, deriveTaskId } from './utils.js';

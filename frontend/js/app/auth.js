@@ -8,7 +8,7 @@ import { elements } from '../shared/dom-elements.js';
 import { initializeRouter } from './router.js';
 import { clearAuthHeadersCache } from './api.js';
 import { createModuleLogger } from '../core/logger.js';
-import { safeSetInnerHTML, safeGetElementById, safeSetStyle, safeClassList, safeQuerySelector } from '../shared/dom-utils.js';
+import { safeSetInnerHTML } from '../shared/dom-utils.js';
 import { resolveMessage } from '../shared/utils.js';
 import { AUTH, SW_MESSAGE } from '../core/constants.js';
 import { showPasswordPrompt } from '../settings/password-prompt.js';
@@ -142,13 +142,13 @@ export async function checkAuthStatus() {
  * 渲染登录表单并设置背景图片
  */
 export function showLoginScreen() {
-    const authOverlay = safeGetElementById('auth-overlay');
-    const authContainer = safeGetElementById('auth-container');
-    const authBackground = safeGetElementById('auth-background');
+    const authOverlay = document.getElementById('auth-overlay');
+    const authContainer = document.getElementById('auth-container');
+    const authBackground = document.getElementById('auth-background');
 
     // 重置背景样式
-    safeSetStyle(authBackground, 'backgroundImage', '');
-    safeClassList(authBackground, 'remove', 'opacity-50');
+    authBackground.style.backgroundImage = '';
+    authBackground?.classList.remove('opacity-50');
 
     // XSS安全修复：对静态HTML模板进行安全检查
     const loginTemplate = `
@@ -208,14 +208,14 @@ export function showLoginScreen() {
     }
 
     // 立即显示登录遮罩层
-    safeClassList(authOverlay, 'remove', 'opacity-0');
-    safeClassList(authOverlay, 'remove', 'pointer-events-none');
-    safeClassList(authOverlay, 'add', 'opacity-100');
+    authOverlay?.classList.remove('opacity-0');
+    authOverlay?.classList.remove('pointer-events-none');
+    authOverlay?.classList.add('opacity-100');
 
     // 改进的背景图片加载机制
     loadBackgroundWithRetry(authBackground);
 
-    safeGetElementById('login-form').addEventListener('submit', handleLogin);
+    document.getElementById('login-form').addEventListener('submit', handleLogin);
     setupPasswordToggle();
     setupForgotPasswordHandler();
 }
@@ -227,8 +227,8 @@ export function showLoginScreen() {
  */
 async function handleLogin(e) {
     e.preventDefault();
-    const password = safeGetElementById('password').value;
-    const errorEl = safeGetElementById('login-error');
+    const password = document.getElementById('password').value;
+    const errorEl = document.getElementById('login-error');
     const loginButton = e.target.querySelector('button');
     const originalButtonText = loginButton.textContent;
     let reenableTimer = null;
@@ -248,13 +248,13 @@ async function handleLogin(e) {
 
         if (!response.ok || !data.success) {
             // 登录失败时的抖动动画效果
-            const loginCard = safeQuerySelector('.login-card');
+            const loginCard = document.querySelector('.login-card');
             if (loginCard) {
-                safeClassList(loginCard, 'remove', 'shake');
+                loginCard?.classList.remove('shake');
                 void loginCard.offsetWidth;
-                safeClassList(loginCard, 'add', 'shake');
+                loginCard?.classList.add('shake');
                 loginCard.addEventListener('animationend', () => {
-                    safeClassList(loginCard, 'remove', 'shake');
+                    loginCard?.classList.remove('shake');
                 }, { once: true });
             }
             // 根据后端返回的 code/状态映射中文提示
@@ -309,13 +309,13 @@ async function handleLogin(e) {
         // 登录成功，保存令牌并隐藏登录界面
         setAuthToken(data.token);
 
-        const authOverlay = safeGetElementById('auth-overlay');
-        safeClassList(authOverlay, 'remove', 'opacity-100');
-        safeClassList(authOverlay, 'add', 'opacity-0');
-        safeClassList(authOverlay, 'add', 'pointer-events-none');
+        const authOverlay = document.getElementById('auth-overlay');
+        authOverlay?.classList.remove('opacity-100');
+        authOverlay?.classList.add('opacity-0');
+        authOverlay?.classList.add('pointer-events-none');
 
-        const appContainer = safeGetElementById('app-container');
-        safeClassList(appContainer, 'add', 'opacity-100');
+        const appContainer = document.getElementById('app-container');
+        appContainer?.classList.add('opacity-100');
 
         // 清除任何加载状态
         if (elements.contentGrid) {
@@ -337,8 +337,8 @@ async function handleLogin(e) {
  * 设置密码输入框的显示/隐藏切换
  */
 function setupPasswordToggle() {
-    const icon = safeQuerySelector('.password-toggle-icon');
-    const input = safeGetElementById('password');
+    const icon = document.querySelector('.password-toggle-icon');
+    const input = document.getElementById('password');
 
     if (!icon || !input) {
         authLogger.warn('密码切换元素未找到');
@@ -349,8 +349,8 @@ function setupPasswordToggle() {
     const closedEye = icon.querySelector('.eye-closed');
 
     // 初始化眼睛图标状态
-    safeSetStyle(openEye, 'display', 'block');
-    safeSetStyle(closedEye, 'display', 'none');
+    openEye.style.display = 'block';
+    closedEye.style.display = 'none';
 
     icon.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -358,15 +358,15 @@ function setupPasswordToggle() {
         const isPassword = input.type === 'password';
         input.type = isPassword ? 'text' : 'password';
 
-        safeSetStyle(openEye, 'display', isPassword ? 'none' : 'block');
-        safeSetStyle(closedEye, 'display', isPassword ? 'block' : 'none');
+        openEye.style.display = isPassword ? 'none' : 'block';
+        closedEye.style.display = isPassword ? 'block' : 'none';
 
         // 点击时的视觉反馈
         const originalColor = icon.style.color;
-        safeSetStyle(icon, 'color', 'white');
+        icon.style.color = 'white';
 
         setTimeout(() => {
-            safeSetStyle(icon, 'color', originalColor || '');
+            icon.style.color = originalColor || '';
         }, 200);
     });
 }
@@ -386,7 +386,7 @@ function promptForValue(options) {
 
 async function handleForgotPasswordClick(event) {
     event.preventDefault();
-    const errorEl = safeGetElementById('login-error');
+    const errorEl = document.getElementById('login-error');
     if (!errorEl) return;
 
     try {
@@ -438,7 +438,7 @@ async function handleForgotPasswordClick(event) {
 }
 
 function setupForgotPasswordHandler() {
-    const btn = safeGetElementById('forgot-password-btn');
+    const btn = document.getElementById('forgot-password-btn');
     if (!btn) return;
     btn.addEventListener('click', handleForgotPasswordClick);
 }
@@ -447,8 +447,8 @@ function setupForgotPasswordHandler() {
  * 设置设置页面的开关事件监听
  */
 export function setupSettingsToggles() {
-    const aiEnabledToggle = safeGetElementById('ai-enabled');
-    const passwordEnabledToggle = safeGetElementById('password-enabled');
+    const aiEnabledToggle = document.getElementById('ai-enabled');
+    const passwordEnabledToggle = document.getElementById('password-enabled');
 
     if (aiEnabledToggle) {
         aiEnabledToggle.addEventListener('change', (e) => toggleAIFields(e.target.checked));
@@ -463,8 +463,8 @@ export function setupSettingsToggles() {
  * @param {boolean} isEnabled - 是否启用AI功能
  */
 export function toggleAIFields(isEnabled) {
-    const fields = safeGetElementById('ai-fields');
-    if (fields) safeSetStyle(fields, 'display', isEnabled ? 'block' : 'none');
+    const fields = document.getElementById('ai-fields');
+    if (fields) fields.style.display = isEnabled ? 'block' : 'none';
 }
 
 /**
@@ -472,8 +472,8 @@ export function toggleAIFields(isEnabled) {
  * @param {boolean} isEnabled - 是否启用密码功能
  */
 export function togglePasswordFields(isEnabled) {
-    const fields = safeGetElementById('password-fields');
-    if (fields) safeSetStyle(fields, 'display', isEnabled ? 'block' : 'none');
+    const fields = document.getElementById('password-fields');
+    if (fields) fields.style.display = isEnabled ? 'block' : 'none';
 }
 
 /**
@@ -577,9 +577,9 @@ async function loadBackgroundWithRetry(authBackground) {
             if (backgroundUrl) {
                 // 异步预加载图片，不阻塞UI
                 preloadImage(backgroundUrl).then(() => {
-                    safeSetStyle(authBackground, 'backgroundImage', `url(${backgroundUrl})`);
-                    safeClassList(authBackground, 'remove', 'fallback');
-                    safeClassList(authBackground, 'add', 'opacity-50');
+                    authBackground.style.backgroundImage = `url(${backgroundUrl})`;
+                    authBackground?.classList.remove('fallback');
+                    authBackground?.classList.add('opacity-50');
                 }).catch((error) => {
                     // 预加载失败，保持备用背景
                     authLogger.debug('背景图片预加载失败，使用备用背景', { error: error.message });
@@ -623,8 +623,8 @@ function preloadImage(url) {
  */
 function useFallbackBackground(authBackground) {
     // 清除之前的背景图片
-    safeSetStyle(authBackground, 'backgroundImage', '');
+    authBackground.style.backgroundImage = '';
     // 添加备用背景类
-    safeClassList(authBackground, 'add', 'fallback');
-    safeClassList(authBackground, 'add', 'opacity-50');
+    authBackground?.classList.add('fallback');
+    authBackground?.classList.add('opacity-50');
 }

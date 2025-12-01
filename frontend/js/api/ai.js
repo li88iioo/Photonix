@@ -8,7 +8,7 @@ import { elements } from '../shared/dom-elements.js';
 import aiCache from '../features/ai/ai-cache.js';
 import { showNotification } from '../shared/utils.js';
 import { getAuthToken } from '../app/auth.js';
-import { safeSetInnerHTML, safeClassList } from '../shared/dom-utils.js';
+import { safeSetInnerHTML} from '../shared/dom-utils.js';
 import { escapeHtml } from '../shared/security.js';
 import { getAuthHeaders, refreshAuthToken, triggerAuthRequired } from './shared.js';
 import {
@@ -153,12 +153,12 @@ function updateChatAvailability(enabled) {
     if (!wrapper) return;
     const layout = elements.modalLayout;
     if (layout) {
-        safeClassList(layout, enabled ? 'add' : 'remove', 'modal-layout--with-chat');
+        enabled ? layout?.classList.add('modal-layout--with-chat') : layout?.classList.remove('modal-layout--with-chat');
     }
     try {
         document.body?.classList[enabled ? 'add' : 'remove']('ai-chat-visible');
     } catch { }
-    safeClassList(wrapper, 'toggle', 'hidden', !enabled);
+    wrapper?.classList.toggle('hidden', !enabled);
     wrapper.setAttribute('aria-hidden', enabled ? 'false' : 'true');
     toggleCloseHint(enabled);
     if (enabled) {
@@ -187,7 +187,7 @@ function toggleCloseHint(enabled) {
     const { aiCloseHint } = elements;
     if (!aiCloseHint) return;
     const showHint = enabled && shouldShowCloseHint();
-    safeClassList(aiCloseHint, 'toggle', 'hidden', !showHint);
+    aiCloseHint?.classList.toggle('hidden', !showHint);
 }
 
 function recordInitialAIMessage(imagePath, message) {

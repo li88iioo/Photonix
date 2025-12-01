@@ -1,4 +1,3 @@
-import { safeClassList } from '../../../shared/dom-utils.js';
 import { applyInteractiveEffects } from './effects.js';
 import {
   iconPlus,
@@ -17,7 +16,7 @@ import {
   iconFileText,
   iconImport,
   iconExport
-} from '../../../shared/svg-utils.js';
+} from '../../../shared/svg-templates.js';
 
 let rootEl = null;
 let navLinks = [];
@@ -1227,7 +1226,7 @@ function getRootElement() {
 
 function setRootVisible(visible) {
   if (!rootEl) return;
-  safeClassList(rootEl, visible ? 'remove' : 'add', 'hidden');
+  visible ? rootEl?.classList.remove('hidden') : rootEl?.classList.add('hidden');
   rootEl.style.display = visible ? 'flex' : 'none';
   if (visible) {
     document.documentElement.classList.add('download-page-active');
@@ -1271,9 +1270,9 @@ function switchPage(page) {
 
   Object.values(pageContainers).forEach((el) => {
     if (el === target) {
-      safeClassList(el, 'remove', 'hidden');
+      el?.classList.remove('hidden');
     } else {
-      safeClassList(el, 'add', 'hidden');
+      el?.classList.add('hidden');
     }
   });
 

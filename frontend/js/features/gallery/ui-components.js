@@ -4,7 +4,7 @@
  */
 
 import { setSafeInnerHTML, SecurityLevel } from '../../shared/security.js';
-import { safeSetInnerHTML, safeGetElementById, safeSetStyle, safeClassList } from '../../shared/dom-utils.js';
+import { safeSetInnerHTML} from '../../shared/dom-utils.js';
 import { UI_COMPONENTS } from '../../core/constants.js';
 
 /**
@@ -157,7 +157,7 @@ export function generateStatusCardHTML(config) {
  * @returns {void}
  */
 export function renderStatusCard(containerId, data, detailsGenerator) {
-    const container = safeGetElementById(containerId);
+    const container = document.getElementById(containerId);
     if (!container) return;
 
     const detailsHTML = detailsGenerator(data);
@@ -176,9 +176,9 @@ export function renderStatusCard(containerId, data, detailsGenerator) {
  * @returns {void}
  */
 export function toggleLoadingState(containerId, show) {
-    const loadingElement = safeGetElementById(containerId);
+    const loadingElement = document.getElementById(containerId);
     if (loadingElement) {
-        safeSetStyle(loadingElement, 'display', show ? 'block' : 'none');
+        loadingElement.style.display = show ? 'block' : 'none';
     }
 }
 
@@ -189,9 +189,9 @@ export function toggleLoadingState(containerId, show) {
  * @returns {void}
  */
 export function updateProgressBar(progressBarId, percent) {
-    const progressBar = safeGetElementById(progressBarId);
+    const progressBar = document.getElementById(progressBarId);
     if (progressBar) {
-        safeSetStyle(progressBar, 'width', `${percent}%`);
+        progressBar.style.width = `${percent}%`;
     }
 }
 
@@ -203,7 +203,7 @@ export function updateProgressBar(progressBarId, percent) {
  * @returns {void}
  */
 export function updateStatusBadge(badgeId, percent, statusClass) {
-    const badge = safeGetElementById(badgeId);
+    const badge = document.getElementById(badgeId);
     if (badge) {
         badge.textContent = `${percent}%`;
         badge.className = `status-badge-new ${statusClass}`;
@@ -225,7 +225,7 @@ export function createSafeElement(tag, options = {}) {
 
     if (options.classes) {
         if (options.classes && options.classes.length) {
-            options.classes.forEach(cls => safeClassList(element, 'add', cls));
+            options.classes.forEach(cls => element?.classList.add(cls));
         }
     }
 
@@ -259,7 +259,7 @@ export function createSafeElement(tag, options = {}) {
  */
 export function batchUpdateElements(updates) {
     updates.forEach(update => {
-        const element = safeGetElementById(update.id);
+        const element = document.getElementById(update.id);
         if (element) {
             if (update.textContent !== undefined) {
                 element.textContent = update.textContent;

@@ -6,7 +6,7 @@
 import settingsContext from './context.js';
 import { fetchAvailableModels } from '../app/api.js';
 import { showNotification } from '../shared/utils.js';
-import { safeSetInnerHTML, safeClassList } from '../shared/dom-utils.js';
+import { safeSetInnerHTML} from '../shared/dom-utils.js';
 import { escapeHtml } from '../shared/security.js';
 
 const MODELS_PER_PAGE = 12;
@@ -383,7 +383,7 @@ function openModelDropdown() {
   const toggle = card.querySelector('#ai-model-dropdown-toggle');
   const input = card.querySelector('#ai-model');
   if (!dropdown) return;
-  safeClassList(dropdown, 'add', 'open');
+  dropdown?.classList.add('open');
   dropdown.setAttribute('aria-hidden', 'false');
   if (toggle) toggle.setAttribute('aria-expanded', 'true');
   if (input) input.setAttribute('aria-expanded', 'true');
@@ -398,7 +398,7 @@ function closeModelDropdown() {
   const toggle = card.querySelector('#ai-model-dropdown-toggle');
   const input = card.querySelector('#ai-model');
   if (!dropdown) return;
-  safeClassList(dropdown, 'remove', 'open');
+  dropdown?.classList.remove('open');
   dropdown.setAttribute('aria-hidden', 'true');
   if (toggle) toggle.setAttribute('aria-expanded', 'false');
   if (input) input.setAttribute('aria-expanded', 'false');

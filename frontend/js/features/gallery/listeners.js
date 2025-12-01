@@ -16,7 +16,6 @@ import { UI, getCommonScrollConfig } from '../../core/constants.js';
 import { showSettingsModal } from '../../app/settings.js';
 import { createPageGroup, createComponentGroup, cleanupPage, on } from '../../core/event-manager.js';
 import { createModuleLogger } from '../../core/logger.js';
-import { safeGetElementById, safeClassList, safeSetStyle } from '../../shared/dom-utils.js';
 import { showNotification } from '../../shared/utils.js';
 import { showMissingAlbumState } from './loading-states.js';
 import { recordHierarchyView } from '../history/history-service.js';
@@ -36,7 +35,7 @@ let activeAlbumDeleteOverlay = null;
 function toggleMediaBlur() {
     state.isBlurredMode = !state.isBlurredMode;
     document.querySelectorAll('.lazy-image, #modal-img, .lazy-video, #modal-video').forEach(media => {
-        safeClassList(media, 'toggle', 'blurred', state.isBlurredMode);
+        media?.classList.toggle('blurred', state.isBlurredMode);
     });
 }
 
@@ -73,18 +72,18 @@ function handleDocumentClick(e) {
     }
 
     // 1. 关闭移动端搜索层
-    const topbar = safeGetElementById('topbar');
-    if (topbar && safeClassList(topbar, 'contains', 'topbar--search-open')) {
+    const topbar = document.getElementById('topbar');
+    if (topbar && topbar?.classList.contains('topbar--search-open')) {
         const isInsideSearch = e.target.closest && e.target.closest('.search-container');
         const isToggle = e.target.closest && e.target.closest('#search-toggle-btn');
         if (!isInsideSearch && !isToggle) {
-            safeClassList(topbar, 'remove', 'topbar--search-open');
+            topbar?.classList.remove('topbar--search-open');
         }
     }
 
     // 2. 隐藏搜索历史
     if (elements.searchInput && elements.searchInput.contains) {
-        const searchHistoryContainer = safeGetElementById('search-history');
+        const searchHistoryContainer = document.getElementById('search-history');
         if (searchHistoryContainer && !elements.searchInput.contains(e.target) && !searchHistoryContainer.contains(e.target)) {
             // 异步加载搜索历史模块
             import('./search-history.js').then(module => {
@@ -123,10 +122,10 @@ function isAlbumDeletionEnabled() {
 function closeActiveAlbumDeleteOverlay() {
     if (!activeAlbumDeleteOverlay) return;
     activeAlbumDeleteOverlay.dataset.state = 'idle';
-    safeClassList(activeAlbumDeleteOverlay, 'remove', 'active');
+    activeAlbumDeleteOverlay?.classList.remove('active');
     const albumCard = activeAlbumDeleteOverlay.closest('.album-card');
     if (albumCard) {
-        safeClassList(albumCard, 'remove', 'delete-active');
+        albumCard?.classList.remove('delete-active');
     }
     activeAlbumDeleteOverlay = null;
 }
@@ -146,10 +145,10 @@ function showAlbumDeleteOverlay(albumLink) {
     }
 
     overlay.dataset.state = 'idle';
-    safeClassList(overlay, 'add', 'active');
+    overlay?.classList.add('active');
     const albumCard = albumLink.querySelector('.album-card');
     if (albumCard) {
-        safeClassList(albumCard, 'add', 'delete-active');
+        albumCard?.classList.add('delete-active');
     }
     activeAlbumDeleteOverlay = overlay;
     return overlay;
@@ -350,19 +349,19 @@ async function handleScrollCore(type) {
     const totalPages = type === 'browse' ? state.totalBrowsePages : state.totalSearchPages;
 
     // 若为空态/连接态/错误态/骨架屏，则不触发无限滚动
-    const grid = safeGetElementById('content-grid');
+    const grid = document.getElementById('content-grid');
     if (grid) {
         const firstChild = grid.firstElementChild;
         const isBlockedState = firstChild && (
-            safeClassList(firstChild, 'contains', 'empty-state') ||
-            safeClassList(firstChild, 'contains', 'connecting-container') ||
-            safeClassList(firstChild, 'contains', 'error-container') ||
+            firstChild?.classList.contains('empty-state') ||
+            firstChild?.classList.contains('connecting-container') ||
+            firstChild?.classList.contains('error-container') ||
             firstChild.id === 'skeleton-grid' ||
             firstChild.id === 'minimal-loader'
         );
         if (isBlockedState) {
             // 优化：使用新容器控制可见性，避免重排抖动
-            if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'remove', 'visible');
+            if (elements.infiniteScrollLoader) elements.infiniteScrollLoader?.classList.remove('visible');
             return;
         }
     }
@@ -384,7 +383,7 @@ async function handleScrollCore(type) {
         else state.isSearchLoading = true;
 
         // 优化：使用新容器控制可见性，避免重排抖动
-        if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'add', 'visible');
+        if (elements.infiniteScrollLoader) elements.infiniteScrollLoader?.classList.add('visible');
 
         try {
             let data;
@@ -426,7 +425,7 @@ async function handleScrollCore(type) {
             if (items.length === 0) {
                 if (type === 'browse') state.isBrowseLoading = false; else state.isSearchLoading = false;
                 // 优化：使用新容器控制可见性，避免重排抖动
-                if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'remove', 'visible');
+                if (elements.infiniteScrollLoader) elements.infiniteScrollLoader?.classList.remove('visible');
                 return;
             }
 
@@ -449,7 +448,7 @@ async function handleScrollCore(type) {
             const { contentElements: firstElements, newMediaUrls: firstUrls, fragment } = renderResult;
 
             // 在瀑布流模式下，先隐藏新元素，避免"闪过"
-            const isMasonryMode = safeClassList(elements.contentGrid, 'contains', 'masonry-mode');
+            const isMasonryMode = elements.contentGrid?.classList.contains('masonry-mode');
             if (isMasonryMode) {
                 if (fragment && fragment.children.length > 0) {
                     Array.from(fragment.children).forEach(child => {
@@ -521,7 +520,7 @@ async function handleScrollCore(type) {
             if (type === 'browse') state.isBrowseLoading = false;
             else state.isSearchLoading = false;
             // 优化：使用新容器控制可见性，避免重排抖动
-            if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'remove', 'visible');
+            if (elements.infiniteScrollLoader) elements.infiniteScrollLoader?.classList.remove('visible');
         }
     }
 }
@@ -596,7 +595,7 @@ function registerKeyboardShortcuts(controller) {
             return;
         }
 
-        if (!safeClassList(elements.modal, 'contains', 'opacity-0')) {
+        if (!elements.modal?.classList.contains('opacity-0')) {
             if (e.key === 'Escape') {
                 if (window.location.hash.endsWith('#modal')) window.history.back();
             }
@@ -707,10 +706,10 @@ function setupCurrentPageEvents() {
         clearTimeout(resizeTimeout);
         resizeTimeout = setTimeout(() => {
             const newColumnCount = getMasonryColumns();
-            const containerWidth = safeGetElementById('content-grid')?.clientWidth || 0;
+            const containerWidth = document.getElementById('content-grid')?.clientWidth || 0;
             const changedCols = newColumnCount !== state.currentColumnCount;
             const changedWidth = Math.abs(containerWidth - (state.currentLayoutWidth || 0)) > 1;
-            if ((changedCols || changedWidth) && safeClassList(elements.contentGrid, 'contains', 'masonry-mode')) {
+            if ((changedCols || changedWidth) && elements.contentGrid?.classList.contains('masonry-mode')) {
                 state.currentColumnCount = newColumnCount;
                 state.currentLayoutWidth = containerWidth;
                 applyMasonryLayout();
@@ -751,10 +750,10 @@ export function setupEventListeners() {
     let resizeTimeout;
     function reflowIfNeeded() {
         const newColumnCount = getMasonryColumns();
-        const containerWidth = safeGetElementById('content-grid')?.clientWidth || 0;
+        const containerWidth = document.getElementById('content-grid')?.clientWidth || 0;
         const changedCols = newColumnCount !== state.currentColumnCount;
         const changedWidth = Math.abs(containerWidth - (state.currentLayoutWidth || 0)) > 1;
-        if ((changedCols || changedWidth) && safeClassList(elements.contentGrid, 'contains', 'masonry-mode')) {
+        if ((changedCols || changedWidth) && elements.contentGrid?.classList.contains('masonry-mode')) {
             state.currentColumnCount = newColumnCount;
             state.currentLayoutWidth = containerWidth;
             applyMasonryLayout();
@@ -779,9 +778,9 @@ export function setupEventListeners() {
                 ticking = false;
             });
         });
-        const grid = safeGetElementById('content-grid');
+        const grid = document.getElementById('content-grid');
         if (grid) ro.observe(grid);
-        const pageInner = safeGetElementById('page-inner');
+        const pageInner = document.getElementById('page-inner');
         if (pageInner) ro.observe(pageInner);
     }
 
@@ -789,7 +788,7 @@ export function setupEventListeners() {
     const uiController = createComponentGroup('ui');
 
     // 回到顶部按钮
-    const backToTopBtn = safeGetElementById('back-to-top-btn');
+    const backToTopBtn = document.getElementById('back-to-top-btn');
     if (backToTopBtn) {
         // 点击回到顶部
         on(backToTopBtn, 'click', () => {
@@ -798,7 +797,7 @@ export function setupEventListeners() {
     }
 
     // 设置按钮 - 动态导入实现按需加载
-    const settingsBtn = safeGetElementById('settings-btn');
+    const settingsBtn = document.getElementById('settings-btn');
     if (settingsBtn) {
         on(settingsBtn, 'click', async () => {
             try {
@@ -811,7 +810,7 @@ export function setupEventListeners() {
     }
 
     // Photonix 标题点击返回首页
-    const mainTitle = safeGetElementById('main-title');
+    const mainTitle = document.getElementById('main-title');
     if (mainTitle) {
         on(mainTitle, 'click', () => {
             // 和键盘快捷键 'h' 行为保持一致
@@ -825,13 +824,13 @@ export function setupEventListeners() {
  */
 function setupTopbarInteractions() {
     const topbarController = createComponentGroup('topbar');
-    const topbar = safeGetElementById('topbar');
-    const searchToggleBtn = safeGetElementById('search-toggle-btn');
-    const commandSearchBtn = safeGetElementById('command-search-btn');
-    const mobileSearchBtn = safeGetElementById('mobile-search-btn');
-    const mobileSearchBackBtn = safeGetElementById('mobile-search-back-btn');
-    const searchSubmitBtn = safeGetElementById('search-submit-btn');
-    const searchInput = safeGetElementById('search-input');
+    const topbar = document.getElementById('topbar');
+    const searchToggleBtn = document.getElementById('search-toggle-btn');
+    const commandSearchBtn = document.getElementById('command-search-btn');
+    const mobileSearchBtn = document.getElementById('mobile-search-btn');
+    const mobileSearchBackBtn = document.getElementById('mobile-search-back-btn');
+    const searchSubmitBtn = document.getElementById('search-submit-btn');
+    const searchInput = document.getElementById('search-input');
     const searchContainer = searchInput ? searchInput.closest('.search-container') : null;
     if (!topbar) {
         return;
@@ -855,8 +854,8 @@ function setupTopbarInteractions() {
 
         if (currentY < 50) {
             // 顶部50px内：完全显示
-            safeClassList(topbar, 'remove', 'topbar--hidden');
-            safeClassList(topbar, 'remove', 'topbar--condensed');
+            topbar?.classList.remove('topbar--hidden');
+            topbar?.classList.remove('topbar--condensed');
             lastScrollY = currentY;
         } else if (isAtBottom) {
             // 在底部时：保持当前状态不变，避免抽搐
@@ -864,13 +863,13 @@ function setupTopbarInteractions() {
             return;
         } else if (delta > SCROLL_DELTA_THRESHOLD && currentY > UI.SCROLL_THRESHOLD_DOWN) {
             // 明显向下滚动：隐藏topbar
-            safeClassList(topbar, 'add', 'topbar--hidden');
-            safeClassList(topbar, 'add', 'topbar--condensed');
+            topbar?.classList.add('topbar--hidden');
+            topbar?.classList.add('topbar--condensed');
             lastScrollY = currentY;
         } else if (delta < -SCROLL_DELTA_THRESHOLD) {
             // 明显向上滚动：显示topbar
-            safeClassList(topbar, 'remove', 'topbar--hidden');
-            safeClassList(topbar, 'remove', 'topbar--condensed');
+            topbar?.classList.remove('topbar--hidden');
+            topbar?.classList.remove('topbar--condensed');
             lastScrollY = currentY;
         }
         // 微小滚动（|delta| <= 5px）不更新状态
@@ -881,12 +880,12 @@ function setupTopbarInteractions() {
      * 更新回到顶部按钮可见性
      */
     function updateBackToTopButton() {
-        const backToTopBtn = safeGetElementById('back-to-top-btn');
+        const backToTopBtn = document.getElementById('back-to-top-btn');
         if (!backToTopBtn) return;
         if (window.scrollY > 400) {
-            safeClassList(backToTopBtn, 'add', 'visible');
+            backToTopBtn?.classList.add('visible');
         } else {
-            safeClassList(backToTopBtn, 'remove', 'visible');
+            backToTopBtn?.classList.remove('visible');
         }
     }
 
@@ -894,20 +893,20 @@ function setupTopbarInteractions() {
      * 更新顶栏 offset 变量
      */
     function updateTopbarOffset() {
-        const appContainer = safeGetElementById('app-container');
+        const appContainer = document.getElementById('app-container');
         if (!appContainer) return;
         const persistentHeight = topbar.querySelector('.topbar-inner')?.offsetHeight || 56;
-        const contextEl = safeGetElementById('topbar-context');
-        const contextHeight = (contextEl && !safeClassList(topbar, 'contains', 'topbar--condensed')) ? contextEl.offsetHeight : 0;
+        const contextEl = document.getElementById('topbar-context');
+        const contextHeight = (contextEl && !topbar?.classList.contains('topbar--condensed')) ? contextEl.offsetHeight : 0;
         const total = persistentHeight + contextHeight + 16;
 
         if (Math.abs(total - lastTopbarOffset) >= 1) {
             lastTopbarOffset = total;
-            safeSetStyle(appContainer, '--topbar-offset', `${total}px`);
+            appContainer.style.setProperty('--topbar-offset', `${total}px`);
         }
     }
 
-    const contextEl = safeGetElementById('topbar-context');
+    const contextEl = document.getElementById('topbar-context');
     // 移除多次延迟重试，改由router.js在路由切换前预计算
     // 仅保留初始化调用和响应式更新
     updateTopbarOffset();
@@ -938,8 +937,8 @@ function setupTopbarInteractions() {
     if (searchToggleBtn) {
         on(searchToggleBtn, 'click', (e) => {
             e.stopPropagation();
-            safeClassList(topbar, 'toggle', 'topbar--search-open');
-            if (safeClassList(topbar, 'contains', 'topbar--search-open') && searchInput) {
+            topbar?.classList.toggle('topbar--search-open');
+            if (topbar?.classList.contains('topbar--search-open') && searchInput) {
                 setTimeout(() => { searchInput.focus(); }, 0);
             }
         }, { signal: topbarController.signal });
@@ -950,8 +949,8 @@ function setupTopbarInteractions() {
      */
     function openCommandSearch() {
         if (!searchInput) return;
-        if (!safeClassList(topbar, 'contains', 'topbar--inline-search')) {
-            safeClassList(topbar, 'add', 'topbar--search-open');
+        if (!topbar?.classList.contains('topbar--inline-search')) {
+            topbar?.classList.add('topbar--search-open');
         }
         const isMobile = window.matchMedia && window.matchMedia('(max-width: 640px)').matches;
         if (!isMobile) {
@@ -972,15 +971,15 @@ function setupTopbarInteractions() {
     if (mobileSearchBtn) {
         on(mobileSearchBtn, 'click', (e) => {
             e.stopPropagation();
-            safeClassList(topbar, 'add', 'topbar--inline-search');
+            topbar?.classList.add('topbar--inline-search');
             openCommandSearch();
         }, { signal: topbarController.signal });
     }
 
     if (mobileSearchBackBtn) {
         on(mobileSearchBackBtn, 'click', () => {
-            safeClassList(topbar, 'remove', 'topbar--search-open');
-            safeClassList(topbar, 'remove', 'topbar--inline-search');
+            topbar?.classList.remove('topbar--search-open');
+            topbar?.classList.remove('topbar--inline-search');
             if (searchContainer) searchContainer.removeAttribute('style');
             if (searchInput) searchInput.blur();
         }, { signal: topbarController.signal });
@@ -1132,7 +1131,7 @@ function setupSearchInteractions() {
 
     const searchController = createComponentGroup('search');
 
-    const searchHistoryContainer = safeGetElementById('search-history');
+    const searchHistoryContainer = document.getElementById('search-history');
     let searchHistoryModule = null;
 
     import('./search-history.js').then(module => {
@@ -1187,7 +1186,7 @@ function setupModalInteractions() {
     const modalController = createComponentGroup('modal');
 
     on(window, 'popstate', () => {
-        if (!window.location.hash.endsWith('#modal') && !safeClassList(elements.modal, 'contains', 'opacity-0')) {
+        if (!window.location.hash.endsWith('#modal') && !elements.modal?.classList.contains('opacity-0')) {
             closeModal();
         }
     }, { signal: modalController.signal });
@@ -1235,12 +1234,12 @@ function setupModalInteractions() {
     // 滑动手势处理
     const swipeHandler = new SwipeHandler(elements.mediaPanel, {
         shouldAllowSwipe: () => {
-            const isImage = !safeClassList(elements.modalImg, 'contains', 'hidden');
+            const isImage = !elements.modalImg?.classList.contains('hidden');
             const zoomed = elements.mediaPanel?.dataset?.isZoomed === '1';
             return !(isImage && zoomed);
         },
         onSwipe: (direction) => {
-            if (safeClassList(elements.modal, 'contains', 'opacity-0')) return;
+            if (elements.modal?.classList.contains('opacity-0')) return;
             if (direction === 'left') {
                 navigateModal('next');
             } else if (direction === 'right') {
@@ -1248,7 +1247,7 @@ function setupModalInteractions() {
             }
         },
         onFastSwipe: (direction) => {
-            if (safeClassList(elements.modal, 'contains', 'opacity-0')) return;
+            if (elements.modal?.classList.contains('opacity-0')) return;
             if (direction === 'right') {
                 startFastNavigate('prev');
             } else if (direction === 'left') {

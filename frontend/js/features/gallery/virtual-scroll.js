@@ -7,7 +7,7 @@
 import { calculateMasonryLayout } from './masonry.js';
 import { getVirtualScrollConfig } from '../../core/constants.js';
 import { performanceLogger } from '../../core/logger.js';
-import { safeSetInnerHTML, safeSetStyle, safeClassList } from '../../shared/dom-utils.js';
+import { safeSetInnerHTML} from '../../shared/dom-utils.js';
 
 /**
  * 虚拟滚动器类
@@ -71,7 +71,7 @@ class VirtualScroller {
     init() {
         // 创建视口容器
         this.viewport = document.createElement('div');
-        safeSetStyle(this.viewport, {
+        Object.assign(this.viewport.style, {
             position: 'relative',
             width: '100%',
             height: '100%',
@@ -80,7 +80,7 @@ class VirtualScroller {
         
         // 创建哨兵元素（撑开滚动条）
         this.sentinel = document.createElement('div');
-        safeSetStyle(this.sentinel, {
+        Object.assign(this.sentinel.style, {
             position: 'absolute',
             top: '0',
             left: '0',
@@ -90,7 +90,7 @@ class VirtualScroller {
         
         // 创建测量容器（屏幕外）
         this.measurementContainer = document.createElement('div');
-        safeSetStyle(this.measurementContainer, {
+        Object.assign(this.measurementContainer.style, {
             position: 'absolute',
             top: '-9999px',
             left: '-9999px',
@@ -125,7 +125,7 @@ class VirtualScroller {
                 <div class="loading-spinner"></div>
                 <div class="loading-text">正在加载...</div>
             `);
-            safeSetStyle(this.loadingIndicator, 'display', 'none');
+            this.loadingIndicator.style.display = 'none';
             this.container.appendChild(this.loadingIndicator);
         }
         
@@ -147,7 +147,7 @@ class VirtualScroller {
         this.boundHandleResize = this.handleResize.bind(this);
         
         // 将容器设为可滚动，避免监听 window 产生的多余重排
-        safeSetStyle(this.container, 'overflowY', 'auto');
+        this.container.style.overflowY = 'auto';
         this.container.addEventListener('scroll', this.boundHandleScroll, { passive: true });
         window.addEventListener('resize', this.boundHandleResize);
     }
@@ -197,7 +197,7 @@ class VirtualScroller {
             totalHeight = measuredHeight + (unmeasuredCount * this.estimatedItemHeight);
         }
         
-        safeSetStyle(this.sentinel, 'height', totalHeight + 'px');
+        this.sentinel.style.height = totalHeight + 'px';
     }
     
     /**
@@ -370,7 +370,7 @@ class VirtualScroller {
             for (const index of itemsToMeasure) {
                 const item = this.items[index];
                 const element = document.createElement('div');
-                safeSetStyle(element, {
+                Object.assign(element.style, {
                     position: 'absolute',
                     top: '0',
                     left: '0',
@@ -510,7 +510,7 @@ class VirtualScroller {
         for (const [index, element] of this.visibleItems) {
             if (index < startIndex || index >= endIndex) {
                 if (this.visualOptions.enableAnimations) {
-                    safeClassList(element, 'add', 'virtual-scroll-item-exit');
+                    element?.classList.add('virtual-scroll-item-exit');
                     setTimeout(() => {
                         element.remove();
                         this.releaseNode(element);
@@ -535,7 +535,7 @@ class VirtualScroller {
                 // 应用缓存的布局信息
                 if (this.measurementCache.has(i)) {
                     const measurement = this.measurementCache.get(i);
-                    safeSetStyle(element, {
+                    Object.assign(element.style, {
                         top: measurement.top + 'px',
                         left: measurement.left + 'px',
                         width: measurement.width + 'px',
@@ -544,7 +544,7 @@ class VirtualScroller {
                 } else {
                     // 使用预估位置
                     const estimatedTop = i * this.estimatedItemHeight;
-                    safeSetStyle(element, {
+                    Object.assign(element.style, {
                         top: estimatedTop + 'px',
                         minHeight: this.estimatedItemHeight + 'px'
                     });
@@ -558,9 +558,9 @@ class VirtualScroller {
                 
                 // 添加进入动画
                 if (this.visualOptions.enableAnimations) {
-                    safeClassList(element, 'add', 'virtual-scroll-item-enter');
+                    element?.classList.add('virtual-scroll-item-enter');
                     requestAnimationFrame(() => {
-                        safeClassList(element, 'add', 'virtual-scroll-item-enter-active');
+                        element?.classList.add('virtual-scroll-item-enter-active');
                     });
                 }
             }
@@ -617,7 +617,7 @@ class VirtualScroller {
      */
     showLoadingAnimation() {
         if (this.loadingIndicator) {
-            safeSetStyle(this.loadingIndicator, 'display', 'flex');
+            this.loadingIndicator.style.display = 'flex';
         }
     }
     
@@ -627,7 +627,7 @@ class VirtualScroller {
      */
     hideLoadingAnimation() {
         if (this.loadingIndicator) {
-            safeSetStyle(this.loadingIndicator, 'display', 'none');
+            this.loadingIndicator.style.display = 'none';
         }
     }
     
@@ -639,7 +639,7 @@ class VirtualScroller {
         if (this.progressBar && this.items.length > 0) {
             const progress = (this.scrollTop / (this.sentinel.offsetHeight - this.viewportHeight)) * 100;
             if (this.progressBarInner) {
-                safeSetStyle(this.progressBarInner, 'width', `${Math.min(100, Math.max(0, progress))}%`);
+                this.progressBarInner.style.width = `${Math.min(100, Math.max(0, progress))}%`;
             }
         }
     }
@@ -687,7 +687,7 @@ class VirtualScroller {
      */
     defaultRenderCallback(item, element, index) {
         element.className = 'virtual-item';
-        safeSetStyle(element, {
+        Object.assign(element.style, {
             height: '300px',
             border: '1px solid #ccc'
         });

@@ -3,8 +3,6 @@
  * @description 触摸手势处理模块。提供滑动手势（含长按滑动连续翻页）和图片双指缩放/拖拽的支持。
  */
 
-import { safeSetStyle } from '../../shared/dom-utils.js';
-
 /**
  * 滑动处理器类 SwipeHandler
  * 用于监听元素上的滑动手势，支持单次滑动和长按连续滑动。
@@ -204,7 +202,7 @@ export function enablePinchZoom(img, container) {
     if (!img || !container) return () => {};
 
     // 初始化样式
-    safeSetStyle(img, {
+    Object.assign(img.style, {
         transformOrigin: 'center center',
         touchAction: 'none'
     });
@@ -224,7 +222,7 @@ export function enablePinchZoom(img, container) {
      * 应用当前缩放和平移变换
      */
     function applyTransform() {
-        safeSetStyle(img, 'transform', `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`);
+        img.style.transform = `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`;
     }
 
     /**
@@ -325,7 +323,7 @@ export function enablePinchZoom(img, container) {
         container.removeEventListener('touchstart', onTouchStart, { passive: false });
         container.removeEventListener('touchmove', onTouchMove, { passive: false });
         container.removeEventListener('touchend', onTouchEnd, { passive: true });
-        safeSetStyle(img, {
+        Object.assign(img.style, {
             transform: '',
             touchAction: ''
         });

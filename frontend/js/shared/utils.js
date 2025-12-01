@@ -5,7 +5,7 @@
 
 import { NETWORK, UI, isDevelopment } from '../core/constants.js';
 import { createModuleLogger } from '../core/logger.js';
-import { safeSetInnerHTML, safeGetElementById, safeClassList } from './dom-utils.js';
+import { safeSetInnerHTML } from './dom-utils.js';
 
 const utilsLogger = createModuleLogger('Utils');
 
@@ -135,7 +135,7 @@ export function showNotification(message, type = 'info', duration = UI.NOTIFICAT
     const targetContainerId = containerId || 'notification-container';
     const containerParent = context || document.body;
 
-    let container = safeGetElementById(targetContainerId);
+    let container = document.getElementById(targetContainerId);
     if (!container) {
         container = document.createElement('div');
         container.id = targetContainerId;
@@ -162,9 +162,9 @@ export function showNotification(message, type = 'info', duration = UI.NOTIFICAT
         if (existing._hideTimeout) clearTimeout(existing._hideTimeout);
         existing._hideTimeout = setTimeout(() => remove(existing), duration);
         // 轻微动效反馈（可选，不影响样式不存在时的兼容）
-        safeClassList(existing, 'remove', 'show');
+        existing?.classList.remove('show');
         // 下一帧再添加以触发过渡
-        requestAnimationFrame(() => safeClassList(existing, 'add', 'show'));
+        requestAnimationFrame(() => existing?.classList.add('show'));
         return;
     }
 
@@ -183,7 +183,7 @@ export function showNotification(message, type = 'info', duration = UI.NOTIFICAT
     container.appendChild(notif);
 
     // 动画显示
-    setTimeout(() => safeClassList(notif, 'add', 'show'), 10);
+    setTimeout(() => notif?.classList.add('show'), 10);
 
     // 自动消失逻辑
     notif._hideTimeout = setTimeout(() => remove(notif), duration);
@@ -201,7 +201,7 @@ export function showNotification(message, type = 'info', duration = UI.NOTIFICAT
     function remove(el) {
         try { if (el && el._hideTimeout) clearTimeout(el._hideTimeout); } catch { }
         const node = el || notif;
-        safeClassList(node, 'remove', 'show');
+        node?.classList.remove('show');
         setTimeout(() => {
             node.remove();
             if (container && container.childElementCount === 0 && container.parentNode && container.id !== 'notification-container') {
@@ -211,7 +211,7 @@ export function showNotification(message, type = 'info', duration = UI.NOTIFICAT
     }
 }
 
-import { iconNotificationSuccess, iconNotificationError, iconNotificationWarning, iconNotificationInfo } from './svg-utils.js';
+import { iconNotificationSuccess, iconNotificationError, iconNotificationWarning, iconNotificationInfo } from './svg-templates.js';
 
 function renderIcon(type) {
     const map = {

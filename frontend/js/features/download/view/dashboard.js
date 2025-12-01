@@ -1,16 +1,15 @@
 import { createModuleLogger } from '../../../core/logger.js';
 const dashboardLogger = createModuleLogger('DownloadDashboard');
 
-import { safeSetInnerHTML, safeSetStyle } from '../../../shared/dom-utils.js';
+import { safeSetInnerHTML} from '../../../shared/dom-utils.js';
 import {
   iconEdit,
   iconEye,
   iconStop,
   iconPlay,
   iconClose
-} from '../../../shared/svg-utils.js';
+} from '../../../shared/svg-templates.js';
 import { applyInteractiveEffects } from './effects.js';
-import { IncrementalList } from '../../../shared/incremental-update.js';
 import { enhancedTaskTable } from './enhanced-table.js';
 import {
   sanitize,
@@ -26,10 +25,6 @@ import { getRootElement } from './root.js';
 
 // 更多操作菜单图标
 const ICON_MORE = '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="4.5" cy="10" r="1.5" fill="currentColor"/><circle cx="10" cy="10" r="1.5" fill="currentColor"/><circle cx="15.5" cy="10" r="1.5" fill="currentColor"/></svg>';
-
-// 全局渲染器实例；queueListView 和 recentListView 保留引用，taskListView 由 enhancedTaskTable 管理
-let queueListView = null;
-let recentListView = null;
 
 /**
  * 渲染指定统计指标的趋势图
@@ -183,7 +178,7 @@ export function renderQueue(tasks) {
   const totalCount = sanitize(String(total));
   safeSetInnerHTML(progressLabel, `${runningCount} / ${totalCount} 运行中`);
   safeSetInnerHTML(percentLabel, `${sanitize(String(percent))}%`);
-  safeSetStyle(progressBar, 'width', `${percent}%`);
+  progressBar.style.width = `${percent}%`;
 
   // 只展示最多3条正在运行的任务
   const displayItems = running.slice(0, 3);
@@ -217,17 +212,12 @@ export function renderQueue(tasks) {
     return li;
   };
 
-  // 首次需要创建实例，否则直接增量更新
-  if (!queueListView) {
-    queueListView = new IncrementalList({
-      container: queueList,
-      items: displayItems,
-      getKey: (item, idx) => encodeURIComponent(deriveTaskId(item, idx)),
-      renderItem: createQueueItem
-    });
-  } else {
-    queueListView.update(displayItems);
-  }
+  // 直接渲染（innerHTML 方式，经 Benchmark 验证比 IncrementalList 更快）
+  queueList.innerHTML = '';
+  displayItems.forEach((task, index) => {
+    const item = createQueueItem(task, index);
+    queueList.appendChild(item);
+  });
 
   applyInteractiveEffects(queueList);
 }
@@ -299,25 +289,16 @@ export function renderRecentDownloads(entries) {
 
   // 无数据时渲染空态
   if (!recent.length) {
-    if (recentListView) {
-      recentListView.update([]);
-    } else {
-      safeSetInnerHTML(listEl, '<li class="empty-state">暂无下载记录。</li>');
-    }
+    safeSetInnerHTML(listEl, '<li class="empty-state">暂无下载记录。</li>');
     return;
   }
 
-  // 实例化或更新最近下载组件
-  if (!recentListView) {
-    recentListView = new IncrementalList({
-      container: listEl,
-      items: recent,
-      getKey: (item, idx) => String(item?.id || item?.path || item?.filename || item?.timestamp || idx),
-      renderItem: createRecentItem
-    });
-  } else {
-    recentListView.update(recent);
-  }
+  // 直接渲染（innerHTML 方式，经 Benchmark 验证比 IncrementalList 更快）
+  listEl.innerHTML = '';
+  recent.forEach((entry, index) => {
+    const item = createRecentItem(entry, index);
+    listEl.appendChild(item);
+  });
 }
 
 /**

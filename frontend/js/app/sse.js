@@ -9,7 +9,6 @@ import { registerThumbnailBuffer } from '../core/event-buffer.js';
 import { getAuthToken, clearAuthToken } from './auth.js';
 import { triggerMasonryUpdate } from '../features/gallery/masonry.js';
 import { createModuleLogger } from '../core/logger.js';
-import { safeClassList, safeQuerySelectorAll } from '../shared/dom-utils.js';
 import { SSE } from '../core/constants.js';
 import { setManagedTimeout } from '../core/timer-manager.js';
 import { requestLazyImage, blobUrlManager } from '../features/gallery/lazyload.js';
@@ -63,7 +62,7 @@ async function processThumbnailBatch(batch) {
         const imagePath = eventData.path;
 
         // 查找所有匹配 path 的图片元素
-        const imagesToUpdate = Array.from(safeQuerySelectorAll('img.lazy-image')).filter(img => {
+        const imagesToUpdate = Array.from(document.querySelectorAll('img.lazy-image')).filter(img => {
             const dataSrc = img.dataset.src;
             if (!dataSrc) return false;
             try {
@@ -86,7 +85,7 @@ async function processThumbnailBatch(batch) {
                 await updateThumbnailImage(img, imagePath);
             } catch (error) {
                 sseWarn('缩略图更新失败:', error);
-                safeClassList(img, 'remove', 'opacity-0');
+                img?.classList.remove('opacity-0');
                 img.dispatchEvent(new Event('error'));
             }
         }
@@ -124,10 +123,10 @@ async function updateThumbnailImage(img, imagePath) {
         } catch { }
     }
 
-    safeClassList(img, 'remove', 'error');
-    safeClassList(img, 'remove', 'loaded');
-    safeClassList(img, 'remove', 'processing');
-    safeClassList(img, 'add', 'opacity-0');
+    img?.classList.remove('error');
+    img?.classList.remove('loaded');
+    img?.classList.remove('processing');
+    img?.classList.add('opacity-0');
     delete img.dataset.thumbStatus;
     delete img.dataset.retryAttempt;
     delete img.dataset.lastRetryTime;

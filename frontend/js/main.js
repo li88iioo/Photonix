@@ -15,7 +15,7 @@ import { blobUrlManager, savePageLazyState, restorePageLazyState, clearRestorePr
 import { initializeUI } from './features/gallery/ui.js';
 import { UI } from './core/constants.js';
 import { createModuleLogger } from './core/logger.js';
-import { safeSetInnerHTML, safeGetElementById, safeQuerySelector, safeClassList } from './shared/dom-utils.js';
+import { safeSetInnerHTML } from './shared/dom-utils.js';
 import { eventManager } from './core/event-manager.js';
 
 const mainLogger = createModuleLogger('Main');
@@ -38,7 +38,7 @@ function showGalleryShortcutsHint() {
         const hintEl = document.getElementById('gallery-shortcuts-hint');
         if (!hintEl) return;
 
-        safeClassList(hintEl, 'add', 'show');
+        hintEl?.classList.add('show');
 
         // 标记已显示，下次不再显示
         try {
@@ -49,7 +49,7 @@ function showGalleryShortcutsHint() {
 
         // 6秒后自动隐藏（动画会处理）
         setTimeout(() => {
-            safeClassList(hintEl, 'remove', 'show');
+            hintEl?.classList.remove('show');
         }, 6000);
     }, 1500); // 延迟1.5秒，让用户先看到页面内容
 }
@@ -69,7 +69,7 @@ function applyAppIcon() {
                                 <path fill="url(#logo-gradient)" d="M50,0 C77.61,0 100,22.39 100,50 C100,77.61 77.61,100 50,100 C22.39,100 0,77.61 0,50 C0,22.39 22.39,0 50,0 Z M50,15 C30.67,15 15,30.67 15,50 C15,69.33 30.67,85 50,85 C69.33,85 85,69.33 85,50 C85,30.67 69.33,15 50,15 Z M62.5,25 L37.5,25 L37.5,50 L62.5,50 C69.4,50 75,44.4 75,37.5 C75,30.6 69.4,25 62.5,25 Z"></path>
                             </svg>`;
     const dataUrl = 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
-    let linkEl = safeQuerySelector('link[rel="icon"]');
+    let linkEl = document.querySelector('link[rel="icon"]');
     if (!linkEl) {
         linkEl = document.createElement('link');
         linkEl.setAttribute('rel', 'icon');
@@ -85,40 +85,40 @@ function applyAppIcon() {
  * @param {object} [options] - 附加选项
  */
 function setUIState(nextState, options = {}) {
-    const app = safeGetElementById('app-container');
-    const overlay = safeGetElementById('auth-overlay');
+    const app = document.getElementById('app-container');
+    const overlay = document.getElementById('auth-overlay');
 
     /**
      * 隐藏认证遮罩层
      */
     const hideOverlay = () => {
         if (!overlay) return;
-        safeClassList(overlay, 'remove', 'opacity-100');
-        safeClassList(overlay, 'add', 'opacity-0');
-        safeClassList(overlay, 'add', 'pointer-events-none');
+        overlay?.classList.remove('opacity-100');
+        overlay?.classList.add('opacity-0');
+        overlay?.classList.add('pointer-events-none');
     };
     /**
      * 显示认证遮罩层
      */
     const showOverlay = () => {
         if (!overlay) return;
-        safeClassList(overlay, 'remove', 'opacity-0');
-        safeClassList(overlay, 'remove', 'pointer-events-none');
-        safeClassList(overlay, 'add', 'opacity-100');
+        overlay?.classList.remove('opacity-0');
+        overlay?.classList.remove('pointer-events-none');
+        overlay?.classList.add('opacity-100');
     };
 
     switch (nextState) {
         case 'app':
             if (app) {
-                safeClassList(app, 'remove', 'opacity-0');
-                safeClassList(app, 'add', 'opacity-100');
+                app?.classList.remove('opacity-0');
+                app?.classList.add('opacity-100');
             }
             hideOverlay();
             break;
         case 'login':
             if (app) {
-                safeClassList(app, 'remove', 'opacity-100');
-                safeClassList(app, 'add', 'opacity-0');
+                app?.classList.remove('opacity-100');
+                app?.classList.add('opacity-0');
             }
             showOverlay();
             break;
@@ -180,7 +180,7 @@ async function initializeApp() {
 
         // 如果有token但检查失败，显示错误页面
         setUIState('error');
-        const authContainer = safeGetElementById('auth-container');
+        const authContainer = document.getElementById('auth-container');
         if (authContainer) {
             safeSetInnerHTML(authContainer, `
                 <div class="auth-card text-center">
@@ -190,7 +190,7 @@ async function initializeApp() {
                     <p class="text-gray-400 text-sm mt-2">${error.message ? error.message.replace(/[<>]/g, '') : '未知错误'}</p>
                 </div>
             `);
-            safeGetElementById('refresh-btn')?.addEventListener('click', () => window.location.reload());
+            document.getElementById('refresh-btn')?.addEventListener('click', () => window.location.reload());
         }
     }
 }

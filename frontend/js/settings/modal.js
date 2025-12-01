@@ -4,7 +4,7 @@
  */
 
 import settingsContext from './context.js';
-import { safeClassList, safeSetInnerHTML } from '../shared/dom-utils.js';
+import { safeSetInnerHTML } from '../shared/dom-utils.js';
 
 /**
  * 关闭设置模态框并清理内容。
@@ -14,8 +14,8 @@ export function closeSettingsModal() {
   const { modal, card } = settingsContext;
   if (!modal || !card) return;
 
-  safeClassList(modal, 'remove', 'visible');
-  safeClassList(document.body, 'remove', 'settings-open');
+  modal?.classList.remove('visible');
+  document.body?.classList.remove('settings-open');
   modal.addEventListener('transitionend', () => {
     safeSetInnerHTML(card, '');
   }, { once: true });

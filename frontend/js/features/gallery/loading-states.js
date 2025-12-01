@@ -7,7 +7,7 @@
 import { state } from '../../core/state.js';
 import { elements } from '../../shared/dom-elements.js';
 import { createModuleLogger } from '../../core/logger.js';
-import { safeSetInnerHTML, safeGetElementById, safeClassList, safeSetStyle } from '../../shared/dom-utils.js';
+import { safeSetInnerHTML } from '../../shared/dom-utils.js';
 
 const loadingLogger = createModuleLogger('LoadingStates');
 
@@ -31,9 +31,9 @@ export function showMinimalLoader(options = {}) {
     }
 
     // 移除所有布局类，避免干扰
-    safeClassList(grid, 'remove', 'grid-mode');
-    safeClassList(grid, 'remove', 'masonry-mode');
-    safeClassList(grid, 'remove', 'virtual-scroll-mode');
+    grid?.classList.remove('grid-mode');
+    grid?.classList.remove('masonry-mode');
+    grid?.classList.remove('virtual-scroll-mode');
 
     // 创建居中的加载容器
     const loaderHTML = `
@@ -51,7 +51,7 @@ export function showMinimalLoader(options = {}) {
 
     // 确保容器有足够高度支撑居中布局
     const minHeight = Math.max(400, window.innerHeight - 200);
-    safeSetStyle(grid, 'minHeight', `${minHeight}px`);
+    grid.style.minHeight = `${minHeight}px`;
 }
 
 /**
@@ -65,7 +65,7 @@ export function hideMinimalLoader() {
     const loader = grid.querySelector('#minimal-loader');
     if (loader) {
         // 淡出动画
-        safeSetStyle(loader, 'opacity', '0');
+        loader.style.opacity = '0';
         setTimeout(() => {
             if (loader.parentNode === grid) {
                 grid.removeChild(loader);
@@ -110,15 +110,15 @@ class LoadingStateManager {
         }
 
         // 隐藏无限滚动加载器，避免重排抖动
-        const loaderContainer = safeGetElementById('infinite-scroll-loader-container');
-        if (loaderContainer) safeClassList(loaderContainer, 'remove', 'visible');
+        const loaderContainer = document.getElementById('infinite-scroll-loader-container');
+        if (loaderContainer) loaderContainer?.classList.remove('visible');
 
         // 移除虚拟滚动与瀑布流模式，避免空状态被重排
         if (elements.contentGrid) {
-            safeClassList(elements.contentGrid, 'remove', 'virtual-scroll-mode');
-            safeClassList(elements.contentGrid, 'remove', 'masonry-mode');
-            safeClassList(elements.contentGrid, 'remove', 'grid-mode');
-            safeSetStyle(elements.contentGrid, 'height', 'auto');
+            elements.contentGrid?.classList.remove('virtual-scroll-mode');
+            elements.contentGrid?.classList.remove('masonry-mode');
+            elements.contentGrid?.classList.remove('grid-mode');
+            elements.contentGrid.style.height = 'auto';
         }
 
         const errorHTML = `
@@ -185,15 +185,15 @@ class LoadingStateManager {
         }
 
         // 隐藏无限滚动加载器，避免重排抖动
-        const loaderContainer = safeGetElementById('infinite-scroll-loader-container');
-        if (loaderContainer) safeClassList(loaderContainer, 'remove', 'visible');
+        const loaderContainer = document.getElementById('infinite-scroll-loader-container');
+        if (loaderContainer) loaderContainer?.classList.remove('visible');
 
         // 移除虚拟滚动与瀑布流模式，避免空状态被重排
         if (elements.contentGrid) {
-            safeClassList(elements.contentGrid, 'remove', 'virtual-scroll-mode');
-            safeClassList(elements.contentGrid, 'remove', 'masonry-mode');
-            safeClassList(elements.contentGrid, 'remove', 'grid-mode');
-            safeSetStyle(elements.contentGrid, 'height', 'auto');
+            elements.contentGrid?.classList.remove('virtual-scroll-mode');
+            elements.contentGrid?.classList.remove('masonry-mode');
+            elements.contentGrid?.classList.remove('grid-mode');
+            elements.contentGrid.style.height = 'auto';
         }
 
         const emptyHTML = `
@@ -288,7 +288,7 @@ export function showNetworkError() {
  */
 export function showEmptySearchResults(query) {
     // 隐藏无限滚动加载器，避免重排抖动
-    if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'remove', 'visible');
+    if (elements.infiniteScrollLoader) elements.infiniteScrollLoader?.classList.remove('visible');
 
     loadingStateManager.showEmptyState(
         `没有找到与"${query}"相关的相册或图片。请尝试其他关键词。`,
@@ -318,7 +318,7 @@ export function showEmptyViewedHistory() {
  */
 export function showEmptyAlbum() {
     // 隐藏无限滚动加载器，避免重排抖动
-    if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'remove', 'visible');
+    if (elements.infiniteScrollLoader) elements.infiniteScrollLoader?.classList.remove('visible');
 
     loadingStateManager.showEmptyState(
         '这个相册还没有任何图片或视频',
@@ -338,7 +338,7 @@ export function showEmptyAlbum() {
  * @returns {void}
  */
 export function showMissingAlbumState() {
-    if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'remove', 'visible');
+    if (elements.infiniteScrollLoader) elements.infiniteScrollLoader?.classList.remove('visible');
 
     loadingStateManager.showEmptyState(
         '未找到该相册，可能已被移动或删除',
@@ -371,7 +371,7 @@ export function showMissingAlbumState() {
  */
 export function showIndexBuildingError() {
     // 隐藏无限滚动加载器，避免重排抖动
-    if (elements.infiniteScrollLoader) safeClassList(elements.infiniteScrollLoader, 'remove', 'visible');
+    if (elements.infiniteScrollLoader) elements.infiniteScrollLoader?.classList.remove('visible');
 
     loadingStateManager.showErrorState(
         '搜索功能暂时不可用，索引正在后台构建中，请稍后再试',

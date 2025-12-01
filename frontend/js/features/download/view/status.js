@@ -1,4 +1,3 @@
-import { safeClassList } from '../../../shared/dom-utils.js';
 import { getRootElement } from './root.js';
 
 export function setLoading(isLoading) {
@@ -6,8 +5,8 @@ export function setLoading(isLoading) {
   if (!rootEl) return;
   const loadingEl = rootEl.querySelector('[data-role="download-loading"]');
   if (!loadingEl) return;
-  safeClassList(loadingEl, isLoading ? 'remove' : 'add', 'hidden');
-  safeClassList(rootEl, isLoading ? 'add' : 'remove', 'is-loading');
+  isLoading ? loadingEl?.classList.remove('hidden') : loadingEl?.classList.add('hidden');
+  isLoading ? rootEl?.classList.add('is-loading') : rootEl?.classList.remove('is-loading');
 }
 
 export function setError(hasError) {
@@ -15,7 +14,7 @@ export function setError(hasError) {
   if (!rootEl) return;
   const errorEl = rootEl.querySelector('[data-role="download-error"]');
   if (!errorEl) return;
-  safeClassList(errorEl, hasError ? 'remove' : 'add', 'hidden');
+  hasError ? errorEl?.classList.remove('hidden') : errorEl?.classList.add('hidden');
 }
 
 // 页面顶部已去除状态徽标，保留函数以兼容旧调用

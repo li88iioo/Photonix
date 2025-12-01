@@ -1,18 +1,16 @@
 /**
  * @file enhanced-table.js
- * @description 增强的表格渲染，支持虚拟滚动（仅在大数据集时启用）
+ * @description 增强的表格渲染器（简化版）
+ *
+ * 移除了 IncrementalList 依赖（经 Benchmark 验证，innerHTML 方式更快）
  */
-
-import { IncrementalList } from '../../../shared/incremental-update.js';
-import { deriveTaskId } from './utils.js';
 
 /**
  * 增强的任务表格渲染器
- * 统一使用 IncrementalList，保持实现简单可靠
+ * 使用直接 DOM 操作，性能优于复杂的 diff/patch 算法
  */
 export class EnhancedTaskTable {
   constructor() {
-    this.renderer = null;
     this.container = null;
   }
 
@@ -25,45 +23,26 @@ export class EnhancedTaskTable {
    */
   render(container, tasks, createRowElement, applyEffects) {
     if (!container) return;
-    
-    this.container = container;
-    this.renderIncremental(container, tasks, createRowElement, applyEffects);
-  }
-  
-  /**
-   * 使用增量更新渲染（小数据集）
-   */
-  renderIncremental(container, tasks, createRowElement, applyEffects) {
-    const normalized = Array.isArray(tasks) ? tasks : [];
-    
 
-    
-    if (!this.renderer) {
-      this.renderer = new IncrementalList({
-        container: container,
-        items: normalized,
-        getKey: (item) => deriveTaskId(item, 0),
-        renderItem: createRowElement
-      });
-      applyEffects(container);
-    } else {
-      this.renderer.update(normalized);
-      applyEffects(container);
-    }
+    this.container = container;
+    const normalized = Array.isArray(tasks) ? tasks : [];
+
+    // 直接渲染（innerHTML 方式，经 Benchmark 验证比 IncrementalList 更快）
+    container.innerHTML = '';
+    normalized.forEach((task, index) => {
+      const row = createRowElement(task, index);
+      container.appendChild(row);
+    });
+
+    applyEffects(container);
   }
-  
+
   /**
    * 清理渲染器
    */
   cleanup() {
-    if (this.renderer) {
-      if (typeof this.renderer.destroy === 'function') {
-        this.renderer.destroy();
-      }
-      this.renderer = null;
-    }
+    this.container = null;
   }
-  
 }
 
 // 创建单例实例

@@ -6,7 +6,7 @@
 import settingsContext, { initializeContext, setInitialSettings } from './context.js';
 import { settingsLogger } from './logger.js';
 import { fetchSettings } from '../app/api.js';
-import { safeClassList, safeSetInnerHTML } from '../shared/dom-utils.js';
+import { safeSetInnerHTML } from '../shared/dom-utils.js';
 import { populateForm, setupListeners } from './form.js';
 import { setupSyncButtonListeners, loadStatusTables, triggerSync, showPodLoading, startPersistentAutoRefresh } from './status.js';
 import { getLocalAISettings, setLocalAISettings } from './storage.js';
@@ -26,12 +26,12 @@ export async function showSettingsModal() {
   const { modal, card, template } = context;
 
   // 展示 loading 状态
-  safeClassList(document.body, 'add', 'settings-open');
+  document.body?.classList.add('settings-open');
   safeSetInnerHTML(
     card,
     '<div style="display:flex;justify-content:center;align-items:center;height:100%;"><div class="spinner" style="width:3rem;height:3rem;"></div></div>'
   );
-  safeClassList(modal, 'add', 'visible');
+  modal?.classList.add('visible');
 
   try {
     // 获取服务端设置和本地 AI 配置

@@ -10,7 +10,7 @@ import { getAuthToken } from '../app/auth.js';
 import { showNotification, resolveMessage } from '../shared/utils.js';
 import { UI, NETWORK } from '../core/constants.js';
 import { generateStatusCardHTML, generateDetailItemHTML } from '../features/gallery/ui-components.js';
-import { safeSetInnerHTML, safeSetStyle, safeClassList, safeGetElementById, safeQuerySelector } from '../shared/dom-utils.js';
+import { safeSetInnerHTML } from '../shared/dom-utils.js';
 import { showPasswordPrompt } from './password-prompt.js';
 
 let autoRefreshIntervalId = null;
@@ -278,9 +278,9 @@ export async function resyncThumbnails() {
  * @param {boolean} show 是否显示动画
  */
 export function showPodLoading(type, show) {
-  const loadingElement = safeGetElementById(`${type}-loading`);
+  const loadingElement = document.getElementById(`${type}-loading`);
   if (loadingElement) {
-    safeClassList(loadingElement, 'toggle', 'active', show);
+    loadingElement?.classList.toggle('active', show);
   }
 }
 
@@ -290,9 +290,9 @@ export function showPodLoading(type, show) {
  * @param {boolean} show 是否显示进度
  */
 export function showProgressUpdate(type, show) {
-  const updateElement = safeGetElementById(`${type}-progress-update`);
+  const updateElement = document.getElementById(`${type}-progress-update`);
   if (updateElement) {
-    safeClassList(updateElement, 'toggle', 'active', show);
+    updateElement?.classList.toggle('active', show);
   }
 }
 
@@ -304,21 +304,21 @@ export function showProgressUpdate(type, show) {
 function updateStatusRealtime(type, data) {
   const prefix = type;
 
-  const percentElement = safeGetElementById(`${prefix} -percent`);
+  const percentElement = document.getElementById(`${prefix}-percent`);
   if (percentElement && data.percent !== undefined) {
     percentElement.textContent = `${data.percent}% `;
 
-    const progressCircle = safeQuerySelector(`[data - type="${type}"] .status - chart - progress - front`);
+    const progressCircle = document.querySelector(`[data-type="${type}"] .status-chart-progress-front`);
     if (progressCircle) {
       const progressOffset = 329 - (329 * data.percent / 100);
-      safeSetStyle(progressCircle, 'strokeDashoffset', progressOffset);
+      progressCircle.style.strokeDashoffset = progressOffset;
     }
   }
 
   const fields = ['processed', 'fts', 'total', 'files', 'unprocessed', 'sourceTotal'];
   fields.forEach(field => {
     if (data[field] !== undefined) {
-      const element = safeGetElementById(`${prefix}-${field}`);
+      const element = document.getElementById(`${prefix}-${field}`);
       if (element) {
         element.textContent = data[field];
 
@@ -333,7 +333,7 @@ function updateStatusRealtime(type, data) {
 
   if (data.stats && Array.isArray(data.stats)) {
     data.stats.forEach(stat => {
-      const element = safeGetElementById(`${prefix}-${stat.status}`);
+      const element = document.getElementById(`${prefix}-${stat.status}`);
       if (element) {
         const statusClass = getStatusClass(stat.status);
         element.className = `status-detail-value ${statusClass}`;
@@ -343,14 +343,14 @@ function updateStatusRealtime(type, data) {
   }
 
   if (data.lastUpdated) {
-    const timeElement = safeGetElementById(`${prefix} -last - updated`);
+    const timeElement = document.getElementById(`${prefix}-last-updated`);
     if (timeElement) {
       timeElement.textContent = new Date(data.lastUpdated).toLocaleString();
     }
   }
 
   if (data.lastSync) {
-    const syncElement = safeGetElementById(`${prefix} -last - sync`);
+    const syncElement = document.getElementById(`${prefix}-last-sync`);
     if (syncElement) {
       syncElement.textContent = new Date(data.lastSync).toLocaleString();
     }
@@ -494,7 +494,7 @@ function generateIndexDetailsHTML(statusData, computedData) {
  * @param {Object} statusData 索引状态数据
  */
 function renderIndexStatus(statusData) {
-  const container = safeGetElementById('index-status');
+  const container = document.getElementById('index-status');
   if (!container) return;
 
   const statsTotal = statusData.itemsStats?.reduce((sum, stat) => sum + stat.count, 0) || 0;
@@ -638,7 +638,7 @@ function generateThumbnailDetailsHTML(statusData, computedData) {
  * @param {Object} statusData 缩略图状态数据
  */
 function renderThumbnailStatus(statusData) {
-  const container = safeGetElementById('thumbnail-status');
+  const container = document.getElementById('thumbnail-status');
   if (!container) return;
 
   settingsLogger.debug('renderThumbnailStatus接收数据', statusData);
@@ -699,7 +699,7 @@ function renderThumbnailStatus(statusData) {
  * @param {Object} statusData HLS 状态数据
  */
 function renderHlsStatus(statusData) {
-  const container = safeGetElementById('hls-status');
+  const container = document.getElementById('hls-status');
   if (!container) return;
 
   const totalVideos = statusData.totalVideos || 0;
@@ -827,7 +827,7 @@ export async function loadStatusTables(options = {}) {
   const containers = ['index-status', 'thumbnail-status', 'hls-status'];
 
   containers.forEach(id => {
-    const container = safeGetElementById(id);
+    const container = document.getElementById(id);
     if (container && !container.innerHTML.trim()) {
       safeSetInnerHTML(container, '<div class="status-loading"><div class="spinner"></div></div>');
     }
@@ -846,12 +846,12 @@ export async function loadStatusTables(options = {}) {
     }
   } catch (error) {
     containers.forEach(id => {
-      const container = safeGetElementById(id);
+      const container = document.getElementById(id);
       if (container) {
         safeSetInnerHTML(container, '');
         const errorDiv = document.createElement('div');
         errorDiv.className = 'status-loading';
-        safeSetStyle(errorDiv, 'color', 'var(--red-400)');
+        errorDiv.style.color = 'var(--red-400)';
         errorDiv.textContent = `加载失败: ${error.message}`;
         container.appendChild(errorDiv);
       }

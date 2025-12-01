@@ -14,8 +14,7 @@ import {
   splitTags,
   formatRelativeTime as formatRelativeTimeHelper
 } from './helpers.js';
-import { iconDownload, iconCircleCheck, iconCircleX } from '../../shared/svg-utils.js';
-import { IncrementalList } from '../../shared/incremental-update.js';
+import { iconDownload, iconCircleCheck, iconCircleX } from '../../shared/svg-templates.js';
 import { setSafeInnerHTML, SecurityLevel } from '../../shared/security.js';
 
 const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -639,7 +638,6 @@ export function showPreviewModal({
 
     body.appendChild(summaryRow);
     body.appendChild(list);
-    let listView = null;
 
     const downloadButton = document.createElement('button');
     downloadButton.type = 'button';
@@ -765,16 +763,19 @@ export function showPreviewModal({
     };
 
     const syncSelectionState = () => {
-      if (!listView || !listView.itemElements) return;
-      listView.itemElements.forEach((element, key) => {
+      if (!list) return;
+      list.querySelectorAll('.preview-item').forEach((element) => {
+        const key = element.dataset.id;
+        if (!key) return;
         const checkbox = element.querySelector('.preview-checkbox');
-        if (!checkbox) return;
         const checked = selection.has(key);
-        if (checkbox.checked !== checked) {
-          checkbox.checked = checked;
+        if (checkbox) {
+          if (checkbox.checked !== checked) {
+            checkbox.checked = checked;
+          }
+          checkbox.indeterminate = false;
+          checkbox.setAttribute('aria-checked', checked ? 'true' : 'false');
         }
-        checkbox.indeterminate = false;
-        checkbox.setAttribute('aria-checked', checked ? 'true' : 'false');
         element.classList.toggle('is-selected', checked);
       });
     };
@@ -919,16 +920,12 @@ export function showPreviewModal({
         const indexValue = originalIndex === -1 ? 0 : originalIndex;
         return String(getItemKey(item, indexValue));
       };
-      if (!listView) {
-        listView = new IncrementalList({
-          container: list,
-          items: filtered,
-          getKey,
-          renderItem
-        });
-      } else {
-        listView.update(filtered);
-      }
+      // 直接渲染（innerHTML 方式，经 Benchmark 验证比 IncrementalList 更快）
+      list.innerHTML = '';
+      filtered.forEach((item) => {
+        const row = renderItem(item);
+        list.appendChild(row);
+      });
       updateSummary();
       updateFilterButtons();
       updateDownloadButtonState();

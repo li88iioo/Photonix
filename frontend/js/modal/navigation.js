@@ -4,8 +4,6 @@
  */
 
 import { elements } from '../shared/dom-elements.js';
-import { safeSetStyle, safeClassList } from '../shared/dom-utils.js';
-
 const navigationProgress = { showTimer: null };
 const navigationBlur = { overlay: null, hideTimer: null, showTimer: null, resizeHandler: null };
 
@@ -53,21 +51,21 @@ function positionNavigationBlurOverlay() {
   if (!blur.overlay) return;
   const metrics = getMediaPanelMetrics();
   if (metrics) {
-    safeSetStyle(blur.overlay, {
+    Object.assign(blur.overlay.style, {
       top: `${metrics.top}px`,
       left: `${metrics.left}px`,
       width: `${metrics.width}px`,
       height: `${metrics.height}px`
     });
     if (metrics.borderRadius) {
-      safeSetStyle(blur.overlay, 'borderRadius', metrics.borderRadius);
-      safeSetStyle(blur.overlay, 'clipPath', `inset(0 round ${metrics.borderRadius})`);
+      blur.overlay.style.borderRadius = metrics.borderRadius;
+      blur.overlay.style.clipPath = `inset(0 round ${metrics.borderRadius})`;
     } else {
-      safeSetStyle(blur.overlay, 'borderRadius', '');
-      safeSetStyle(blur.overlay, 'clipPath', '');
+      blur.overlay.style.borderRadius = '';
+      blur.overlay.style.clipPath = '';
     }
   } else if (elements.mediaPanel) {
-    safeSetStyle(blur.overlay, {
+    Object.assign(blur.overlay.style, {
       top: '0px',
       left: '0px',
       width: '100%',
@@ -78,16 +76,16 @@ function positionNavigationBlurOverlay() {
         const computed = window.getComputedStyle(elements.modalImg);
         const radius = computed && computed.borderRadius ? computed.borderRadius : '';
         if (radius) {
-          safeSetStyle(blur.overlay, 'borderRadius', radius);
-          safeSetStyle(blur.overlay, 'clipPath', `inset(0 round ${radius})`);
+          blur.overlay.style.borderRadius = radius;
+          blur.overlay.style.clipPath = `inset(0 round ${radius})`;
         } else {
-          safeSetStyle(blur.overlay, 'borderRadius', '');
-          safeSetStyle(blur.overlay, 'clipPath', '');
+          blur.overlay.style.borderRadius = '';
+          blur.overlay.style.clipPath = '';
         }
       } catch {}
     } else {
-      safeSetStyle(blur.overlay, 'borderRadius', '');
-      safeSetStyle(blur.overlay, 'clipPath', '');
+      blur.overlay.style.borderRadius = '';
+      blur.overlay.style.clipPath = '';
     }
   }
 }
@@ -105,7 +103,7 @@ function ensureNavigationBlurOverlay() {
   }
   const overlay = document.createElement('div');
   overlay.className = 'modal-blur-overlay';
-  safeSetStyle(overlay, { display: 'none' });
+  Object.assign(overlay.style, { display: 'none' });
   elements.mediaPanel.appendChild(overlay);
   navigationBlur.overlay = overlay;
   navigationBlur.hideTimer = null;
@@ -125,11 +123,11 @@ function showNavigationBlurOverlay(direction = 'forward') {
   const blur = ensureNavigationBlurOverlay();
   if (!blur || !blur.overlay) return;
   positionNavigationBlurOverlay();
-  safeClassList(blur.overlay, 'remove', 'forward');
-  safeClassList(blur.overlay, 'remove', 'backward');
+  blur.overlay?.classList.remove('forward');
+  blur.overlay?.classList.remove('backward');
   const orientation = direction === 'backward' ? 'backward' : 'forward';
   blur.overlay.dataset.direction = orientation;
-  safeClassList(blur.overlay, 'add', orientation);
+  blur.overlay?.classList.add(orientation);
   if (blur.hideTimer) {
     clearTimeout(blur.hideTimer);
     blur.hideTimer = null;
@@ -138,7 +136,7 @@ function showNavigationBlurOverlay(direction = 'forward') {
     clearTimeout(blur.showTimer);
     blur.showTimer = null;
   }
-  safeSetStyle(blur.overlay, {
+  Object.assign(blur.overlay.style, {
     display: 'block',
     transform: 'scaleX(0.001)',
     opacity: '0',
@@ -146,7 +144,7 @@ function showNavigationBlurOverlay(direction = 'forward') {
     WebkitBackdropFilter: 'blur(18px) brightness(1.18)',
     boxShadow: `${orientation === 'backward' ? -16 : 16}px 0 28px rgba(0, 0, 0, 0.28)`
   });
-  safeClassList(blur.overlay, 'add', 'visible');
+  blur.overlay?.classList.add('visible');
   if (!blur.resizeHandler) {
     blur.resizeHandler = () => positionNavigationBlurOverlay();
     window.addEventListener('resize', blur.resizeHandler);
@@ -174,12 +172,12 @@ export function setNavigationBlurProgress(value) {
   const shadowOffset = directionFactor * Math.max(0, (1 - eased) * 18);
   const shadowOpacity = Math.min(0.52, 0.32 + (1 - eased) * 0.24);
 
-  safeSetStyle(blur.overlay, 'transform', `scaleX(${eased})`);
-  safeSetStyle(blur.overlay, 'opacity', `${opacity}`);
+  blur.overlay.style.transform = `scaleX(${eased})`;
+  blur.overlay.style.opacity = `${opacity}`;
   const filterValue = `blur(${blurAmount}px) brightness(${brightness})`;
-  safeSetStyle(blur.overlay, 'backdropFilter', filterValue);
-  safeSetStyle(blur.overlay, 'WebkitBackdropFilter', filterValue);
-  safeSetStyle(blur.overlay, 'boxShadow', `${shadowOffset}px 0 ${shadowSpread}px rgba(0, 0, 0, ${shadowOpacity})`);
+  blur.overlay.style.backdropFilter = filterValue;
+  blur.overlay.style.WebkitBackdropFilter = filterValue;
+  blur.overlay.style.boxShadow = `${shadowOffset}px 0 ${shadowSpread}px rgba(0, 0, 0, ${shadowOpacity})`;
 }
 
 /**
@@ -207,8 +205,8 @@ function hideNavigationBlurOverlay(immediate = false) {
       clearTimeout(blur.hideTimer);
       blur.hideTimer = null;
     }
-    safeClassList(blur.overlay, 'remove', 'visible');
-    safeSetStyle(blur.overlay, {
+    blur.overlay?.classList.remove('visible');
+    Object.assign(blur.overlay.style, {
       display: 'none',
       transform: 'scaleX(0)',
       opacity: '0',
@@ -220,10 +218,10 @@ function hideNavigationBlurOverlay(immediate = false) {
     });
     return;
   }
-  safeClassList(blur.overlay, 'remove', 'visible');
+  blur.overlay?.classList.remove('visible');
   if (blur.hideTimer) clearTimeout(blur.hideTimer);
   blur.hideTimer = setTimeout(() => {
-    safeSetStyle(blur.overlay, {
+    Object.assign(blur.overlay.style, {
       display: 'none',
       transform: 'scaleX(0)',
       opacity: '0',

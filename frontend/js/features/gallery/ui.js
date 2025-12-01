@@ -8,9 +8,9 @@ import { applyMasonryLayout, triggerMasonryUpdate } from './masonry.js';
 import { setupLazyLoading } from './lazyload.js';
 import { MATH, UI } from '../../core/constants.js';
 import { uiLogger } from '../../core/logger.js';
-import { createProgressCircle, createPlayButton, createGridIcon, createMasonryIcon, createSortArrow, createDeleteIcon, createBackArrow, createGridIconNew, createMasonryIconNew, createHomeIcon } from '../../shared/svg-utils.js';
+import { createProgressCircle, createPlayButton, createGridIcon, createMasonryIcon, createSortArrow, createDeleteIcon, createBackArrow, createGridIconNew, createMasonryIconNew, createHomeIcon } from '../../shared/svg-templates.js';
 import { elements, reinitializeElements } from '../../shared/dom-elements.js';
-import { safeSetInnerHTML, safeClassList, safeSetStyle, safeCreateElement, safeGetElementById, safeQuerySelectorAll } from '../../shared/dom-utils.js';
+import { safeSetInnerHTML} from '../../shared/dom-utils.js';
 
 // 向后兼容，导出 elements
 export { elements };
@@ -36,7 +36,31 @@ function getPathOnlyFromHash() {
  * @returns {HTMLElement}
  */
 function createElement(tag, { classes = [], attributes = {}, textContent = '', children = [] } = {}) {
-	return safeCreateElement(tag, { classes, attributes, textContent, children });
+	const element = document.createElement(tag);
+
+	if (classes.length > 0) {
+		element.classList.add(...classes);
+	}
+
+	if (Object.keys(attributes).length > 0) {
+		Object.entries(attributes).forEach(([key, value]) => {
+			element.setAttribute(key, value);
+		});
+	}
+
+	if (textContent) {
+		element.textContent = textContent;
+	}
+
+	if (children.length > 0) {
+		children.forEach(child => {
+			if (child instanceof Element) {
+				element.appendChild(child);
+			}
+		});
+	}
+
+	return element;
 }
 
 /**
@@ -119,7 +143,7 @@ function ensureSortWrapperElement(sortContainer) {
 		sortWrapper = document.createElement('div');
 		sortWrapper.id = 'sort-wrapper';
 		sortWrapper.className = 'relative';
-		safeSetStyle(sortWrapper, {
+		Object.assign(sortWrapper.style, {
 			display: 'inline-block',
 			position: 'relative'
 		});
@@ -160,7 +184,7 @@ export function removeSortControls(sortContainer) {
 		sortContainer
 		|| elements.sortContainer
 		|| document.querySelector('#topbar .flex.items-center.space-x-1')
-		|| safeGetElementById('sort-container');
+		|| document.getElementById('sort-container');
 	if (!container) return;
 
 	const sortWrapper = container.querySelector('#sort-wrapper') || document.getElementById('sort-wrapper');
@@ -750,10 +774,10 @@ export function renderLayoutToggleOnly(withAnimation = false) {
 			if (withAnimation) {
 				layoutToggleWrap.offsetHeight; // 强制重绘
 				requestAnimationFrame(() => {
-					safeClassList(layoutToggleWrap, 'add', 'visible');
+					layoutToggleWrap?.classList.add('visible');
 				});
 			} else {
-				safeClassList(layoutToggleWrap, 'add', 'visible');
+				layoutToggleWrap?.classList.add('visible');
 			}
 		} catch (error) {
 			uiLogger.error('渲染布局切换按钮出错', error);
@@ -769,9 +793,9 @@ export function ensureLayoutToggleVisible() {
 	if (!sortContainer) return;
 
 	const toggleWrap = sortContainer.querySelector('#layout-toggle-wrap');
-	if (toggleWrap && !safeClassList(toggleWrap, 'contains', 'visible')) {
+	if (toggleWrap && !toggleWrap?.classList.contains('visible')) {
 		// 直接强制可见
-		safeClassList(toggleWrap, 'add', 'visible');
+		toggleWrap?.classList.add('visible');
 	}
 }
 
@@ -794,14 +818,14 @@ export function adjustScrollOptimization(path) {
 		});
 
 		const body = document.body;
-		safeClassList(body, 'remove', 'has-short-content');
-		safeClassList(body, 'remove', 'has-long-content');
+		body?.classList.remove('has-short-content');
+		body?.classList.remove('has-long-content');
 
 		// 高度判定
 		if (totalContentHeight > viewportHeight * 1.2) {
-			safeClassList(body, 'add', 'has-long-content');
+			body?.classList.add('has-long-content');
 		} else {
-			safeClassList(body, 'add', 'has-short-content');
+			body?.classList.add('has-short-content');
 		}
 	});
 }
@@ -940,8 +964,8 @@ export function applyLayoutMode() {
 	// 空、加载、错误状态不应用任何布局类
 	const hasStandaloneState = grid.querySelector('.empty-state, .error-container, #minimal-loader');
 	if (hasStandaloneState) {
-		safeClassList(grid, 'remove', 'grid-mode');
-		safeClassList(grid, 'remove', 'masonry-mode');
+		grid?.classList.remove('grid-mode');
+		grid?.classList.remove('masonry-mode');
 		grid.removeAttribute('style');
 		return;
 	}
@@ -949,7 +973,7 @@ export function applyLayoutMode() {
 	if (mode === 'grid') {
 		// 切换为网格模式
 
-		safeClassList(grid, 'remove', 'masonry-mode');
+		grid?.classList.remove('masonry-mode');
 
 		Array.from(grid.children).forEach(item => {
 			// 清除瀑布流定位属性但不移除 position，避免布局跳动
@@ -963,15 +987,15 @@ export function applyLayoutMode() {
 		});
 		grid.removeAttribute('style');
 		void grid.offsetHeight; // 触发重排
-		safeClassList(grid, 'add', 'grid-mode');
-		safeSetStyle(grid, '--grid-aspect', '1/1');
+		grid?.classList.add('grid-mode');
+		grid.style.setProperty('--grid-aspect', '1/1');
 
 	} else {
 		// 切换为瀑布流模式
 
-		safeClassList(grid, 'remove', 'grid-mode');
+		grid?.classList.remove('grid-mode');
 		grid.removeAttribute('style');
-		safeClassList(grid, 'add', 'masonry-mode');
+		grid?.classList.add('masonry-mode');
 		// 立即刷新瀑布流布局
 		applyMasonryLayout();
 		triggerMasonryUpdate();

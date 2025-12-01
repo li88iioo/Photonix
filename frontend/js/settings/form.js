@@ -7,10 +7,9 @@ import settingsContext from './context.js';
 import { settingsLogger } from './logger.js';
 import { saveSettings, waitForSettingsUpdate, toggleAlbumDeletion } from '../app/api.js';
 import { showNotification } from '../shared/utils.js';
-import { iconGitHub } from '../shared/svg-utils.js';
+import { iconGitHub } from '../shared/svg-templates.js';
 import { removeAuthToken } from '../app/auth.js';
 import { SETTINGS, isDevelopment } from '../core/constants.js';
-import { safeClassList, safeSetStyle, safeGetStyle } from '../shared/dom-utils.js';
 import { setupApiUrlAutoComplete, setupModelDropdownControls, attemptModelFetch } from './ai.js';
 import { setupManagementTab, renderManualSyncScheduleStatus } from './management.js';
 import { loadStatusTables } from './status.js';
@@ -189,12 +188,12 @@ export function setupListeners() {
   nav.addEventListener('click', e => {
     const btn = e.target.closest('button');
     if (!btn) return;
-    safeClassList(nav.querySelector('.active'), 'remove', 'active');
-    panels.forEach(p => safeClassList(p, 'remove', 'active'));
-    safeClassList(btn, 'add', 'active');
+    nav.querySelector('.active')?.classList.remove('active');
+    panels.forEach(p => p?.classList.remove('active'));
+    btn?.classList.add('active');
     const targetTab = card.querySelector(`#${btn.dataset.tab}-settings-content`);
     if (targetTab) {
-      safeClassList(targetTab, 'add', 'active');
+      targetTab?.classList.add('active');
       targetTab.scrollTop = 0;
     }
 
@@ -232,7 +231,7 @@ export function setupListeners() {
 
   if (newPasswordInput) {
     newPasswordInput.addEventListener('input', () => {
-      safeClassList(newPasswordInput, 'remove', 'input-error');
+      newPasswordInput?.classList.remove('input-error');
     });
   }
 
@@ -292,18 +291,18 @@ function setupPasswordToggles() {
     if (!input || !icon) return;
     const openEye = icon.querySelector('.eye-open');
     const closedEye = icon.querySelector('.eye-closed');
-    safeSetStyle(openEye, 'display', input.type === 'password' ? 'block' : 'none');
-    safeSetStyle(closedEye, 'display', input.type === 'password' ? 'none' : 'block');
+    openEye.style.display = input.type === 'password' ? 'block' : 'none';
+    closedEye.style.display = input.type === 'password' ? 'none' : 'block';
     icon.addEventListener('click', (e) => {
       e.stopPropagation();
       const isPassword = input.type === 'password';
       input.type = isPassword ? 'text' : 'password';
-      safeSetStyle(openEye, 'display', isPassword ? 'none' : 'block');
-      safeSetStyle(closedEye, 'display', isPassword ? 'block' : 'none');
-      const originalColor = safeGetStyle(icon, 'color');
-      safeSetStyle(icon, 'color', 'white');
+      openEye.style.display = isPassword ? 'none' : 'block';
+      closedEye.style.display = isPassword ? 'block' : 'none';
+      const originalColor = icon.style.color;
+      icon.style.color = 'white';
       setTimeout(() => {
-        safeSetStyle(icon, 'color', originalColor || '');
+        icon.style.color = originalColor || '';
       }, 200);
     });
   });
@@ -459,20 +458,20 @@ function updateDynamicUI(isPasswordEnabled, isAiEnabled, hasPassword) {
   const newPasswordWrapper = card.querySelector('#new-password-wrapper');
 
   if (passwordSettingsGroup) {
-    safeSetStyle(passwordSettingsGroup, 'display', isPasswordEnabled ? 'block' : 'none');
+    passwordSettingsGroup.style.display = isPasswordEnabled ? 'block' : 'none';
   }
   if (apiSettingsGroup) {
-    safeSetStyle(apiSettingsGroup, 'display', isAiEnabled ? 'block' : 'none');
+    apiSettingsGroup.style.display = isAiEnabled ? 'block' : 'none';
   }
 
   const shouldDisable = hasPassword && !initialSettings.isAdminSecretConfigured;
 
-  safeClassList(passwordEnabledWrapper, 'toggle', 'disabled', shouldDisable);
+  passwordEnabledWrapper?.classList.toggle('disabled', shouldDisable);
   passwordEnabledWrapper.title = shouldDisable ? '未配置超级管理员密码，无法更改此设置' : '';
 
   if (isPasswordEnabled && newPasswordInput) {
     newPasswordInput.disabled = shouldDisable;
-    safeClassList(newPasswordWrapper, 'toggle', 'disabled', shouldDisable);
+    newPasswordWrapper?.classList.toggle('disabled', shouldDisable);
     newPasswordWrapper.title = shouldDisable ? '未配置超级管理员密码，无法更改此设置' : '';
     newPasswordInput.placeholder = hasPassword ? '新密码' : '设置新密码';
   }
@@ -523,22 +522,22 @@ function updateButtonStates() {
 
         if (!hasPassword) {
           button.disabled = false;
-          safeSetStyle(button, {
+          Object.assign(button.style, {
             opacity: '1',
             cursor: 'pointer',
             filter: 'none'
           });
           button.setAttribute('aria-disabled', 'false');
-          safeClassList(button, 'remove', 'disabled');
+          button?.classList.remove('disabled');
         } else {
           button.disabled = false;
-          safeSetStyle(button, {
+          Object.assign(button.style, {
             opacity: '1',
             cursor: 'pointer',
             filter: 'none'
           });
           button.setAttribute('aria-disabled', 'false');
-          safeClassList(button, 'remove', 'disabled');
+          button?.classList.remove('disabled');
         }
 
         let tooltipText = '';
@@ -573,15 +572,15 @@ function updateButtonStates() {
         action: button.dataset.action,
         type: button.dataset.type,
         disabled: button.disabled,
-        pointerEvents: safeGetStyle(button, 'pointerEvents'),
-        cursor: safeGetStyle(button, 'cursor')
+        pointerEvents: getComputedStyle(button).pointerEvents,
+        cursor: getComputedStyle(button).cursor
       }));
       settingsLogger.debug('按钮状态详情', buttonStates);
     }
 
     syncButtons.forEach(button => {
-      const currentDisplay = safeGetStyle(button, 'display');
-      safeSetStyle(button, 'display', currentDisplay);
+      const currentDisplay = getComputedStyle(button).display;
+      button.style.display = currentDisplay;
       // eslint-disable-next-line no-unused-expressions
       button.offsetHeight;
     });
@@ -689,12 +688,12 @@ async function executeSave(adminSecret = null, options = {}) {
 
   const saveButtons = card.querySelectorAll('#security-settings-content .save-btn, #ai-settings-content .save-btn');
   saveButtons.forEach(btn => {
-    safeClassList(btn, 'add', 'loading');
+    btn?.classList.add('loading');
     btn.disabled = true;
   });
 
   const newPassInput = card.querySelector('#new-password');
-  safeClassList(newPassInput, 'remove', 'input-error');
+  newPassInput?.classList.remove('input-error');
 
   const isPasswordEnabled = card.querySelector('#password-enabled').checked;
   const newPasswordValue = newPassInput.value;
@@ -703,9 +702,9 @@ async function executeSave(adminSecret = null, options = {}) {
     showNotification('请设置新密码以启用密码访问', 'error');
     card.querySelector('button[data-tab="security"]').click();
     newPassInput.focus();
-    safeClassList(newPassInput, 'add', 'input-error');
+    newPassInput?.classList.add('input-error');
     saveButtons.forEach(btn => {
-      safeClassList(btn, 'remove', 'loading');
+      btn?.classList.remove('loading');
       btn.disabled = false;
     });
     return false;
@@ -828,7 +827,7 @@ async function executeSave(adminSecret = null, options = {}) {
 
     setTimeout(closeSettingsModal, 1000);
     saveButtons.forEach(btn => {
-      safeClassList(btn, 'remove', 'loading');
+      btn?.classList.remove('loading');
       btn.disabled = false;
     });
     checkForChanges();
@@ -840,7 +839,7 @@ async function executeSave(adminSecret = null, options = {}) {
     if (error.message.includes('密码')) {
       const oldPassInput = card.querySelector('#old-password');
       const target = (error.message.includes('旧密码') && oldPassInput) ? oldPassInput : newPassInput;
-      safeClassList(target, 'add', 'input-error');
+      target?.classList.add('input-error');
       target.focus();
     }
     if (restoreToggleOnFailure) {
@@ -851,7 +850,7 @@ async function executeSave(adminSecret = null, options = {}) {
       }
     }
     saveButtons.forEach(btn => {
-      safeClassList(btn, 'remove', 'loading');
+      btn?.classList.remove('loading');
       btn.disabled = false;
     });
     checkForChanges();
