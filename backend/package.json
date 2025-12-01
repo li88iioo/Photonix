@@ -17,6 +17,7 @@
         "better-sqlite3": "^9.6.0",
         "cheerio": "^1.1.2",
         "compression": "^1.7.4",
+        "cookie-parser": "^1.4.7",
         "cron": "^4.3.5",
         "express": "^4.18.2",
         "express-rate-limit": "^6.11.0",

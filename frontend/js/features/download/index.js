@@ -4,6 +4,9 @@
  * - 管理页面生命周期与用户交互
  */
 
+import { createModuleLogger } from '../../core/logger.js';
+const downloadLogger = createModuleLogger('Download');
+
 import downloadState, {
   setAdminSecret,
   clearAdminSecret,
@@ -334,7 +337,7 @@ function renderFromState() {
 function stopAutoRefresh() {
   const timerId = downloadState.autoRefreshTimer;
   if (timerId) {
-    console.log('[AutoRefresh] 清理定时器, ID:', timerId);
+    downloadLogger.debug('AutoRefresh 清理定时器, ID:', timerId);
     clearInterval(timerId);
     clearAutoRefreshTimer();
   }
@@ -349,11 +352,11 @@ function startAutoRefresh() {
       return;
     }
     refreshData({ silent: true }).catch((error) => {
-      console.warn('[AutoRefresh] 刷新失败:', error);
+      downloadLogger.warn('AutoRefresh 刷新失败', error);
     });
   }, AUTO_REFRESH_INTERVAL);
   setAutoRefreshTimer(timerId);
-  console.log('[AutoRefresh] 定时器已启动, ID:', timerId);
+  downloadLogger.debug('AutoRefresh 定时器已启动, ID:', timerId);
 }
 
 async function ensureAdminSecret(forcePrompt = false) {
@@ -403,7 +406,7 @@ async function ensureAdminSecret(forcePrompt = false) {
         // 如果标记为 Token 模式，必须确保本地有 Token
         const token = getDownloadToken();
         if (!token) {
-          console.warn('[Download] 存储状态为 TOKEN_AUTH 但本地无 Token，需重新验证');
+          downloadLogger.warn('存储状态为 TOKEN_AUTH 但本地无 Token，需重新验证');
           isValid = false;
         }
       }
@@ -442,7 +445,7 @@ async function ensureAdminSecret(forcePrompt = false) {
           }
 
           // Token获取失败，降级到密钥模式
-          console.warn('[Download] Token获取失败，使用密钥模式');
+          downloadLogger.warn('Token获取失败，使用密钥模式');
           setAdminSecret(adminSecret);
           persistAdminSecret(adminSecret);
           markAdminVerified();
@@ -522,7 +525,7 @@ async function refreshData({ silent = false } = {}) {
 
     // 调试：检查数据是否有变化
     if (!silent) {
-      console.log('[Dashboard] 更新数据:', {
+      downloadLogger.debug('Dashboard 更新数据:', {
         任务数: snapshot.tasks,
         文章数: snapshot.articles,
         图片数: snapshot.images,
@@ -611,7 +614,7 @@ function handleExportConfig() {
     document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
   } catch (error) {
-    console.error('导出配置失败', error);
+    downloadLogger.error('导出配置失败', error);
     if (typeof window !== 'undefined' && typeof window.alert === 'function') {
       window.alert('导出配置失败，请查看控制台错误信息。');
     }
@@ -633,10 +636,10 @@ function ensureConfigImportInput() {
       updateConfigForm(parsed || {});
       downloadState.config = parsed || {};
       if (typeof window !== 'undefined' && typeof window.alert === 'function') {
-        window.alert('配置文件已载入，请确认后点击“保存配置”。');
+        window.alert('配置文件已载入，请确认后点击"保存配置"。');
       }
     } catch (error) {
-      console.error('导入配置失败', error);
+      downloadLogger.error('导入配置失败', error);
       if (typeof window !== 'undefined' && typeof window.alert === 'function') {
         window.alert('导入配置失败，文件格式可能不正确。');
       }

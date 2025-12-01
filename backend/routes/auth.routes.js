@@ -54,7 +54,8 @@ router.post('/refresh', refreshLimiter, asyncHandler(authController.refresh)); /
 
 // 登录参数校验
 const loginSchema = Joi.object({
-  password: Joi.string().min(4).max(256).required()
+  // 由控制器统一处理密码长度和错误计数，避免 Joi 直接报错导致提示不一致
+  password: Joi.string().max(256).required()
 });
 
 // 移除 express-rate-limit 的登录限流，完全依赖控制器内的 Redis 防爆破机制

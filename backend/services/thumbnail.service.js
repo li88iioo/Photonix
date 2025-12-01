@@ -399,7 +399,7 @@ function dispatchThumbnailTask(task, context = 'ondemand') {
     if (pendingCounts[label] <= 3 || (pendingCounts[label] % 50 === 0)) {
         logger.debug(`[${label === 'ondemand' ? '按需' : '批量'}生成] 并发受限，任务入队: ${safeTask.relativePath} (队列=${pendingCounts[label]}, active=${state.thumbnail.getActiveCount()}, limit=${thumbQueue.concurrency})`);
     }
-    const priority = label === 'ondemand' ? 2 : 1;
+    const priority = label === 'ondemand' ? 1 : 2; // Lower number = higher priority in PQueue
     thumbQueue.add(() => runQueuedTask(safeTask, label, traceData), { priority }).catch((error) => {
         logThumbIgnore('缩略图任务队列执行', error);
     });

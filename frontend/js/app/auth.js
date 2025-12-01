@@ -291,10 +291,12 @@ async function handleLogin(e) {
                 }
             } else if (response.status === 400 && data.code === 'PASSWORD_DISABLED') {
                 msg = '密码访问未开启';
-            } else if (response.status === 400 && data.code === 'VALIDATION_ERROR') {
-                msg = '密码格式不正确';
+            } else if (response.status === 400 && (data.code === 'VALIDATION_ERROR' || data.error?.code === 'VALIDATION_ERROR')) {
+                // 优先使用错误对象中的详细消息，否则使用通用提示
+                msg = data.error?.message || data.message || '密码格式不正确';
             } else if (data && (data.message || data.error)) {
-                msg = data.message || data.error;
+                // 安全处理 error 字段：如果是对象则提取 message，否则直接使用
+                msg = data.message || (typeof data.error === 'string' ? data.error : data.error?.message) || '登录失败';
             }
             errorEl.textContent = msg;
             if (!reenableTimer) {

@@ -2,7 +2,7 @@
  * 智能排序：已查看的相册自动后置（已废弃，仅保留结构，不予特殊处理）
  */
 
-import { state, stateManager } from '../../core/state.js';
+import { state } from '../../core/state.js';
 import * as api from '../../app/api.js';
 import { applyMasonryLayout, triggerMasonryUpdate } from './masonry.js';
 import { setupLazyLoading } from './lazyload.js';
@@ -728,12 +728,12 @@ export function renderSortDropdown() {
 export function renderLayoutToggleOnly(withAnimation = false) {
 	const layoutToggleWrap = document.getElementById('layout-toggle-wrap');
 	if (!layoutToggleWrap) {
-		console.log('[UI] layout-toggle-wrap 不存在');
+		uiLogger.debug('layout-toggle-wrap 不存在');
 		return;
 	}
 
 	layoutToggleWrap.innerHTML = '';
-	console.log('[UI] 创建新的布局切换按钮');
+	uiLogger.debug('创建新的布局切换按钮');
 
 	requestAnimationFrame(() => {
 		try {
@@ -843,7 +843,7 @@ function iconHtml(kind) {
  * 初始化 UI 状态订阅相关逻辑
  */
 export function initializeUI() {
-	stateManager.subscribe(['layoutMode'], (changedKeys, currentState) => {
+	state.subscribe(['layoutMode'], (changedKeys, currentState) => {
 		uiLogger.debug('布局模式已更改', { changedKeys, currentState: currentState.layoutMode });
 
 		applyLayoutMode();

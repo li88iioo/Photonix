@@ -68,7 +68,6 @@ function handleDocumentClick(e) {
             }, 0);
         } catch (error) {
             listenersLogger.error('切换布局模式出错', error);
-            console.error('切换布局模式出错:', error);
         }
         return;
     }

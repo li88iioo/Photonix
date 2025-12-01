@@ -473,6 +473,14 @@ exports.login = async (req, res) => {
         logger.debug('清理登录失败记录时出错（已忽略）:', e && e.message);
     }
 
+    // 设置 httpOnly cookie 以支持 SSE 安全认证
+    res.cookie('auth_token', token, {
+        httpOnly: true,      // 防止 XSS 攻击
+        secure: process.env.NODE_ENV === 'production', // HTTPS only in production
+        sameSite: 'strict',  // CSRF 防护
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7天（与JWT过期时间一致）
+    });
+
     res.json({ success: true, token });
 
     // 登录后后台缓存在 0ms 后预热，不影响正常响应

@@ -3,6 +3,9 @@
  * @description 下载页弹窗与对话框封装
  */
 
+import { createModuleLogger } from '../../core/logger.js';
+const modalsLogger = createModuleLogger('DownloadModals');
+
 import { applyInteractiveEffects } from './view.js';
 import {
   PREVIEW_FILTERS,
@@ -27,7 +30,7 @@ export function cleanupAllModals() {
       modal.onClose('cleanup');
     }
   }
-  console.log('[Modals] 清理了所有模态框');
+  modalsLogger.debug('清理了所有模态框');
 }
 
 function getFocusableElements(container) {
@@ -262,7 +265,7 @@ export function openTaskFormModal({ mode = 'create', initial = {}, includeEnable
         try {
           fn();
         } catch (error) {
-          console.error('tooltip cleanup failed', error);
+          modalsLogger.error('tooltip cleanup failed', error);
         }
       }
     };
@@ -821,7 +824,7 @@ export function showPreviewModal({
         renderList();
         if (typeof refreshData === 'function') {
           refreshData({ silent: true }).catch((error) => {
-            console.warn('[PreviewModal] 刷新数据失败', error);
+            modalsLogger.warn('PreviewModal 刷新数据失败', error);
           });
         }
       } catch (error) {

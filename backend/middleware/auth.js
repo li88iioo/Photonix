@@ -73,8 +73,15 @@ module.exports = async function (req, res, next) {
             return next();
         }
 
-        // 6. 获取 Token
+        // 6. 获取 Token (优先级: Authorization Header > Cookie > Query Param)
         let token = req.header('Authorization')?.replace('Bearer ', '');
+
+        // 优先从 httpOnly cookie 读取（安全的SSE认证）
+        if (!token && req.cookies?.auth_token) {
+            token = req.cookies.auth_token;
+        }
+
+        // 最后从 query parameters 读取（向后兼容，但不推荐）
         if (!token) {
             const queryToken = req.query?.access_token || req.query?.token;
             if (typeof queryToken === 'string' && queryToken.trim()) {

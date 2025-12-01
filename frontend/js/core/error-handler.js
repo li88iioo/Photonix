@@ -257,9 +257,6 @@ class ErrorHandler {
 
         // 生产环境安全修复：条件化 console 输出
         errorLogger.error('Error handled', errorInfo);
-
-        // 可选：发送到远程日志服务
-        this.sendToRemoteLog(errorInfo);
     }
 
     /**
@@ -436,39 +433,6 @@ class ErrorHandler {
     }
 
     /**
-     * @description 发送错误到远程日志服务（可选，当前禁用）
-     * @param {Object} errorInfo 错误信息
-     * @returns {Promise<void>}
-     */
-    async sendToRemoteLog(errorInfo) {
-        // 暂时禁用远程日志功能 - 避免不必要的网络请求
-        return;
-
-        // 未来启用时可以取消注释下面的代码：
-        /*
-        // 只在生产环境发送
-        if (process.env.NODE_ENV !== 'production') return;
-
-        try {
-            // 这里可以集成第三方错误监控服务
-            // 如 Sentry, LogRocket, Bugsnag 等
-
-            // 示例：发送到自定义端点
-            await fetch('/api/errors', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(errorInfo)
-            });
-        } catch (error) {
-            // 生产环境安全修复：条件化 console 输出
-            errorLogger.warn('发送错误日志失败', error);
-        }
-        */
-    }
-
-    /**
      * @description 获取错误日志
      * @returns {Array<Object>} 错误日志数组
      */
@@ -481,149 +445,6 @@ class ErrorHandler {
      */
     clearErrorLog() {
         this.errorLog = [];
-    }
-
-    /**
-     * @description 创建网络错误
-     * @param {string} message 错误消息
-     * @param {Object} [context] 上下文信息
-     * @returns {Error} 标准化的网络错误
-     */
-    createNetworkError(message, context = {}) {
-        return this.createError(ErrorTypes.NETWORK, message, ErrorSeverity.MEDIUM, {
-            ...context,
-            category: 'network'
-        });
-    }
-
-    /**
-     * @description 创建网络超时错误
-     * @param {string} message 错误消息
-     * @param {Object} [context] 上下文信息
-     * @returns {Error} 标准化的超时错误
-     */
-    createTimeoutError(message, context = {}) {
-        return this.createError(ErrorTypes.NETWORK_TIMEOUT, message, ErrorSeverity.MEDIUM, {
-            ...context,
-            category: 'network',
-            timeout: true
-        });
-    }
-
-    /**
-     * @description 创建 API 错误
-     * @param {string} message 错误消息
-     * @param {number} [status=0] HTTP 状态码
-     * @param {Object} [context] 上下文信息
-     * @returns {Error} 标准化的 API 错误
-     */
-    createApiError(message, status = 0, context = {}) {
-        let type = ErrorTypes.API;
-        let severity = ErrorSeverity.MEDIUM;
-
-        // 根据状态码确定具体类型和严重程度
-        switch (status) {
-            case 401:
-                type = ErrorTypes.API_AUTHENTICATION;
-                severity = ErrorSeverity.HIGH;
-                break;
-            case 403:
-                type = ErrorTypes.API_PERMISSION;
-                severity = ErrorSeverity.HIGH;
-                break;
-            case 404:
-                type = ErrorTypes.API_NOT_FOUND;
-                severity = ErrorSeverity.MEDIUM;
-                break;
-            case 429:
-                type = ErrorTypes.API_RATE_LIMIT;
-                severity = ErrorSeverity.MEDIUM;
-                break;
-            case 500:
-            case 502:
-            case 503:
-                type = ErrorTypes.API_SERVER_ERROR;
-                severity = ErrorSeverity.HIGH;
-                break;
-            case 400:
-            case 422:
-                type = ErrorTypes.API_VALIDATION;
-                severity = ErrorSeverity.LOW;
-                break;
-        }
-
-        return this.createError(type, message, severity, {
-            ...context,
-            category: 'api',
-            status,
-            httpStatus: status
-        });
-    }
-
-    /**
-     * @description 创建验证错误
-     * @param {string} message 错误消息
-     * @param {Object} [context] 上下文信息
-     * @returns {Error} 标准化的验证错误
-     */
-    createValidationError(message, context = {}) {
-        return this.createError(ErrorTypes.VALIDATION, message, ErrorSeverity.LOW, {
-            ...context,
-            category: 'validation'
-        });
-    }
-
-    /**
-     * @description 创建存储错误
-     * @param {string} message 错误消息
-     * @param {Object} [context] 上下文信息
-     * @returns {Error} 标准化的存储错误
-     */
-    createStorageError(message, context = {}) {
-        return this.createError(ErrorTypes.STORAGE, message, ErrorSeverity.MEDIUM, {
-            ...context,
-            category: 'storage'
-        });
-    }
-
-    /**
-     * @description 创建配置错误
-     * @param {string} message 错误消息
-     * @param {Object} [context] 上下文信息
-     * @returns {Error} 标准化的配置错误
-     */
-    createConfigurationError(message, context = {}) {
-        return this.createError(ErrorTypes.CONFIGURATION, message, ErrorSeverity.HIGH, {
-            ...context,
-            category: 'configuration'
-        });
-    }
-
-    /**
-     * @description 创建资源加载错误
-     * @param {string} message 错误消息
-     * @param {Object} [context] 上下文信息
-     * @returns {Error} 标准化的资源加载错误
-     */
-    createResourceLoadError(message, context = {}) {
-        return this.createError(ErrorTypes.RESOURCE_LOAD, message, ErrorSeverity.MEDIUM, {
-            ...context,
-            category: 'resource'
-        });
-    }
-
-    /**
-     * @description 创建兼容性错误
-     * @param {string} message 错误消息
-     * @param {Object} [context] 上下文信息
-     * @returns {Error} 标准化的兼容性错误
-     */
-    createCompatibilityError(message, context = {}) {
-        return this.createError(ErrorTypes.COMPATIBILITY, message, ErrorSeverity.MEDIUM, {
-            ...context,
-            category: 'compatibility',
-            userAgent: navigator.userAgent
-        });
     }
 
     /**
@@ -678,79 +499,6 @@ export const getErrorLog = () => errorHandler.getErrorLog();
  * @description 清空错误日志
  */
 export const clearErrorLog = () => errorHandler.clearErrorLog();
-
-/**
- * @function createNetworkError
- * @description 创建网络错误
- * @param {string} message 错误消息
- * @param {Object} [context] 上下文信息
- * @returns {Error}
- */
-export const createNetworkError = (message, context) => errorHandler.createNetworkError(message, context);
-
-/**
- * @function createTimeoutError
- * @description 创建网络超时错误
- * @param {string} message 错误消息
- * @param {Object} [context] 上下文信息
- * @returns {Error}
- */
-export const createTimeoutError = (message, context) => errorHandler.createTimeoutError(message, context);
-
-/**
- * @function createApiError
- * @description 创建 API 错误
- * @param {string} message 错误消息
- * @param {number} status HTTP 状态码
- * @param {Object} [context] 上下文信息
- * @returns {Error}
- */
-export const createApiError = (message, status, context) => errorHandler.createApiError(message, status, context);
-
-/**
- * @function createValidationError
- * @description 创建验证错误
- * @param {string} message 错误消息
- * @param {Object} [context] 上下文信息
- * @returns {Error}
- */
-export const createValidationError = (message, context) => errorHandler.createValidationError(message, context);
-
-/**
- * @function createStorageError
- * @description 创建存储错误
- * @param {string} message 错误消息
- * @param {Object} [context] 上下文信息
- * @returns {Error}
- */
-export const createStorageError = (message, context) => errorHandler.createStorageError(message, context);
-
-/**
- * @function createConfigurationError
- * @description 创建配置错误
- * @param {string} message 错误消息
- * @param {Object} [context] 上下文信息
- * @returns {Error}
- */
-export const createConfigurationError = (message, context) => errorHandler.createConfigurationError(message, context);
-
-/**
- * @function createResourceLoadError
- * @description 创建资源加载错误
- * @param {string} message 错误消息
- * @param {Object} [context] 上下文信息
- * @returns {Error}
- */
-export const createResourceLoadError = (message, context) => errorHandler.createResourceLoadError(message, context);
-
-/**
- * @function createCompatibilityError
- * @description 创建兼容性错误
- * @param {string} message 错误消息
- * @param {Object} [context] 上下文信息
- * @returns {Error}
- */
-export const createCompatibilityError = (message, context) => errorHandler.createCompatibilityError(message, context);
 
 /**
  * @function createError

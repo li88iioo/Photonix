@@ -123,7 +123,7 @@ const blobUrlManager = {
     cleanupExpired: function () {
         const now = Date.now();
         const toCleanup = [];
-        for (const [img, creationTime] of this.blobCreationTimes) {
+        for (const img of this.blobCreationTimes.keys()) {
             if (!img) continue;
             const isConnected = !!(img.isConnected && (typeof document === 'undefined' || document.contains(img)));
             if (isConnected) {
@@ -131,9 +131,8 @@ const blobUrlManager = {
                 this.blobCreationTimes.set(img, now);
                 continue;
             }
-            if (!isConnected || now - creationTime > this.maxBlobAge) {
-                toCleanup.push(img);
-            }
+            // 图片已从 DOM 中移除，直接清理
+            toCleanup.push(img);
         }
         for (const img of toCleanup) {
             this.revokeBlobUrl(img);

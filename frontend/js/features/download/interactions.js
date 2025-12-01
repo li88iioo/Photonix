@@ -3,7 +3,10 @@
  * @description 下载页事件绑定
  */
 
+import { createModuleLogger } from '../../core/logger.js';
 import { debounce, runDeferred } from './helpers.js';
+
+const interactionsLogger = createModuleLogger('DownloadInteractions');
 import { deriveTaskId } from './view/utils.js';
 import {
   toggleFeedSelection,
@@ -487,6 +490,6 @@ export function cleanupInteractions() {
   
   eventListeners = [];
   interactionsBound = false;
-  
-  console.log('[Interactions] 事件监听器已清理');
+
+  interactionsLogger.debug('事件监听器已清理');
 }

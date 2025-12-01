@@ -15,6 +15,7 @@
 
 const express = require('express');
 const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
 const path = require('path');
 const { PHOTOS_DIR, THUMBS_DIR } = require('./config');
 const { rateLimiterMiddleware } = require('./middleware/rateLimiter');
@@ -115,6 +116,11 @@ app.use(traceMiddleware);
  * JSON 请求体解析，限制体积 1MB。
  */
 app.use(express.json({ limit: '1mb' }));
+
+/**
+ * Cookie 解析中间件，支持从 httpOnly cookie 读取认证 token
+ */
+app.use(cookieParser());
 
 /**
  * 有条件启用 Gzip 压缩，仅压缩 ≥2KB 且类型为 JSON 的响应。
@@ -374,26 +380,25 @@ async function getHealthSummary() {
     if (healthCache.snapshot && now < healthCache.expiresAt) {
         return healthCache.snapshot;
     }
-    if (pendingHealthCheckPromise) {
-        return pendingHealthCheckPromise;
+
+    // Atomic check-and-set: only create Promise if none exists
+    if (!pendingHealthCheckPromise) {
+        pendingHealthCheckPromise = computeHealthSummary()
+            .then((summary) => {
+                const ttl =
+                    summary.status === 'ok'
+                        ? HEALTH_CACHE_TTL_MS
+                        : Math.min(HEALTH_CACHE_TTL_MS, 5000);
+                healthCache = {
+                    snapshot: summary,
+                    expiresAt: Date.now() + ttl,
+                };
+                return summary;
+            })
+            .finally(() => {
+                pendingHealthCheckPromise = null;
+            });
     }
-
-    pendingHealthCheckPromise = computeHealthSummary()
-        .then((summary) => {
-            const ttl =
-                summary.status === 'ok'
-                    ? HEALTH_CACHE_TTL_MS
-                    : Math.min(HEALTH_CACHE_TTL_MS, 5000);
-            healthCache = {
-                snapshot: summary,
-                expiresAt: Date.now() + ttl,
-            };
-            return summary;
-        })
-        .finally(() => {
-            pendingHealthCheckPromise = null;
-        });
-
     return pendingHealthCheckPromise;
 }
 

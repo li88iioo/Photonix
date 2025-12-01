@@ -5,6 +5,10 @@
  * 轻量级定时器管理器，专注于命名关键定时器的统一注册、清理与防泄漏，避免定时器重复和遗留。
  */
 
+import { createModuleLogger } from './logger.js';
+
+const timerLogger = createModuleLogger('TimerManager');
+
 /**
  * 命名定时器映射表
  * @type {Map<string, number>}
@@ -63,8 +67,7 @@ export function setManagedTimeout(callback, delay, name) {
         try {
             callback();
         } catch (error) {
-            // eslint-disable-next-line no-console
-            console.warn(`[TimerManager] 定时器回调执行出错 '${name}':`, error);
+            timerLogger.warn(`定时器回调执行出错 '${name}'`, error);
         }
     }, delay);
 
@@ -101,8 +104,7 @@ export function setManagedInterval(callback, interval, name) {
         try {
             callback();
         } catch (error) {
-            // eslint-disable-next-line no-console
-            console.warn(`[TimerManager] 间隔定时器回调执行出错 '${name}':`, error);
+            timerLogger.warn(`间隔定时器回调执行出错 '${name}'`, error);
         }
     };
 

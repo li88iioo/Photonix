@@ -3,7 +3,10 @@
  * @description 下载功能的认证助手，处理密钥到Token的转换
  */
 
+import { createModuleLogger } from '../../core/logger.js';
 import { getAuthToken, setAuthToken, removeAuthToken } from '../../app/auth.js';
+
+const authLogger = createModuleLogger('DownloadAuth');
 
 /**
  * 下载功能专用的Token存储键
@@ -54,14 +57,14 @@ export async function exchangeSecretForToken(adminSecret) {
     // 同时设置到全局auth系统
     setAuthToken(token);
 
-    console.log('[DownloadAuth] Token获取成功，有效期:', new Date(expiryTime).toLocaleString());
-    
+    authLogger.info('Token获取成功，有效期:', new Date(expiryTime).toLocaleString());
+
     return {
       success: true,
       token: token
     };
   } catch (error) {
-    console.error('[DownloadAuth] Token交换失败:', error);
+    authLogger.error('Token交换失败', error);
     return {
       success: false,
       error: error.message || '网络错误'
@@ -77,7 +80,7 @@ export function getDownloadToken() {
   // 检查是否过期
   const expiryTime = sessionStorage.getItem(DOWNLOAD_TOKEN_EXPIRY_KEY);
   if (expiryTime && Number(expiryTime) < Date.now()) {
-    console.log('[DownloadAuth] Token已过期');
+    authLogger.info('Token已过期');
     clearDownloadToken();
     return null;
   }
@@ -99,7 +102,7 @@ export function clearDownloadToken() {
   sessionStorage.removeItem(DOWNLOAD_TOKEN_KEY);
   sessionStorage.removeItem(DOWNLOAD_TOKEN_EXPIRY_KEY);
   removeAuthToken();
-  console.log('[DownloadAuth] Token已清除');
+  authLogger.info('Token已清除');
 }
 
 /**
@@ -121,7 +124,7 @@ export async function refreshDownloadToken() {
     });
 
     if (!response.ok) {
-      console.warn('[DownloadAuth] Token刷新失败');
+      authLogger.warn('Token刷新失败');
       return false;
     }
 
@@ -136,13 +139,13 @@ export async function refreshDownloadToken() {
       const expiresIn = data.expiresIn || data.data?.expiresIn || 12 * 60 * 60 * 1000;
       const expiryTime = Date.now() + expiresIn;
       sessionStorage.setItem(DOWNLOAD_TOKEN_EXPIRY_KEY, String(expiryTime));
-      
-      console.log('[DownloadAuth] Token刷新成功');
+
+      authLogger.info('Token刷新成功');
     }
 
     return true;
   } catch (error) {
-    console.error('[DownloadAuth] Token刷新出错:', error);
+    authLogger.error('Token刷新出错', error);
     return false;
   }
 }

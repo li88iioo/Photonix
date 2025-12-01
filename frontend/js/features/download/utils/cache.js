@@ -3,6 +3,9 @@
  * @description 计算结果缓存，避免重复计算
  */
 
+import { createModuleLogger } from '../../../core/logger.js';
+const cacheLogger = createModuleLogger('DownloadCache');
+
 /**
  * 简单的 LRU 缓存实现
  */
@@ -261,5 +264,5 @@ export function clearAllCaches() {
   formatCache.formatNumber.cache?.clear();
   formatCache.formatBytes.cache?.clear();
   formatCache.formatRelativeTime.cache?.clear();
-  console.log('[Cache] 所有缓存已清理');
+  cacheLogger.debug('所有缓存已清理');
 }

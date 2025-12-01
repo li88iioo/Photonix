@@ -215,19 +215,26 @@ function dispatchSseEvent(evtType, payload) {
  * @param {string} rawEvent - 原始事件字符串
  */
 function buildEventsUrl() {
-    const token = getAuthToken();
-    if (!token) return '/api/events';
-    const params = new URLSearchParams();
-    params.set('access_token', token);
-    return `/api/events?${params.toString()}`;
+    // Cookie-based authentication: browser automatically sends httpOnly cookie
+    // No need to pass token in URL (security improvement)
+    return '/api/events';
 }
 
 async function verifySseAuthorization(token) {
     try {
+        const headers = {};
+        // 如果 localStorage 有 token，也在 header 中发送（向后兼容）
+        // 但主要依赖 cookie 认证
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
         const response = await fetch('/api/events/status', {
-            headers: { 'Authorization': `Bearer ${token}` },
+            headers,
+            credentials: 'include', // 确保发送 cookie
             cache: 'no-store'
         });
+
         if (response.status === 401) {
             sseLog('SSE 授权校验失败，触发重新登录');
             clearAuthToken();
@@ -247,7 +254,8 @@ async function verifySseAuthorization(token) {
 function startEventSource() {
     const url = buildEventsUrl();
     try {
-        eventSource = new EventSource(url);
+        // withCredentials: true 确保发送 httpOnly cookies (cookie-based auth)
+        eventSource = new EventSource(url, { withCredentials: true });
     } catch (error) {
         sseError('创建 EventSource 失败', error);
         scheduleReconnect();

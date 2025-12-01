@@ -58,16 +58,6 @@ class BatchQueue {
          * @description 刷新定时器ID
          */
         this.flushTimer = null;
-        /**
-         * @type {object}
-         * @description 统计信息
-         */
-        this.stats = {
-            totalEvents: 0,
-            batchesProcessed: 0,
-            avgBatchSize: 0,
-            lastFlush: Date.now()
-        };
     }
 
     /**
@@ -78,7 +68,6 @@ class BatchQueue {
     enqueue(event) {
         const key = this.keySelector(event);
         this.queue.set(key, event);
-        this.stats.totalEvents++;
 
         // 队列满立即刷新
         if (this.queue.size >= this.maxBatchSize) {
@@ -111,11 +100,6 @@ class BatchQueue {
         const batch = Array.from(this.queue.values());
         this.queue.clear();
 
-        // 更新统计
-        this.stats.batchesProcessed++;
-        this.stats.avgBatchSize = (this.stats.avgBatchSize * (this.stats.batchesProcessed - 1) + batch.length) / this.stats.batchesProcessed;
-        this.stats.lastFlush = Date.now();
-
         // 执行回调
         if (this.flushCallback) {
             try {
@@ -127,17 +111,6 @@ class BatchQueue {
                     context: `event-buffer-${this.eventType}`
                 });
             }
-        }
-
-        // 每10批输出一次统计
-        if (this.stats.batchesProcessed % 10 === 0) {
-            eventBufferLogger.debug('批次统计', {
-                eventType: this.eventType,
-                totalEvents: this.stats.totalEvents,
-                batchesProcessed: this.stats.batchesProcessed,
-                avgBatchSize: this.stats.avgBatchSize.toFixed(1),
-                queueSize: this.queue.size
-            });
         }
     }
 
@@ -259,24 +232,6 @@ class EventBufferManager {
         for (const buffer of this.buffers.values()) {
             buffer.flush();
         }
-    }
-
-    /**
-     * 获取缓冲器统计信息
-     * @param {string} [eventType] - 事件类型（可选，省略则返回全部）
-     * @returns {object|null} 统计信息
-     */
-    getStats(eventType) {
-        if (eventType) {
-            const buffer = this.buffers.get(eventType);
-            return buffer ? buffer.stats : null;
-        }
-
-        const stats = {};
-        for (const [type, buffer] of this.buffers) {
-            stats[type] = { ...buffer.stats };
-        }
-        return stats;
     }
 
     /**
