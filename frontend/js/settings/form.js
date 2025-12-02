@@ -385,8 +385,14 @@ function setupConversationHistoryTools() {
   if (!exportBtn && !importBtn) return;
 
   if (exportBtn) {
-    exportBtn.addEventListener('click', () => {
-      const data = exportConversationHistory();
+    exportBtn.addEventListener('click', async () => {
+      let data = null;
+      try {
+        data = await exportConversationHistory();
+      } catch (error) {
+        showNotification('导出失败，请稍后重试', 'error');
+        return;
+      }
       const total = data ? Object.keys(data).length : 0;
       if (!total) {
         showNotification('暂无会话可导出', 'info');
@@ -424,7 +430,7 @@ function setupConversationHistoryTools() {
           showNotification('导入失败：文件不是有效的 JSON', 'error');
           return;
         }
-        const result = importConversationHistory(parsed);
+        const result = await importConversationHistory(parsed);
         if (result.ok) {
           const { conversations = 0, entries = 0 } = result.stats || {};
           showNotification(`导入成功：${conversations} 张照片，共 ${entries} 条记录`, 'success');
@@ -719,11 +725,24 @@ async function executeSave(adminSecret = null, options = {}) {
   const newApiKey = card.querySelector('#ai-key').value;
   if (newApiKey) {
     localAI.AI_KEY = newApiKey;
+    if (newApiKey.trim() && !localStorage.getItem('ai_security_hint_seen')) {
+      showNotification('提示：API 密钥保存在浏览器本地，请只安装可信的浏览器插件。', 'info');
+      localStorage.setItem('ai_security_hint_seen', 'true');
+    }
   } else {
     const oldAI = getLocalAISettings();
     if (oldAI.AI_KEY) localAI.AI_KEY = oldAI.AI_KEY;
   }
   setLocalAISettings(localAI);
+  card.querySelector('#ai-key').value = '';
+
+  const aiPrevEnabled = String(initialSettings.AI_ENABLED) === 'true';
+  const aiNextEnabled = localAI.AI_ENABLED === 'true';
+  const aiSettingsChanged =
+    aiPrevEnabled !== aiNextEnabled ||
+    (localAI.AI_URL || '') !== (initialSettings.AI_URL || '') ||
+    (localAI.AI_MODEL || '') !== (initialSettings.AI_MODEL || '') ||
+    (localAI.AI_PROMPT || '') !== (initialSettings.AI_PROMPT || '');
 
   const settingsToSend = {
     PASSWORD_ENABLED: String(isPasswordEnabled),
@@ -734,6 +753,45 @@ async function executeSave(adminSecret = null, options = {}) {
   if (adminSecret) {
     settingsToSend.adminSecret = adminSecret;
   }
+
+  const passwordStateChanged = String(isPasswordEnabled) !== String(initialSettings.PASSWORD_ENABLED === 'true');
+  const newPassProvided = !!newPasswordValue.trim();
+  const needsServerSave = passwordStateChanged || newPassProvided;
+
+  if (!needsServerSave) {
+    initialSettings.AI_ENABLED = localAI.AI_ENABLED;
+    initialSettings.AI_URL = localAI.AI_URL;
+    initialSettings.AI_MODEL = localAI.AI_MODEL;
+    initialSettings.AI_PROMPT = localAI.AI_PROMPT;
+    if (localAI.AI_KEY) {
+      initialSettings.AI_KEY = localAI.AI_KEY;
+    }
+
+    state.update('aiEnabled', aiNextEnabled);
+
+    window.dispatchEvent(new CustomEvent('settingsChanged', {
+      detail: {
+        aiEnabled: aiNextEnabled,
+        aiSettings: localAI
+      }
+    }));
+
+    const message = aiPrevEnabled !== aiNextEnabled
+      ? (aiNextEnabled ? 'AI密语功能已打开' : 'AI密语功能已关闭')
+      : (aiSettingsChanged ? 'AI 设置已更新' : 'AI 设置未改变');
+    showNotification(message, 'success');
+
+    saveButtons.forEach(btn => {
+      btn?.classList.remove('loading');
+      btn.disabled = true;
+    });
+    checkForChanges();
+    setTimeout(() => {
+      closeSettingsModal();
+    }, 600);
+    return true;
+  }
+
   try {
     const result = await saveSettings(settingsToSend);
 

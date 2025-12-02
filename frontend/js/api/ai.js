@@ -3,7 +3,7 @@
  */
 
 import { state } from '../core/state.js';
-import { SETTINGS } from '../core/constants.js';
+import { SETTINGS, AI_CHAT } from '../core/constants.js';
 import { elements } from '../shared/dom-elements.js';
 import aiCache from '../features/ai/ai-cache.js';
 import { showNotification } from '../shared/utils.js';
@@ -72,10 +72,14 @@ function ensureChatUIReady() {
 
     aiChatForm.addEventListener('submit', handleChatSubmit);
     if (aiChatClear) {
-        aiChatClear.addEventListener('click', handleChatClear);
+        aiChatClear.addEventListener('click', () => {
+            handleChatClear().catch(() => { });
+        });
     }
     if (elements.aiChatHistory) {
-        elements.aiChatHistory.addEventListener('click', handleChatHistoryClick);
+        elements.aiChatHistory.addEventListener('click', (event) => {
+            handleChatHistoryClick(event).catch(() => { });
+        });
     }
     if (elements.aiCloseHintDismiss) {
         elements.aiCloseHintDismiss.addEventListener('click', () => {
@@ -116,27 +120,31 @@ function ensureChatUIReady() {
     }
 }
 
-function renderChatHistory() {
+async function renderChatHistory() {
     const { aiChatHistory } = elements;
     if (!aiChatHistory) return;
-    const history = activeChatImagePath ? getConversationHistory(activeChatImagePath) : [];
-    if (!history.length) {
-        safeSetInnerHTML(aiChatHistory, '<p class="ai-chat-history-empty">和她聊点什么吧～</p>');
-        return;
+    try {
+        const history = activeChatImagePath ? await getConversationHistory(activeChatImagePath) : [];
+        if (!history.length) {
+            safeSetInnerHTML(aiChatHistory, '<p class="ai-chat-history-empty">和她聊点什么吧～</p>');
+            return;
+        }
+        const html = history.map(entry => {
+            const roleClass = entry.role === 'user' ? 'user' : 'ai';
+            const failedClass = entry.role === 'user' && entry.status === MESSAGE_STATUS.FAILED ? ' failed' : '';
+            const meta = renderMessageMeta(entry);
+            return `
+                <div class="ai-chat-message ai-chat-message-${roleClass}${failedClass}">
+                    <div class="ai-chat-bubble">${escapeHtml(entry.message)}</div>
+                    ${meta}
+                </div>
+            `;
+        }).join('');
+        safeSetInnerHTML(aiChatHistory, html);
+        aiChatHistory.scrollTop = aiChatHistory.scrollHeight;
+    } catch {
+        // 忽略渲染错误，保持当前显示
     }
-    const html = history.map(entry => {
-        const roleClass = entry.role === 'user' ? 'user' : 'ai';
-        const failedClass = entry.role === 'user' && entry.status === MESSAGE_STATUS.FAILED ? ' failed' : '';
-        const meta = renderMessageMeta(entry);
-        return `
-            <div class="ai-chat-message ai-chat-message-${roleClass}${failedClass}">
-                <div class="ai-chat-bubble">${escapeHtml(entry.message)}</div>
-                ${meta}
-            </div>
-        `;
-    }).join('');
-    safeSetInnerHTML(aiChatHistory, html);
-    aiChatHistory.scrollTop = aiChatHistory.scrollHeight;
 }
 
 function renderMessageMeta(entry) {
@@ -145,18 +153,14 @@ function renderMessageMeta(entry) {
         return '<div class="message-status sending">发送中...</div>';
     }
     if (entry.status === MESSAGE_STATUS.FAILED) {
-        const errorText = escapeHtml(entry.error || '发送失败，请重试');
-        return `
-            <div class="message-status error">${errorText}</div>
-            ${buildRetryButton(entry.id)}
-        `;
+        return `<div class="message-action">${buildRetryButton(entry.id)}</div>`;
     }
     return '';
 }
 
 function buildRetryButton(entryId) {
     if (!entryId) return '';
-    const safeId = escapeHtml(entryId);
+    const safeId = escapeHtml(String(entryId));
     return `
         <button type="button" class="retry-btn" data-retry-id="${safeId}">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -215,31 +219,32 @@ function handleChatSubmit(event) {
     sendConversationMessage(value);
 }
 
-function handleChatClear() {
+async function handleChatClear() {
     if (!activeChatImagePath) return;
-    clearConversationHistory(activeChatImagePath);
-    renderChatHistory();
+    await clearConversationHistory(activeChatImagePath);
+    await renderChatHistory();
     setChatStatus('对话已清空', 'success');
 }
 
-function handleChatHistoryClick(event) {
+async function handleChatHistoryClick(event) {
     const retryBtn = event.target.closest('[data-retry-id]');
     if (!retryBtn) return;
     event.preventDefault();
     event.stopPropagation();
     const entryId = retryBtn.getAttribute('data-retry-id');
     if (!entryId) return;
-    retryConversationMessage(entryId);
+    await retryConversationMessage(entryId);
 }
 
-function retryConversationMessage(entryId) {
+async function retryConversationMessage(entryId) {
     if (!entryId || !activeChatImagePath) return;
     if (isProcessing) {
         setChatStatus('AI 正在处理，请稍候...', 'muted');
         return;
     }
-    const history = getConversationHistory(activeChatImagePath);
-    const target = history.find(entry => entry.id === entryId);
+    const history = await getConversationHistory(activeChatImagePath);
+    // 使用松散比较自动处理 IndexedDB 数字ID 和 sessionStorage 字符串ID 的兼容
+    const target = history.find(entry => entry.id == entryId);
     if (!target) return;
     sendConversationMessage(target.message, { entryId });
 }
@@ -258,12 +263,9 @@ function updateChatAvailability(enabled) {
     wrapper?.classList.toggle('hidden', !enabled);
     wrapper.setAttribute('aria-hidden', enabled ? 'false' : 'true');
     toggleCloseHint(enabled);
-    if (enabled) {
-        renderChatHistory();
-        setChatStatus('', 'muted');
-    } else {
-        setChatStatus('', 'muted');
-    }
+    const renderPromise = enabled ? renderChatHistory() : Promise.resolve();
+    renderPromise.catch(() => { });
+    setChatStatus('', 'muted');
 }
 
 function shouldShowCloseHint() {
@@ -299,48 +301,52 @@ function clearPendingMessageContext() {
     pendingMessageContext = null;
 }
 
-function markPendingMessageDelivered() {
+async function markPendingMessageDelivered() {
     if (!pendingMessageContext) return;
     const { imagePath, entryId } = pendingMessageContext;
-    updateConversationEntry(imagePath, entryId, {
+    await updateConversationEntry(imagePath, entryId, {
         status: MESSAGE_STATUS.DELIVERED,
         error: ''
     });
     if (activeChatImagePath === imagePath) {
-        renderChatHistory();
+        await renderChatHistory();
     }
+    setChatStatus('', 'muted');
     clearPendingMessageContext();
 }
 
-function markPendingMessageFailed(message = '') {
+async function markPendingMessageFailed(message = '') {
     if (!pendingMessageContext) return;
     const { imagePath, entryId } = pendingMessageContext;
-    updateConversationEntry(imagePath, entryId, {
+    await updateConversationEntry(imagePath, entryId, {
         status: MESSAGE_STATUS.FAILED,
         error: message
     });
     if (activeChatImagePath === imagePath) {
-        renderChatHistory();
+        await renderChatHistory();
+    }
+    if (message) {
+        setChatStatus(message, 'error');
     }
     clearPendingMessageContext();
 }
 
-function recordInitialAIMessage(imagePath, message) {
+async function recordInitialAIMessage(imagePath, message) {
     if (!imagePath || !message) return;
-    const history = getConversationHistory(imagePath);
+    const history = await getConversationHistory(imagePath, { limit: 1 });
     if (history.length === 0) {
-        appendConversationEntry(imagePath, 'ai', message);
+        await appendConversationEntry(imagePath, 'ai', message);
     }
     if (activeChatImagePath === imagePath) {
-        renderChatHistory();
+        await renderChatHistory();
     }
 }
 
-function recordAIReply(imagePath, message) {
+async function recordAIReply(imagePath, message) {
     if (!imagePath || !message) return;
-    appendConversationEntry(imagePath, 'ai', message);
+    await appendConversationEntry(imagePath, 'ai', message);
     if (activeChatImagePath === imagePath) {
-        renderChatHistory();
+        await renderChatHistory();
         setChatStatus('她回应了你', 'success');
     }
 }
@@ -352,29 +358,27 @@ async function sendConversationMessage(userMessage, options = {}) {
         return;
     }
 
-    if (!validateAuthentication()) {
-        setChatStatus('请先登录后再继续对话', 'error');
-        return;
-    }
-
     const aiConfig = validateAIConfig();
     if (!aiConfig) return;
 
-    const existingHistory = getConversationHistory(activeChatImagePath);
-    const prompt = buildConversationPrompt(aiConfig.AI_PROMPT, existingHistory, userMessage);
+    const contextLimit = AI_CHAT?.CONTEXT_MESSAGE_LIMIT || 20;
+    const existingHistory = await getConversationHistory(activeChatImagePath, { limit: contextLimit });
+    const prompt = buildConversationPrompt(aiConfig.AI_PROMPT, existingHistory, userMessage, {
+        contextLimit
+    });
     let entryId = options.entryId || null;
     if (!entryId) {
-        const entry = appendConversationEntry(activeChatImagePath, 'user', userMessage, {
+        const entry = await appendConversationEntry(activeChatImagePath, 'user', userMessage, {
             status: MESSAGE_STATUS.SENDING
         });
         entryId = entry?.id || null;
     } else {
-        updateConversationEntry(activeChatImagePath, entryId, {
+        await updateConversationEntry(activeChatImagePath, entryId, {
             status: MESSAGE_STATUS.SENDING,
             error: ''
         });
     }
-    renderChatHistory();
+    await renderChatHistory();
 
     cleanupPreviousRequest(activeChatImagePath);
     setChatSendingState(true);
@@ -389,10 +393,10 @@ async function sendConversationMessage(userMessage, options = {}) {
             const data = await response.json();
             const result = await handleGenerationResult(data, activeChatImagePath, aiConfig, { mode: 'chat' });
             if (!result?.ok) {
-                markPendingMessageFailed(result?.reason || '发送失败，请稍后再试');
+                await markPendingMessageFailed(result?.reason || '发送失败，请稍后再试');
                 return;
             }
-            markPendingMessageDelivered();
+            await markPendingMessageDelivered();
         } else {
             let errorMessage = `服务器错误: ${response.status}`;
             let errorCode = null;
@@ -413,16 +417,16 @@ async function sendConversationMessage(userMessage, options = {}) {
     } catch (error) {
         if (error.name === 'AbortError') {
             setChatStatus('会话已取消', 'error');
-            markPendingMessageFailed();
+            await markPendingMessageFailed();
         } else if (!error.silent) {
             const fallbackMessage = error.message || '发送失败，请稍后再试';
             const statusMessage = error.detail && error.detail !== fallbackMessage
                 ? `${fallbackMessage}（${error.detail}）`
                 : fallbackMessage;
             setChatStatus(statusMessage, 'error');
-            markPendingMessageFailed(statusMessage);
+            await markPendingMessageFailed(statusMessage);
         } else {
-            markPendingMessageFailed('发送失败，请稍后再试');
+            await markPendingMessageFailed('发送失败，请稍后再试');
         }
         setChatSendingState(false);
         isProcessing = false;
@@ -464,15 +468,6 @@ function validateAIEnabled() {
  * 校验认证（如启用密码则需已登录）
  * @returns {boolean} 是否通过认证校验
  */
-function validateAuthentication() {
-    const isPasswordEnabled = !!state.passwordEnabled;
-    if (isPasswordEnabled && !getAuthToken()) {
-        showNotification('需要登录才能使用 AI 功能', 'error');
-        return false;
-    }
-    return true;
-}
-
 /**
  * 校验本地 AI 配置是否完整
  * @returns {Object|null} AI 配置对象，若不完整则返回 null
@@ -567,10 +562,9 @@ export async function generateImageCaption(imageUrl) {
         return;
     }
 
-    if (!validateAuthentication()) {
-        isProcessing = false;
-        return;
-    }
+    // 修复：移除认证检查，允许所有用户使用 AI 功能（无论是否启用访问密码）
+    // 原检查逻辑：if (!validateAuthentication()) { return; }
+    // 改为只检查 AI 配置是否完整
 
     const aiConfig = validateAIConfig();
     if (!aiConfig) {
@@ -583,7 +577,7 @@ export async function generateImageCaption(imageUrl) {
     try {
         const cached = await checkAICache(imagePath, aiConfig);
         if (cached) {
-            recordInitialAIMessage(imagePath, cached.caption);
+            await recordInitialAIMessage(imagePath, cached.caption);
             setChatStatus('她准备好了，开始聊天吧', 'success');
             isProcessing = false;
             return;
@@ -664,10 +658,10 @@ async function handleGenerationResult(data, imagePath, aiConfig, options = {}) {
                         prompt: aiConfig.AI_PROMPT
                     }, description);
                 } catch { }
-                recordInitialAIMessage(imagePath, description);
+                await recordInitialAIMessage(imagePath, description);
                 setChatStatus('她准备好了，开始聊天吧', 'success');
             } else {
-                recordAIReply(imagePath, description);
+                await recordAIReply(imagePath, description);
             }
             isProcessing = false;
             setChatSendingState(false);
@@ -704,7 +698,7 @@ async function handleGenerationResult(data, imagePath, aiConfig, options = {}) {
         }
 
         if (typeof data.result === 'string') {
-            recordInitialAIMessage(imagePath, data.result);
+            await recordInitialAIMessage(imagePath, data.result);
             if (!isChatMode) {
                 setChatStatus('她准备好了，开始聊天吧', 'success');
             } else {

@@ -543,6 +543,18 @@ export const AI_CACHE = {
 };
 
 /**
+ * AI 会话（聊天）存储与上下文配置
+ * @namespace AI_CHAT
+ */
+export const AI_CHAT = {
+    DB_NAME: 'ai-conversations-db',          // IndexedDB 数据库名称
+    STORE_NAME: 'ai-conversations',          // 会话记录存储
+    VERSION: 1,                              // 数据库版本
+    MAX_HISTORY_PER_IMAGE: 1000,             // 单张图片最多保留的对话条数
+    CONTEXT_MESSAGE_LIMIT: 20                // 构造 AI 上下文时最多携带的最近消息数
+};
+
+/**
  * UI 组件相关常量
  * @namespace UI_COMPONENTS
  */

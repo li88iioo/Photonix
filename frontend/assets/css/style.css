@@ -1259,6 +1259,11 @@ body {
 }
 
 /* 重试按钮 - 匹配项目风格 */
+.message-action {
+    display: inline-flex;
+    align-items: center;
+}
+
 .retry-btn {
     display: inline-flex;
     align-items: center;
