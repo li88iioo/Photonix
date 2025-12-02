@@ -1221,6 +1221,15 @@ function setupModalInteractions() {
 
     on(elements.modal, 'wheel', (e) => {
         if (window.innerWidth <= 768) return;
+
+        // AI 聊天区域滚动不触发翻页
+        const aiChatWrapper = document.getElementById('ai-chat-wrapper');
+        if (aiChatWrapper && !aiChatWrapper.classList.contains('hidden')) {
+            if (aiChatWrapper.contains(e.target)) {
+                return; // 在聊天区内，只滚动聊天记录，不翻页
+            }
+        }
+
         const now = Date.now();
         if (now - state.lastWheelTime < 300) return;
         state.lastWheelTime = now;

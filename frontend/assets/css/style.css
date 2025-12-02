@@ -1122,6 +1122,17 @@ body {
     margin: 2px 0 0;
 }
 
+/* 移动端隐藏 AI 聊天标题以扩展聊天区域 */
+@media (max-width: 767.98px) {
+    .ai-chat-panel-header {
+        display: none;
+    }
+
+    .ai-chat-history {
+        padding-top: 10px;
+    }
+}
+
 .ai-close-hint {
     display: flex;
     align-items: center;
@@ -1239,6 +1250,78 @@ body {
 .ai-chat-status.success {
     color: #6ee7b7;
 }
+
+/* 失败消息样式 */
+.ai-chat-message.failed .ai-chat-bubble {
+    opacity: 0.7;
+    border: 1px dashed rgba(255, 100, 100, 0.4);
+    background: rgba(255, 100, 100, 0.08);
+}
+
+/* 重试按钮 - 匹配项目风格 */
+.retry-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 6px;
+    padding: 4px 10px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(255, 100, 100, 0.15);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    color: rgba(255, 120, 120, 0.95);
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 1px solid rgba(255, 100, 100, 0.25);
+}
+
+.retry-btn:hover {
+    background: rgba(255, 100, 100, 0.25);
+    border-color: rgba(255, 100, 100, 0.4);
+    color: #ff6464;
+    transform: translateY(-1px);
+}
+
+.retry-btn svg {
+    animation: rotateOnce 0.6s ease;
+}
+
+.retry-btn:hover svg {
+    animation: rotateLoop 1.2s linear infinite;
+}
+
+@keyframes rotateOnce {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes rotateLoop {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* 发送中状态 */
+.message-status.sending {
+    display: inline-block;
+    margin-top: 4px;
+    font-size: 0.75rem;
+    color: rgba(248, 250, 252, 0.55);
+    font-style: italic;
+}
+
 
 .ai-chat-form {
     padding: 8px 10px 12px;
