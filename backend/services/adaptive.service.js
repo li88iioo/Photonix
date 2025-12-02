@@ -45,7 +45,6 @@ function deriveProfile(mode, cpuCount) {
     switch (mode) {
         case 'low':
             return {
-                thumbMaxConcurrency: 1,
                 indexConcurrency: 2,          // 索引并发：高负载时降低
                 disableHlsBackfill: true,
                 ffmpegThreads: 1,
@@ -53,7 +52,6 @@ function deriveProfile(mode, cpuCount) {
             };
         case 'medium':
             return {
-                thumbMaxConcurrency: Math.max(1, Math.floor(cpuBudget / 2)),
                 indexConcurrency: Math.max(2, Math.floor(cpuBudget / 2)),  // 索引并发：中等负载
                 disableHlsBackfill: false,
                 ffmpegThreads: Math.max(1, Math.min(1, cpuBudget)),
@@ -62,7 +60,6 @@ function deriveProfile(mode, cpuCount) {
         case 'high':
         default:
             return {
-                thumbMaxConcurrency: Math.max(1, cpuBudget),
                 indexConcurrency: Math.max(2, cpuBudget),  // 索引并发：低负载时全力处理
                 disableHlsBackfill: false,
                 ffmpegThreads: Math.max(1, Math.min(2, cpuBudget)),
@@ -96,12 +93,12 @@ async function startAdaptiveScheduler() {
         currentProfile = deriveProfile(currentMode, cpuInfo.cpus);
         const snap = resourceSnapshot();
         const snapshotStr =
-            `mode=${currentMode} thumbMax=${currentProfile.thumbMaxConcurrency} ffmpegThreads=${currentProfile.ffmpegThreads} ` +
+            `mode=${currentMode} workers=${NUM_WORKERS} ffmpegThreads=${currentProfile.ffmpegThreads} ` +
             `disableHLS=${currentProfile.disableHlsBackfill} cpu=${snap.cpus}(${snap.cpuSource}) mem=${snap.totalGb.toFixed(1)}GB(${snap.memSource})`;
         const shouldLog = snapshotStr !== lastLogSnapshot || (Date.now() - lastLogTime) >= LOG_THROTTLE_MS;
 
         if (shouldLog) {
-            logger.debug(`[Adaptive] ${snapshotStr}`);
+            logger.debug(`[自适应] ${snapshotStr}`);
             lastLogSnapshot = snapshotStr;
             lastLogTime = Date.now();
         }
@@ -131,9 +128,6 @@ function getCurrentMode() {
     return currentMode;
 }
 
-function getThumbMaxConcurrency() {
-    return currentProfile.thumbMaxConcurrency;
-}
 
 function shouldDisableHlsBackfill() {
     return !!currentProfile.disableHlsBackfill;
@@ -232,8 +226,7 @@ function getIndexConcurrency(scenario = 'initial') {
 module.exports = {
     startAdaptiveScheduler,
     getCurrentMode,
-    getThumbMaxConcurrency,
-    getIndexConcurrency,       // 新增：动态索引并发
+    getIndexConcurrency,       // 动态索引并发
     shouldDisableHlsBackfill,
     getFfmpegConfig,
     hasResourceBudget,

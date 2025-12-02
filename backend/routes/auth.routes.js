@@ -9,8 +9,8 @@ const rateLimit = require('express-rate-limit');
 let refreshStore;
 try {
   const { redis } = require('../config/redis');
-  const useRedis = (process.env.RATE_LIMIT_USE_REDIS || 'false').toLowerCase() === 'true';
-  if (redis && !redis.isNoRedis && useRedis) {
+  const ENABLE_REDIS = (process.env.ENABLE_REDIS || 'false').toLowerCase() === 'true';
+  if (redis && !redis.isNoRedis && ENABLE_REDIS) {
     const RedisStore = require('rate-limit-redis');
     refreshStore = new RedisStore({ sendCommand: (...args) => redis.call(...args) });
   }

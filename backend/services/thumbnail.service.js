@@ -11,7 +11,7 @@ const { TraceManager } = require('../utils/trace');
 const { redis } = require('../config/redis');
 const { safeRedisIncr, safeRedisSet, safeRedisDel, safeRedisExpire, safeRedisGet } = require('../utils/helpers');
 const { RetryManager } = require('../utils/retry');
-const { THUMBS_DIR, PHOTOS_DIR, MAX_THUMBNAIL_RETRIES, INITIAL_RETRY_DELAY, NUM_WORKERS } = require('../config');
+const { THUMBS_DIR, PHOTOS_DIR, MAX_THUMBNAIL_RETRIES, INITIAL_RETRY_DELAY, NUM_WORKERS, THUMB_ONDEMAND_RESERVE } = require('../config');
 const workerManager = require('./worker.manager');
 const {
     ensureThumbnailWorkerPool,
@@ -20,7 +20,6 @@ const {
     destroyThumbnailWorkerPool,
     runThumbnailTask,
 } = workerManager;
-const { getThumbMaxConcurrency } = require('./adaptive.service');
 const { dbRun } = require('../db/multi-db');
 const eventBus = require('./event.service');
 const { sanitizePath, isPathSafe } = require('../utils/path.utils');
@@ -54,6 +53,8 @@ function logThumbIgnore(scope, error) {
 
 // 简化的任务管理
 const activeTasks = new Set();          // 正在处理的任务集合
+const activeTaskContexts = new Map();   // relativePath -> context (ondemand/batch)
+const activeCounts = { ondemand: 0, batch: 0 };  // 正在执行的任务数
 // 注意：重试计数由 RetryManager 在 Redis 中持久化管理，此处仅保留时间戳用于指标
 const failureTimestamps = new Map();    // 失败记录的时间戳
 
@@ -101,20 +102,14 @@ function refreshThumbMetrics() {
     thumbMetrics.queued = queued;
     thumbMetrics.pending = active + queued;
     thumbMetrics.lastUpdatedAt = Date.now();
-    state.thumbnail.setQueueLen(queued);
+    // 关键：只记录按需队列长度，供批量补全让路判断使用
+    state.thumbnail.setQueueLen(pendingCounts.ondemand);
 }
 
 refreshThumbMetrics();
 
 function resolveThumbConcurrencyLimit() {
-    try {
-        const limit = getThumbMaxConcurrency();
-        if (Number.isFinite(limit) && limit > 0) {
-            return Math.max(1, Math.floor(limit));
-        }
-    } catch (error) {
-        logThumbIgnore('读取缩略图并发限制', error);
-    }
+    // 直接使用 NUM_WORKERS（已在 runtime.js 中智能计算，考虑了 I/O 超配）
     return Math.max(1, Math.floor(Number(NUM_WORKERS) || 1));
 }
 
@@ -381,6 +376,30 @@ function dispatchThumbnailTask(task, context = 'ondemand') {
     const traceContext = TraceManager.getCurrentContext();
     const traceData = traceContext ? traceContext.toObject() : null;
 
+    // 预留槽位检查：只在有按需任务时才限制批量（按需预留，而非永久预留）
+    if (label === 'batch' && THUMB_ONDEMAND_RESERVE > 0) {
+        // 关键：检查是否有按需任务在排队或执行
+        const ondemandPending = activeCounts.ondemand + pendingCounts.ondemand;
+
+        if (ondemandPending > 0) {
+            // 有按需任务时，限制批量使用量
+            const totalConcurrency = thumbQueue.concurrency;
+            const availableForBatch = Math.max(1, totalConcurrency - THUMB_ONDEMAND_RESERVE);
+            const currentBatchUsage = activeCounts.batch + pendingCounts.batch;
+
+            if (currentBatchUsage >= availableForBatch) {
+                // 批量任务已用满可用槽位，拒绝派发（为按需任务保留）
+                const now = Date.now();
+                if (now - lastQueueFullDebugAt >= QUEUE_FULL_DEBUG_INTERVAL_MS) {
+                    logger.debug(`[批量生成] 检测到按需任务(${ondemandPending}个)，限制批量并发(${currentBatchUsage}/${availableForBatch})，预留${THUMB_ONDEMAND_RESERVE}个槽位`);
+                    lastQueueFullDebugAt = now;
+                }
+                return false;
+            }
+        }
+        // 没有按需任务时，批量可以使用所有worker（火力全开）
+    }
+
     if (pendingCounts[label] >= maxQueue) {
         const now = Date.now();
         if (now - lastQueueFullWarnAt >= QUEUE_FULL_WARN_INTERVAL_MS) {
@@ -408,7 +427,11 @@ function dispatchThumbnailTask(task, context = 'ondemand') {
 
 async function startThumbnailTask(task, context, traceData) {
     const logPrefix = context === 'batch' ? LOG_PREFIXES.BATCH_BACKFILL : LOG_PREFIXES.ONDEMAND_GENERATE;
+    const label = context === 'batch' ? 'batch' : 'ondemand';
+
     activeTasks.add(task.relativePath);
+    activeTaskContexts.set(task.relativePath, label);
+    activeCounts[label] += 1;
     updateTaskTimestamp(task.relativePath);
     state.thumbnail.incrementActiveCount();
     refreshThumbMetrics();
@@ -596,6 +619,13 @@ async function processWorkerFailure(task, errorPayload) {
 }
 
 function finalizeWorkerCycle(relativePath) {
+    // 减少活跃任务计数
+    const taskContext = activeTaskContexts.get(relativePath);
+    if (taskContext) {
+        activeCounts[taskContext] = Math.max(0, activeCounts[taskContext] - 1);
+        activeTaskContexts.delete(relativePath);
+    }
+
     activeTasks.delete(relativePath);
     state.thumbnail.decrementActiveCount();
     refreshThumbMetrics();
@@ -828,11 +858,26 @@ async function batchGenerateMissingThumbnails(limit = 1000) {
         let queued = 0;
         let skipped = 0;
         let cooldownEnforced = false;
+        let yieldCount = 0;
         const orchestrator = require('./orchestrator');
 
         for (let i = 0; i < missingThumbs.length; i += 1) {
-            if (await orchestrator.isHeavy()) {
+            // 持续等待直到按需任务清空
+            while (await orchestrator.isHeavy()) {
+                yieldCount++;
+                const ondemandPending = (state.thumbnail.getActiveCount() || 0) + (state.thumbnail.getQueueLen() || 0);
+                if (yieldCount === 1) {
+                    logger.info(`${LOG_PREFIXES.BATCH_BACKFILL} 检测到前台任务，批量补全完全暂停等待 (按需任务=${ondemandPending})`);
+                } else if (yieldCount % 10 === 0) {
+                    logger.info(`${LOG_PREFIXES.BATCH_BACKFILL} 继续等待前台任务完成 (按需任务=${ondemandPending}, 已等待${yieldCount}秒)`);
+                }
                 await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+
+            // 恢复日志
+            if (yieldCount > 0) {
+                logger.info(`${LOG_PREFIXES.BATCH_BACKFILL} 前台任务完成，批量补全恢复运行 (共等待${yieldCount}秒)`);
+                yieldCount = 0;
             }
 
             const rawRelativePath = missingThumbs[i].path;

@@ -12,7 +12,8 @@ let settingsCache = null;           // 设置缓存对象
 let cacheTimestamp = 0;             // 缓存时间戳（毫秒）
 const CACHE_TTL = 5 * 60 * 1000;    // 默认TTL：5分钟
 const SENSITIVE_TTL = 30 * 1000;    // 敏感键TTL：30秒
-const SETTINGS_REDIS_CACHE = (process.env.SETTINGS_REDIS_CACHE || 'false') === 'true';
+const ENABLE_REDIS = (process.env.ENABLE_REDIS || 'false') === 'true';
+const SETTINGS_REDIS_CACHE = ENABLE_REDIS;  // 自动跟随 ENABLE_REDIS（有Redis就用，没有就不用）
 const REDIS_CACHE_KEY = 'settings_cache_v1';
 const DEFAULT_SYNC_SCHEDULE = 'off';
 

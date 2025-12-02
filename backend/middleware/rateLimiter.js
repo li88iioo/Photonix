@@ -75,13 +75,14 @@ async function waitForRedisReady(timeoutMs) {
 
 /**
  * 根据配置选择并初始化限流存储（优先 Redis，无则降级为内存）
+ * 自动跟随 ENABLE_REDIS：有Redis就用，没有就用内存
  * @function resolveStore
  * @returns {Promise<Object>} 限流存储实例
  */
 async function resolveStore() {
-    const useRedis = (process.env.RATE_LIMIT_USE_REDIS || 'false').toLowerCase() === 'true';
-    if (!useRedis) {
-        logger.debug('[RateLimiter] 使用进程内令牌桶存储');
+    const ENABLE_REDIS = (process.env.ENABLE_REDIS || 'false').toLowerCase() === 'true';
+    if (!ENABLE_REDIS) {
+        logger.debug('[限流器] 使用进程内令牌桶存储');
         return new rateLimit.MemoryStore();
     }
 

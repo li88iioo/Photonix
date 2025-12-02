@@ -123,6 +123,24 @@ async function isHeavy() {
         __heavyCache = { at: now, val: true };
         return true;
     }
+
+    // 检查按需缩略图任务（前台任务优先）
+    try {
+        const state = require('./state.manager');
+        const thumbActive = state.thumbnail.getActiveCount() || 0;
+        const thumbQueued = state.thumbnail.getQueueLen() || 0;
+        const thumbPending = thumbActive + thumbQueued;
+
+        // 如果按需任务超过阈值，认为系统繁忙（为前台让路）
+        const THRESHOLD = Number(process.env.THUMB_ONDEMAND_BUSY_THRESHOLD || 5);
+        if (thumbPending > THRESHOLD) {
+            __heavyCache = { at: now, val: true };
+            return true;
+        }
+    } catch (error) {
+        logSoftIgnore('检测按需缩略图任务', error);
+    }
+
     __heavyCache = { at: now, val: false };
     return false;
 }

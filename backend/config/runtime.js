@@ -35,22 +35,65 @@ function deriveRuntime() {
   const { cpuCount, totalMemoryGB } = detectHardwareConfig();
 
   /**
-   * NUM_WORKERS 计算逻辑（保持 index.js 算法一致，允许环境变量覆盖）
-   * - 低配 (≤4核/4GB)：2~4 worker，比例0.5
-   * - 中配 (≤8核/8GB)：3~6 worker，比例0.6
-   * - 高配：4~12 worker，比例0.75
+   * NUM_WORKERS 智能计算逻辑（考虑 I/O 密集型任务特性）
+   *
+   * 策略：
+   * - 缩略图生成是 I/O 密集型任务（读取图片、写入缩略图）
+   * - CPU 在等待 I/O 时空闲，可以超配 worker 数量
+   * - 超配系数：1.5-2.0（根据硬件规格调整）
+   *
+   * 计算公式：
+   * - 基础值 = cpuCount * ioMultiplier
+   * - 内存约束 = (totalMemoryGB - systemReserve) / workerMemoryGB
+   * - 最终值 = min(基础值, 内存约束, 硬件上限)
    */
   let suggested;
-  if (cpuCount <= 4 || totalMemoryGB <= 4) {
-    suggested = Math.max(2, Math.min(4, Math.floor(cpuCount * 0.5)));
-  } else if (cpuCount <= 8 || totalMemoryGB <= 8) {
-    suggested = Math.max(3, Math.min(6, Math.floor(cpuCount * 0.6)));
+  const totalMemoryMB = totalMemoryGB * 1024;
+
+  // 系统预留（10%）+ Node.js 主进程（300MB）+ 其他服务（200MB）
+  const systemReserveMB = Math.max(500, totalMemoryMB * 0.1 + 300 + 200);
+  const availableMemoryMB = totalMemoryMB - systemReserveMB;
+
+  // I/O 密集型超配系数
+  let ioMultiplier;
+  let workerMemoryMB;
+
+  if (cpuCount <= 2 && totalMemoryGB <= 4) {
+    // 低配：2核4GB，适度超配
+    ioMultiplier = 1.5;  // 2核 → 3个worker
+    workerMemoryMB = 256;  // 保守内存限制
+  } else if (cpuCount <= 4 && totalMemoryGB <= 8) {
+    // 中配：4核8GB，充分利用
+    ioMultiplier = 1.5;  // 4核 → 6个worker
+    workerMemoryMB = 384;
+  } else if (cpuCount <= 8 && totalMemoryGB <= 16) {
+    // 高配：8核16GB，激进超配
+    ioMultiplier = 1.75;  // 8核 → 14个worker
+    workerMemoryMB = 512;
   } else {
-    suggested = Math.max(4, Math.min(12, Math.floor(cpuCount * 0.75)));
+    // 超高配：16核+，最大化利用
+    ioMultiplier = 2.0;
+    workerMemoryMB = 768;
   }
+
+  // 基于 CPU 的建议值（考虑 I/O 超配）
+  const cpuBasedWorkers = Math.floor(cpuCount * ioMultiplier);
+
+  // 基于内存的约束（确保每个 worker 有足够内存）
+  const memoryBasedWorkers = Math.floor(availableMemoryMB / workerMemoryMB);
+
+  // 取两者较小值，并限制在合理范围
+  suggested = Math.max(2, Math.min(cpuBasedWorkers, memoryBasedWorkers, 16));
+
   const NUM_WORKERS = Math.max(
     1,
     parseInt(process.env.NUM_WORKERS || String(suggested), 10)
+  );
+
+  // 动态计算 WORKER_MEMORY_MB（如果用户未指定）
+  const WORKER_MEMORY_MB = parseInt(
+    process.env.WORKER_MEMORY_MB || String(Math.floor(availableMemoryMB / NUM_WORKERS)),
+    10
   );
 
   /**
@@ -111,6 +154,7 @@ function deriveRuntime() {
   // 打包结果，写入缓存后返回
   const result = {
     NUM_WORKERS,
+    WORKER_MEMORY_MB,
     SHARP_CONCURRENCY,
     INDEX_CONCURRENCY,
     INDEX_BATCH_SIZE,

@@ -191,10 +191,11 @@ function isRedisAvailable(requireRedis = false) {
 
 /**
  * 判断是否应使用 Redis 进行限流
+ * 自动跟随 ENABLE_REDIS：有Redis且可用就返回true
  * @returns {boolean} - 当前限流是否启用 Redis
  */
 function shouldUseRedisForRateLimit() {
-  return isRedisAvailable() && (process.env.RATE_LIMIT_USE_REDIS || 'false').toLowerCase() === 'true';
+  return isRedisAvailable() && WANT_REDIS;
 }
 
 async function waitForRedisReady(timeoutMs = 5000) {

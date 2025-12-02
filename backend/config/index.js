@@ -55,7 +55,7 @@ const ENABLE_AUTH_DEBUG_LOGS = (process.env.AUTH_DEBUG_LOGS || '').toLowerCase()
 // 只在主线程输出配置日志，避免Worker线程重复输出
 const { isMainThread } = require('worker_threads');
 if (isMainThread) {
-    logger.debug(formatLog(LOG_PREFIXES.CONFIG, `最终硬件配置: CPU=${cpuCount}核, 内存=${totalMemoryGB}GB, 工作线程=${NUM_WORKERS}`));
+    logger.debug(formatLog(LOG_PREFIXES.CONFIG, `最终硬件配置: CPU=${cpuCount}核, 内存=${totalMemoryGB}GB, 工作线程=${NUM_WORKERS}, Worker内存=${__rt.WORKER_MEMORY_MB}MB`));
 }
 
 // --- 缩略图配置 ---
@@ -66,7 +66,7 @@ const THUMB_BATCH_COOLDOWN_MS = Math.max(0, Number(process.env.THUMB_BATCH_COOLD
 const THUMB_TELEMETRY_LOG_INTERVAL_MS = Math.max(5000, Number(process.env.THUMB_TELEMETRY_LOG_INTERVAL_MS || 15000)); // 遥测日志间隔
 const THUMB_OVERFLOW_RETRY_MS = Number(process.env.THUMB_OVERFLOW_RETRY_MS || 5000); // 队列溢出重试间隔
 const THUMB_ONDEMAND_IDLE_DESTROY_MS = Number(process.env.THUMB_ONDEMAND_IDLE_DESTROY_MS || 30000); // 空闲销毁时间
-const THUMB_ONDEMAND_RESERVE = Math.max(0, Math.floor(Number(process.env.THUMB_ONDEMAND_RESERVE || 0))); // 预留worker数量
+const THUMB_ONDEMAND_RESERVE = Math.max(0, Math.floor(Number(process.env.THUMB_ONDEMAND_RESERVE || 1))); // 预留worker数量（默认1）
 
 // --- Sharp配置 ---
 const SHARP_CACHE_MEMORY_MB = Number(process.env.SHARP_CACHE_MEMORY_MB || 16); // Sharp缓存内存
@@ -117,7 +117,7 @@ const AI_TASK_TIMEOUT_MS = Number(process.env.AI_TASK_TIMEOUT_MS || 120000); // 
 const AI_MAX_CONCURRENT = Number(process.env.AI_MAX_CONCURRENT || process.env.AI_CONCURRENCY || 2); // AI最大并发数
 
 // --- Worker配置 ---
-const WORKER_MEMORY_MB = Number(process.env.WORKER_MEMORY_MB || 256); // Worker内存限制
+const WORKER_MEMORY_MB = Number(process.env.WORKER_MEMORY_MB || __rt.WORKER_MEMORY_MB || 256); // Worker内存限制（智能计算）
 const THUMB_INITIAL_WORKERS = Number(process.env.THUMB_INITIAL_WORKERS || 0); // 初始缩略图worker数量
 const TASK_SCHEDULER_CONCURRENCY = Math.max(1, Number(process.env.TASK_SCHEDULER_CONCURRENCY || 2)); // 任务调度器并发数
 
