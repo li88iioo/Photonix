@@ -18,6 +18,11 @@ import { createModuleLogger } from './core/logger.js';
 import { safeSetInnerHTML } from './shared/dom-utils.js';
 import { eventManager } from './core/event-manager.js';
 
+// 将懒加载状态管理函数挂载到 window，供 router.js 使用
+window.savePageLazyState = savePageLazyState;
+window.restorePageLazyState = restorePageLazyState;
+window.clearRestoreProtection = clearRestoreProtection;
+
 const mainLogger = createModuleLogger('Main');
 
 let appStarted = false;
@@ -378,7 +383,9 @@ function initializeLifecycleGuards() {
     window.addEventListener('beforeunload', () => {
         try {
             blobUrlManager.cleanupAll();
-            savePageLazyState(window.location.hash);
+            // 统一缓存键格式：去掉 # 前缀和 #modal 后缀
+            const pathKey = window.location.hash.replace(/^#\/?/, '').replace(/#modal$/, '');
+            savePageLazyState(pathKey);
             eventManager.destroy();
             mainLogger.debug('页面卸载，完成缓存和事件清理');
         } catch (error) {
@@ -401,7 +408,9 @@ function initializeLifecycleGuards() {
                     mainLogger.debug('页面长时间隐藏，开始清理部分缓存');
                     try {
                         blobUrlManager.cleanupExpired();
-                        savePageLazyState(window.location.hash);
+                        // 统一缓存键格式：去掉 # 前缀和 #modal 后缀
+                        const pathKey = window.location.hash.replace(/^#\/?/, '').replace(/#modal$/, '');
+                        savePageLazyState(pathKey);
                     } catch (error) {
                         mainLogger.warn('页面隐藏清理失败', error);
                     }

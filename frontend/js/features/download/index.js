@@ -383,6 +383,7 @@ async function ensureAdminSecret(forcePrompt = false) {
     const tokenResult = await exchangeSecretForToken(secret);
     if (tokenResult.success) {
       setAdminSecret('TOKEN_AUTH');
+      persistAdminSecret('TOKEN_AUTH'); // 修复：持久化 token 模式，刷新后仍可复用 JWT
       markAdminVerified();
       showDownloadNotification('认证成功，已获取安全令牌', 'success');
       return 'TOKEN_AUTH';

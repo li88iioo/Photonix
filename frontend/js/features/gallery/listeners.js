@@ -590,6 +590,12 @@ function registerSettingsChangeHandler(controller) {
  */
 function registerKeyboardShortcuts(controller) {
     on(document, 'keydown', (e) => {
+        // 优先检查：如果焦点在输入控件内，除 Escape 外不处理其他快捷键
+        // 这样可以确保在 AI 聊天 textarea 中：
+        // - 上下左右箭头用于移动光标（浏览器默认行为）
+        // - 不会触发图片翻页或其他快捷键
+        const isInputFocused = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
+
         if (e.key === 'Escape' && activeAlbumDeleteOverlay) {
             closeActiveAlbumDeleteOverlay();
             return;
@@ -599,11 +605,15 @@ function registerKeyboardShortcuts(controller) {
             if (e.key === 'Escape') {
                 if (window.location.hash.endsWith('#modal')) window.history.back();
             }
-            else if (e.key === 'ArrowLeft') { navigateModal('prev'); }
-            else if (e.key === 'ArrowRight') { navigateModal('next'); }
+            // 只有在非输入控件焦点时才响应左右箭头翻页
+            // 确保 AI 聊天中左右箭头用于光标移动，不会触发翻页
+            else if (!isInputFocused && e.key === 'ArrowLeft') { navigateModal('prev'); }
+            else if (!isInputFocused && e.key === 'ArrowRight') { navigateModal('next'); }
         }
 
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        // 输入控件焦点时，阻止所有快捷键处理，保留浏览器默认行为
+        // 上下左右箭头在 textarea 中将正常用于光标移动和行跳转
+        if (isInputFocused) return;
 
         switch (e.key.toLowerCase()) {
             case 'b':
