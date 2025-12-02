@@ -100,7 +100,36 @@ const dbTimeoutManager = new DbTimeoutManager();
     const { dbAll } = require('../db/multi-db');
     const { promises: fs } = require('fs');
 
-    const CONCURRENT_LIMIT = require('../config').INDEX_CONCURRENCY;
+    // 缓存上次的并发数，用于检测变化
+    let lastIndexConcurrency = null;
+
+    // 缓存上次的 debug 日志状态，用于节流降噪
+    let lastDebugLogState = null;
+
+    // 动态索引并发获取（支持降级）
+    async function resolveIndexConcurrency(scenario = 'initial') {
+        try {
+            // 尝试从 adaptive.service 获取动态并发数
+            const { getIndexConcurrency } = require('../services/adaptive.service');
+            const concurrency = getIndexConcurrency(scenario);
+
+            // 检测并发数变化，输出提示日志
+            if (lastIndexConcurrency !== null && lastIndexConcurrency !== concurrency) {
+                if (concurrency > lastIndexConcurrency) {
+                    logger.info(`[索引并发] ⚡ 检测到前台空闲，加速索引: ${lastIndexConcurrency} → ${concurrency} 并发`);
+                } else {
+                    logger.info(`[索引并发] 🎯 检测到前台任务，降低索引并发为前台让路: ${lastIndexConcurrency} → ${concurrency} 并发`);
+                }
+            }
+
+            lastIndexConcurrency = concurrency;
+            return concurrency;
+        } catch (error) {
+            // 降级：使用静态配置
+            logger.debug(`[索引并发] 动态获取失败，使用静态配置: ${error.message}`);
+            return require('../config').INDEX_CONCURRENCY || 8;
+        }
+    }
 
     // 内存优化：限制缓存大小，避免内存无限增长
     const MAX_CACHE_SIZE = 2000; // 最大缓存2000个条目
@@ -415,8 +444,34 @@ const dbTimeoutManager = new DbTimeoutManager();
         return results;
     }
 
-    async function processDimensionsInParallel(items, photosDir) {
-        return processConcurrentBatch(items, CONCURRENT_LIMIT, async (item) => {
+    /**
+     * 并行处理文件尺寸信息
+     * @param {Array} items - 待处理文件列表
+     * @param {string} photosDir - 照片根目录
+     * @param {string} scenario - 场景类型（'initial' | 'rebuild' | 'incremental'）
+     * @returns {Promise<Array>} 包含尺寸信息的文件列表
+     */
+    async function processDimensionsInParallel(items, photosDir, scenario = 'initial') {
+        const concurrency = await resolveIndexConcurrency(scenario);
+
+        // 获取前台任务状态（用于日志）
+        let foregroundStatus = 'unknown';
+        try {
+            const state = require('../services/state.manager');
+            const thumbPending = (state.thumbnail.getActiveCount() || 0) + (state.thumbnail.getQueueLen() || 0);
+            foregroundStatus = thumbPending > 5 ? `繁忙(缩略图:${thumbPending})` : '空闲';
+        } catch (e) {
+            // 忽略状态获取失败
+        }
+
+        // 只在状态变化时输出 debug 日志（降噪）
+        const currentLogState = `${scenario}:${concurrency}:${foregroundStatus}`;
+        if (lastDebugLogState !== currentLogState) {
+            logger.debug(`[索引并发] scenario=${scenario}, concurrency=${concurrency}, items=${items.length}, 前台=${foregroundStatus}`);
+            lastDebugLogState = currentLogState;
+        }
+
+        return processConcurrentBatch(items, concurrency, async (item) => {
             let width = null, height = null;
             if (item.type === 'photo' || item.type === 'video') {
                 const fullPath = path.resolve(photosDir, item.path);
@@ -554,7 +609,7 @@ const dbTimeoutManager = new DbTimeoutManager();
 
                     batch.push(item);
                     if (batch.length >= batchSize) {
-                        const processedBatch = await processDimensionsInParallel(batch, photosDir);
+                        const processedBatch = await processDimensionsInParallel(batch, photosDir, 'rebuild');
                         await withTransaction('main', async () => {
                             await tasks.processBatchInTransactionOptimized(processedBatch, itemsStmt, ftsStmt, thumbUpsertStmt);
                         }, { mode: 'IMMEDIATE' });
@@ -589,7 +644,7 @@ const dbTimeoutManager = new DbTimeoutManager();
                     }
                 }
                 if (batch.length > 0) {
-                    const processedBatch = await processDimensionsInParallel(batch, photosDir);
+                    const processedBatch = await processDimensionsInParallel(batch, photosDir, 'rebuild');
                     await withTransaction('main', async () => {
                         await tasks.processBatchInTransactionOptimized(processedBatch, itemsStmt, ftsStmt, thumbUpsertStmt);
                     }, { mode: 'IMMEDIATE' });
@@ -758,7 +813,7 @@ const dbTimeoutManager = new DbTimeoutManager();
                         const itemsStmt = getDB('main').prepare("INSERT OR IGNORE INTO items (name, path, type, mtime, width, height) VALUES (?, ?, ?, ?, ?, ?)");
                         const ftsStmt = getDB('main').prepare("INSERT INTO items_fts (rowid, name) VALUES (?, ?)");
                         const thumbUpsertStmt = getDB('main').prepare("INSERT INTO thumb_status(path, mtime, status, last_checked) VALUES(?, ?, 'pending', 0) ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, status='pending'");
-                        const processedAdds = await processDimensionsInParallel(addOperations, photosDir);
+                        const processedAdds = await processDimensionsInParallel(addOperations, photosDir, 'incremental');
                         await tasks.processBatchInTransactionOptimized(processedAdds, itemsStmt, ftsStmt, thumbUpsertStmt);
 
                         // 通用finalize处理函数
@@ -893,7 +948,7 @@ const dbTimeoutManager = new DbTimeoutManager();
                     );
                     if (!rows || rows.length === 0) break;
 
-                    const enriched = await processDimensionsInParallel(rows, photosDir);
+                    const enriched = await processDimensionsInParallel(rows, photosDir, 'incremental');
                     const updates = enriched
                         .filter(r => r && r.width && r.height)
                         .map(r => [r.width, r.height, r.path]);
