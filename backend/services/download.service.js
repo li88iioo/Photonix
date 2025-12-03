@@ -37,7 +37,7 @@ class DownloadManager {
   constructor() {
     // 初始化模块
     this.configManager = new ConfigManager(DATA_ROOT);
-    this.scheduler = new TaskScheduler();
+    this.scheduler = null; // 配置加载后初始化
     this.logManager = null; // 配置加载后初始化
     this.feedProcessor = null; // 配置加载后初始化
     this.imageDownloader = null; // 配置加载后初始化
@@ -47,7 +47,7 @@ class DownloadManager {
     // 任务管理
     this.tasks = new Map();
     this.skipFeeds = new Set();
-    
+
     // 服务状态
     this.startedAt = Date.now();
     this.ready = this.initialize();
@@ -67,24 +67,25 @@ class DownloadManager {
 
     // 初始化各模块
     this.logManager = new LogManager(paths);
-    this.feedProcessor = new FeedProcessor(config);
+    this.scheduler = new TaskScheduler(this.logManager);
+    this.feedProcessor = new FeedProcessor(config, this.logManager);
     this.imageDownloader = new ImageDownloader(config, this.logManager);
     this.historyTracker = new HistoryTracker(config, paths);
 
     // 初始化历史追踪数据库
     await this.historyTracker.initializeDatabase();
-    
+
     // 初始化任务管理器
     this.taskManager = new TaskManager(() => this.historyTracker.db);
 
     // P1优化: 优先从数据库加载任务
     let tasks = this.taskManager.loadAllTasks();
-    
+
     // 如果数据库为空，尝试从JSON文件迁移
     if (tasks.length === 0) {
       const jsonTasks = await this.readJSON(TASKS_FILE, []);
       if (jsonTasks.length > 0) {
-        console.info('检测到JSON任务文件，开始迁移到数据库...');
+        // JSON任务文件迁移，直接执行，不输出日志
         const migrated = await this.taskManager.migrateFromJSON(
           jsonTasks.map(raw => this.normalizeTask(raw))
         );
@@ -121,13 +122,13 @@ class DownloadManager {
 
     const totalTasks = this.tasks.size;
     const runningTasks = this.getRunningTasks().length;
-    
+
     this.logManager.log('info', `发现 ${totalTasks} 个订阅源，将处理 ${runningTasks || totalTasks} 个。`, {
       scope: '下载器',
       totalTasks,
       runningTasks
     });
-    
+
     this.logManager.log('info', '启动成功', {
       scope: '下载器',
       downloadRoot: paths.baseFolder
@@ -146,18 +147,18 @@ class DownloadManager {
    */
   async executeTask(taskId, options = {}) {
     await this.ensureReady();
-    
+
     const task = this.tasks.get(taskId);
     if (!task) {
       throw new ConfigurationError('下载任务不存在', { taskId });
     }
 
     const lock = this.scheduler.getTaskMutex(taskId);
-    
+
     return lock.runExclusive(async () => {
       const runId = uuidv4();
       const startedAt = Date.now();
-      
+
       this.logManager.log('info', '准备执行下载任务', {
         scope: '下载器',
         taskId,
@@ -177,18 +178,18 @@ class DownloadManager {
         // 拉取Feed
         const feed = await this.feedProcessor.fetchFeed(task);
         const feedTitle = feed.title || task.title || task.feedUrl;
-        
-        this.logManager.log('info', '开始处理订阅源', { 
-          taskId, 
-          runId, 
+
+        this.logManager.log('info', '开始处理订阅源', {
+          taskId,
+          runId,
           feedTitle,
           taskName: feedTitle || task.title || task.name || `任务${taskId.slice(0, 8)}`
         });
 
         if (this.skipFeeds.has(feedTitle)) {
-          this.logManager.log('info', '跳过被列入忽略清单的订阅源', { 
-            taskId, 
-            runId, 
+          this.logManager.log('info', '跳过被列入忽略清单的订阅源', {
+            taskId,
+            runId,
             feedTitle,
             taskName: feedTitle || task.title || task.name || `任务${taskId.slice(0, 8)}`
           });
@@ -259,14 +260,14 @@ class DownloadManager {
           runId,
           error: error.message
         });
-        
+
         throw new ExternalServiceError('下载任务执行失败', {
           taskId,
           error: error.message
         });
       } finally {
         this.scheduler.releaseGlobalSlot();
-        
+
         if (task.status === 'running') {
           this.scheduler.scheduleTask(
             task,
@@ -293,8 +294,6 @@ class DownloadManager {
             taskId,
             error: error?.message || String(error)
           });
-        } else {
-          console.error('[DownloadManager] 手动任务执行失败', error);
         }
       });
   }
@@ -461,7 +460,7 @@ class DownloadManager {
    */
   async updateTask(taskId, payload) {
     await this.ensureReady();
-    
+
     const task = this.tasks.get(taskId);
     if (!task) {
       throw new ConfigurationError('下载任务不存在', { taskId });
@@ -521,8 +520,8 @@ class DownloadManager {
 
     task.updatedAt = new Date().toISOString();
     await this.persistState();
-    
-    this.logManager.log('info', '更新下载任务', { 
+
+    this.logManager.log('info', '更新下载任务', {
       taskId,
       taskName: task.title || task.name || task.feedTitle || `任务${taskId.slice(0, 8)}`
     });
@@ -534,7 +533,7 @@ class DownloadManager {
    */
   async deleteTask(taskId) {
     await this.ensureReady();
-    
+
     const task = this.tasks.get(taskId);
     if (!task) {
       throw new ConfigurationError('下载任务不存在', { taskId });
@@ -544,9 +543,9 @@ class DownloadManager {
     this.taskManager.deleteTask(taskId);
     this.tasks.delete(taskId);
     await this.persistState();
-    
+
     const deletedTaskName = task?.title || task?.name || task?.feedTitle || `任务${taskId.slice(0, 8)}`;
-    this.logManager.log('info', '删除下载任务', { 
+    this.logManager.log('info', '删除下载任务', {
       taskId,
       taskName: deletedTaskName
     });
@@ -558,7 +557,7 @@ class DownloadManager {
    */
   async triggerTaskAction(taskId, action) {
     await this.ensureReady();
-    
+
     const task = this.tasks.get(taskId);
     if (!task) {
       throw new ConfigurationError('下载任务不存在', { taskId });
@@ -577,7 +576,7 @@ class DownloadManager {
           { immediate: true }
         );
         await this.persistState();
-        this.logManager.log('info', '任务已启动', { 
+        this.logManager.log('info', '任务已启动', {
           taskId,
           taskName: task.title || task.name || task.feedTitle || `任务${taskId.slice(0, 8)}`
         });
@@ -589,7 +588,7 @@ class DownloadManager {
         task.updatedAt = new Date().toISOString();
         this.scheduler.clearSchedule(taskId);
         await this.persistState();
-        this.logManager.log('info', '任务已暂停', { 
+        this.logManager.log('info', '任务已暂停', {
           taskId,
           taskName: task.title || task.name || task.feedTitle || `任务${taskId.slice(0, 8)}`
         });
@@ -676,19 +675,19 @@ class DownloadManager {
    */
   async updateConfig(partialConfig = {}) {
     await this.ensureReady();
-    
+
     // 保存旧路径用于比较
     const oldPaths = { ...this.configManager.paths };
-    
+
     // 更新配置（会重新解析路径）
     const config = await this.configManager.updateConfig(partialConfig);
     const newPaths = this.configManager.paths;
-    
+
     // 检测关键路径是否变化
     const databasePathChanged = oldPaths.databasePath !== newPaths.databasePath;
     const logsPathChanged = oldPaths.activityLogPath !== newPaths.activityLogPath
       || oldPaths.errorLogPath !== newPaths.errorLogPath;
-    
+
     // 如果数据库路径变化，重新初始化数据库连接
     if (databasePathChanged) {
       this.logManager.log('warning', '数据库路径已变更，正在重新初始化...', {
@@ -696,23 +695,23 @@ class DownloadManager {
         oldPath: oldPaths.databasePath,
         newPath: newPaths.databasePath
       });
-      
+
       // 关闭旧连接并重新初始化
       await this.historyTracker.initializeDatabase();
-      
+
       // 重新加载任务（因为数据库变了）
       const tasks = this.taskManager.loadAllTasks();
       this.tasks.clear();
       tasks.forEach(task => {
         this.tasks.set(task.id, task);
       });
-      
+
       this.logManager.log('info', '数据库重新初始化完成', {
         scope: '下载器',
         tasksLoaded: this.tasks.size
       });
     }
-    
+
     // 如果日志路径变化，重新初始化 LogManager
     if (logsPathChanged) {
       this.logManager = new LogManager(newPaths);
@@ -721,14 +720,23 @@ class DownloadManager {
         activityLog: newPaths.activityLogPath,
         errorLog: newPaths.errorLogPath
       });
+      if (this.scheduler) {
+        this.scheduler.logManager = this.logManager;
+      }
+      if (this.feedProcessor) {
+        this.feedProcessor.logManager = this.logManager;
+      }
+      if (this.imageDownloader) {
+        this.imageDownloader.logger = this.logManager;
+      }
     }
-    
+
     // 更新模块配置
     this.feedProcessor.config = config;
     this.imageDownloader.config = config;
     this.historyTracker.config = config;
     this.skipFeeds = new Set(config.skipFeeds);
-    
+
     return this.configManager.getConfig();
   }
 
@@ -737,7 +745,7 @@ class DownloadManager {
    */
   async listTasks(query = {}) {
     await this.ensureReady();
-    
+
     const keyword = String(query.search || '').trim().toLowerCase();
     const statusFilter = query.status ? String(query.status).toLowerCase() : null;
 
@@ -779,7 +787,7 @@ class DownloadManager {
    */
   async getTaskLogs(taskId, query = {}) {
     await this.ensureReady();
-    
+
     if (!this.tasks.has(taskId)) {
       throw new ConfigurationError('下载任务不存在', { taskId });
     }
@@ -808,7 +816,7 @@ class DownloadManager {
    */
   async previewFeed(taskId, query = {}) {
     await this.ensureReady();
-    
+
     const task = this.tasks.get(taskId);
     if (!task) {
       throw new ConfigurationError('下载任务不存在', { taskId });
@@ -854,7 +862,7 @@ class DownloadManager {
    */
   async downloadSelectedEntries(taskId, payload = {}) {
     await this.ensureReady();
-    
+
     const entries = Array.isArray(payload.entries) ? payload.entries : [];
     if (entries.length === 0) {
       throw new ValidationError('请至少选择一个条目');
@@ -894,13 +902,13 @@ class DownloadManager {
    */
   async exportOpml() {
     await this.ensureReady();
-    
+
     const result = this.feedProcessor.exportOpml(this.tasks);
     const opmlPath = this.configManager.paths.opmlPath;
-    
+
     await fsp.mkdir(path.dirname(opmlPath), { recursive: true });
     await fsp.writeFile(opmlPath, result.content, 'utf-8');
-    
+
     return {
       ...result,
       path: opmlPath
@@ -912,7 +920,7 @@ class DownloadManager {
    */
   async importOpml(content, options = {}) {
     await this.ensureReady();
-    
+
     if (!content || typeof content !== 'string') {
       throw new ValidationError('OPML 内容不能为空');
     }
@@ -936,7 +944,7 @@ class DownloadManager {
 
     feeds.forEach(feedData => {
       const existing = byUrl.get(feedData.feedUrl);
-      
+
       if (existing) {
         // 更新现有任务
         Object.assign(existing, feedData, { updatedAt: now });
@@ -957,7 +965,7 @@ class DownloadManager {
 
     // P1优化: 批量保存到数据库
     this.taskManager.saveAllTasks(Array.from(this.tasks.values()));
-    
+
     const opmlPath = this.configManager.paths.opmlPath;
     await fsp.mkdir(path.dirname(opmlPath), { recursive: true });
     await fsp.writeFile(opmlPath, content, 'utf-8');

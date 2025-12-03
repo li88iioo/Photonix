@@ -252,7 +252,7 @@ function getNextCronDate(expression) {
   try {
     const cronTime = new CronTime(expression);
     const next = cronTime.sendAt();
-    return next ? next.toDate() : null;
+    return next ? next.toJSDate() : null;
   } catch (error) {
     logger.debug(`${LOG_PREFIXES.AUTO_SYNC} 计算 Cron 下次运行时间失败`, error && error.message ? error.message : error);
     return null;

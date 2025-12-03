@@ -11,7 +11,7 @@ export function renderFeeds(feeds, searchTerm = '') {
   const grid = rootEl.querySelector('[data-role="feed-grid"]');
   if (!grid) return;
   const selectAllCheckbox = rootEl.querySelector('[data-role="feed-select-all"]');
-  const actionButtons = Array.from(rootEl.querySelectorAll('[data-action^="bulk-feed"]')); 
+  const actionButtons = Array.from(rootEl.querySelectorAll('[data-action^="bulk-feed"]'));
 
   const list = Array.isArray(feeds) ? feeds : [];
   if (!list.length) {
@@ -57,7 +57,7 @@ export function renderFeeds(feeds, searchTerm = '') {
             <div class="feed-title">${title}</div>
             <div class="feed-url">${url}</div>
           </div>
-          <div class="feed-badge">状态：${status}</div>
+          <div class="feed-badge feed-badge-${status.toLowerCase()}">状态：${status}</div>
         </div>
         <div class="feed-meta">
           <span>刷新周期：${sanitize(period)}</span>

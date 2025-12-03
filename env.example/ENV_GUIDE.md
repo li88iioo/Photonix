@@ -430,6 +430,8 @@
 - 风险：高性能模式在低配可能过载
 - 代码引用：services/adaptive.service.js
 - 示例：PERFORMANCE_MODE=low
+- 日志节流：`ADAPTIVE_LOG_THROTTLE_MS` 控制 `[自适应]` 调度日志的最小输出间隔（默认 300000ms ≈ 5 分钟），
+  调大（如 600000-900000）可进一步降噪，调小可更频繁观测负载切换
 
 8) DETECTED_CPU_COUNT / DETECTED_MEMORY_GB
 - 作用：显式指定硬件资源供配置算法参考，当系统自动检测不准确时使用
@@ -612,6 +614,20 @@
 - 风险：空值时metrics端点公开访问
 - 代码引用：backend/routes/metrics.routes.js
 - 示例：METRICS_TOKEN=secure_metrics_token
+
+18) MEMORY_MONITOR_ENABLED / MEMORY_MONITOR_INTERVAL_MS / MEMORY_MONITOR_LOG_THROTTLE_MS / MEMORY_MONITOR_LOG_LEVEL
+- 作用：控制缩略图服务内置的 Node 进程内存采样与日志输出频率，避免 `[内存监控]` 调试日志刷屏
+- 默认值：`MEMORY_MONITOR_ENABLED` 在 development 自动开启、production 关闭；`MEMORY_MONITOR_INTERVAL_MS=60000`；
+  `MEMORY_MONITOR_LOG_THROTTLE_MS=300000`（5分钟）；`MEMORY_MONITOR_LOG_LEVEL=debug`
+- 取值/格式：布尔 / 毫秒 / 毫秒 / error|warn|info|debug
+- 推荐修改场景：希望把内存日志降噪（增大 `MEMORY_MONITOR_LOG_THROTTLE_MS` 或改为 `info`），或在生产临时排障时打开监控
+- 风险：完全关闭会看不到堆内存爬升；节流过大将只在极长周期看到一次采样
+- 代码引用：backend/controllers/thumbnail.controller.js
+- 示例：
+  MEMORY_MONITOR_ENABLED=true
+  MEMORY_MONITOR_INTERVAL_MS=120000
+  MEMORY_MONITOR_LOG_THROTTLE_MS=900000
+  MEMORY_MONITOR_LOG_LEVEL=info
 
 19) HEAVY_CACHE_TTL_MS
 - 作用：重型缓存TTL时间（毫秒）

@@ -7,7 +7,8 @@ const { CronJob } = require('cron');
 const { Mutex } = require('async-mutex');
 
 class TaskScheduler {
-  constructor() {
+  constructor(logManager) {
+    this.logManager = logManager;
     this.taskLocks = new Map();     // 任务互斥锁
     this.taskTimers = new Map();    // 定时器引用集合
     this.cronJobs = new Map();      // cron job 实例集合
@@ -71,7 +72,12 @@ class TaskScheduler {
           resolved, // cronTime
           () => {   // onTick
             executeCallback(task.id).catch((error) => {
-              console.error('自动执行任务失败', { taskId: task.id, error: error.message });
+              if (this.logManager) {
+                this.logManager.log('error', '自动执行任务失败', {
+                  taskId: task.id,
+                  error: error.message
+                });
+              }
             });
           },
           null,     // onComplete
@@ -82,15 +88,22 @@ class TaskScheduler {
         task.schedule.next = null;
         if (immediate) {
           executeCallback(task.id).catch((error) => {
-            console.error('任务即时执行失败', { taskId: task.id, error: error.message });
+            if (this.logManager) {
+              this.logManager.log('error', '任务即时执行失败', {
+                taskId: task.id,
+                error: error.message
+              });
+            }
           });
         }
       } catch (error) {
-        console.error('Cron 表达式无效，任务暂停', {
-          taskId: task.id,
-          interval: task.interval,
-          error: error.message
-        });
+        if (this.logManager) {
+          this.logManager.log('error', 'Cron 表达式无效，任务暂停', {
+            taskId: task.id,
+            interval: task.interval,
+            error: error.message
+          });
+        }
         task.status = 'paused';
       }
       return;
@@ -102,7 +115,12 @@ class TaskScheduler {
 
     const timer = setTimeout(() => {
       executeCallback(task.id).catch((error) => {
-        console.error('定时执行任务失败', { taskId: task.id, error: error.message });
+        if (this.logManager) {
+          this.logManager.log('error', '定时执行任务失败', {
+            taskId: task.id,
+            error: error.message
+          });
+        }
       });
     }, immediate ? 250 : resolved);
 

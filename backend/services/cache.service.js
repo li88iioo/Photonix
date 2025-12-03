@@ -53,7 +53,7 @@ async function invalidateTags(tags) {
                 pipeline.unlink(...chunk);
             }
         }
-        
+
         // 删除标签键本身
         if (tagKeys.length > 0) {
             pipeline.unlink(...tagKeys);
@@ -140,7 +140,7 @@ async function getCachedQueryResult(queryKey) {
     if (cachedData) {
         try {
             const data = JSON.parse(cachedData);
-            logger.debug(`[Cache] 查询结果命中缓存: ${queryKey}`);
+            // 缓存命中是正常状态，不需要记录日志
             return data;
         } catch (error) {
             logger.debug('解析缓存数据失败:', error);

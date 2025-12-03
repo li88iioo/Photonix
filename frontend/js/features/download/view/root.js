@@ -567,6 +567,8 @@ function ensureStyleHelpers() {
     .task-success { background: rgba(165, 180, 252, 0.6); color: #3730a3; }
     .task-default { background: rgba(226, 232, 240, 0.8); color: var(--text-secondary); }
     .feed-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--primary-light); color: var(--primary); font-size: 11px; }
+    .feed-badge-running { background: rgba(187, 247, 208, 0.5); color: #15803d; }
+    .feed-badge-paused { background: rgba(148, 163, 184, 0.25); color: #475569; }
     .preview-grid { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; padding-right: 4px; }
     .preview-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 12px; background: var(--surface-muted); border: 1px solid var(--border-color); }
     .preview-item span { font-size: 12px; color: var(--text-secondary); word-break: break-word; }

@@ -13,12 +13,27 @@ const state = require('../services/state.manager');
 const { dbRun } = require('../db/multi-db');
 
 /**
- * 内存监控，仅在开发环境启用。
- * 每分钟记录内存使用情况，并在堆内存超过阈值时输出警告日志。
+ * 内存监控，仅在开发环境启用（可通过环境变量覆盖）。
+ * 默认按分钟采样，但仅每 5 分钟输出一次日志，防止刷屏。
  */
-const enableMemoryMonitoring = process.env.NODE_ENV !== 'production';
+const memoryMonitorToggle = (process.env.MEMORY_MONITOR_ENABLED || '').trim().toLowerCase();
+const enableMemoryMonitoring = memoryMonitorToggle
+    ? memoryMonitorToggle === 'true'
+    : process.env.NODE_ENV !== 'production';
+const MEMORY_MONITOR_INTERVAL_MS = Math.max(60000, Number(process.env.MEMORY_MONITOR_INTERVAL_MS) || 60000);
+const MEMORY_MONITOR_LOG_THROTTLE_MS = Math.max(
+    MEMORY_MONITOR_INTERVAL_MS,
+    Number(process.env.MEMORY_MONITOR_LOG_THROTTLE_MS) || 5 * 60 * 1000
+);
+const MEMORY_MONITOR_LOG_LEVEL = (process.env.MEMORY_MONITOR_LOG_LEVEL || 'debug').toLowerCase();
+const logMemory = typeof logger[MEMORY_MONITOR_LOG_LEVEL] === 'function'
+    ? message => logger[MEMORY_MONITOR_LOG_LEVEL](message)
+    : message => logger.debug(message);
+
 if (enableMemoryMonitoring) {
-    setInterval(() => {
+    let lastMemoryLogAt = 0;
+
+    const emitMemoryUsage = () => {
         const memUsage = process.memoryUsage();
         const memUsageMB = {
             rss: Math.round(memUsage.rss / 1024 / 1024),
@@ -27,14 +42,22 @@ if (enableMemoryMonitoring) {
             external: Math.round(memUsage.external / 1024 / 1024)
         };
 
-        logger.debug(
-            `[内存监控] RSS: ${memUsageMB.rss}MB, 堆使用: ${memUsageMB.heapUsed}/${memUsageMB.heapTotal}MB, 外部: ${memUsageMB.external}MB`
-        );
-
         if (memUsageMB.heapUsed > 200) {
             logger.warn(`${LOG_PREFIXES.MEMORY_WARNING} 堆内存使用过高: ${memUsageMB.heapUsed}MB`);
         }
-    }, 60000);
+
+        if (Date.now() - lastMemoryLogAt < MEMORY_MONITOR_LOG_THROTTLE_MS) {
+            return;
+        }
+
+        logMemory(
+            `${LOG_PREFIXES.MEMORY_MONITOR} RSS: ${memUsageMB.rss}MB, 堆使用: ${memUsageMB.heapUsed}/${memUsageMB.heapTotal}MB, 外部: ${memUsageMB.external}MB`
+        );
+        lastMemoryLogAt = Date.now();
+    };
+
+    emitMemoryUsage();
+    setInterval(emitMemoryUsage, MEMORY_MONITOR_INTERVAL_MS);
 }
 
 // ======== 请求频率控制参数区 ========

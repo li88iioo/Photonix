@@ -9,8 +9,9 @@ const axios = require('axios');
 const { XMLParser, XMLBuilder } = require('fast-xml-parser');
 
 class FeedProcessor {
-  constructor(config) {
+  constructor(config, logManager) {
     this.config = config;
+    this.logManager = logManager;
     this.parser = new Parser({
       customFields: {
         item: ['content:encoded', 'media:content', 'mediaThumbnails', 'media:thumbnail']
@@ -26,7 +27,7 @@ class FeedProcessor {
   async fetchFeed(task) {
     const timeoutMs = Math.max(5000, this.config.requestTimeout * 1000);
     const headers = this.resolveHeadersForUrl(task, task.feedUrl, this.config.requestHeaders);
-    
+
     const requestConfig = {
       url: task.feedUrl,
       method: 'GET',
@@ -39,7 +40,13 @@ class FeedProcessor {
       const response = await axios(requestConfig);
       return this.parser.parseString(response.data);
     } catch (error) {
-      console.error('拉取 RSS 源失败', { taskId: task.id, feedUrl: task.feedUrl, error: error.message });
+      if (this.logManager) {
+        this.logManager.log('error', '拉取 RSS 源失败', {
+          taskId: task.id,
+          feedUrl: task.feedUrl,
+          error: error.message
+        });
+      }
       throw error;
     }
   }
@@ -56,13 +63,13 @@ class FeedProcessor {
     if (!task?.cookie) {
       return headers;
     }
-    
+
     const domain = task.cookieDomain || '';
     if (!domain) {
       headers.Cookie = task.cookie;
       return headers;
     }
-    
+
     try {
       const resolvedUrl = targetUrl ? new URL(targetUrl, task.feedUrl) : null;
       const hostname = resolvedUrl?.hostname?.toLowerCase();
@@ -72,7 +79,7 @@ class FeedProcessor {
     } catch {
       // ignore malformed URL
     }
-    
+
     return headers;
   }
 
@@ -103,14 +110,14 @@ class FeedProcessor {
     const encoded = item['content:encoded'] || item.content || item.description || '';
     if (encoded) {
       const $ = cheerio.load(encoded);
-      
+
       // 提取img标签的各种图片属性
       $('img').each((_, img) => {
         // 优先获取懒加载图片URL
         const lazyUrl = $(img).attr('data-lazy-src');
-        const dataSrc = $(img).attr('data-src'); 
+        const dataSrc = $(img).attr('data-src');
         const src = $(img).attr('src');
-        
+
         // 按优先级选择URL
         if (lazyUrl && !lazyUrl.startsWith('data:')) {
           urls.push(lazyUrl);
@@ -120,7 +127,7 @@ class FeedProcessor {
           urls.push(src);
         }
       });
-      
+
       // 额外检查noscript标签中的备用图片
       $('noscript').each((_, noscript) => {
         const noscriptHtml = $(noscript).html();
@@ -154,23 +161,29 @@ class FeedProcessor {
         headers,
         responseType: 'text'
       });
-      
+
       const $ = cheerio.load(response.data);
       const urls = [];
-      
+
       $('img').each((_, img) => {
         const src = $(img).attr('src') || $(img).attr('data-src');
         if (src) {
           try {
             const resolved = new URL(src, articleUrl).toString();
             urls.push(resolved);
-          } catch {}
+          } catch { }
         }
       });
-      
+
       return this.unique(urls);
     } catch (error) {
-      console.warn('回退抓取文章页面失败', { taskId: task?.id, url: articleUrl, error: error.message });
+      if (this.logManager) {
+        this.logManager.log('warning', '回退抓取文章页面失败', {
+          taskId: task?.id,
+          url: articleUrl,
+          error: error.message
+        });
+      }
       return [];
     }
   }
@@ -195,13 +208,13 @@ class FeedProcessor {
         '@_xmlUrl': task.feedUrl,
         '@_interval': task.interval
       };
-      
+
       if (task.category) outline['@_category'] = task.category;
       if (Array.isArray(task.tags) && task.tags.length) outline['@_tags'] = task.tags.join(',');
       if (Array.isArray(task.excludeKeywords) && task.excludeKeywords.length) outline['@_exclude'] = task.excludeKeywords.join(',');
       if (task.cookie) outline['@_cookie'] = task.cookie;
       if (task.cookieDomain) outline['@_cookieDomain'] = task.cookieDomain;
-      
+
       return outline;
     });
 
@@ -235,7 +248,7 @@ class FeedProcessor {
 
     const parsed = parser.parse(content);
     const outlines = this.flattenOpmlOutlines(parsed?.opml?.body?.outline);
-    
+
     return outlines.map(outline => {
       const feedUrl = outline['@_xmlUrl'] || outline['@_xmlurl'] || outline['@_url'] || outline['@_URL'];
       if (!feedUrl) return null;
@@ -259,7 +272,7 @@ class FeedProcessor {
   flattenOpmlOutlines(outlines, accumulator = []) {
     if (!outlines) return accumulator;
     const list = Array.isArray(outlines) ? outlines : [outlines];
-    
+
     list.forEach((outline) => {
       if (!outline) return;
       if (outline['@_xmlUrl'] || outline['@_xmlurl'] || outline['@_URL'] || outline['@_url']) {
@@ -269,7 +282,7 @@ class FeedProcessor {
         this.flattenOpmlOutlines(outline.outline, accumulator);
       }
     });
-    
+
     return accumulator;
   }
 
