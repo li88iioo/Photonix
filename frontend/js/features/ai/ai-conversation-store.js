@@ -13,12 +13,6 @@ export const MESSAGE_STATUS = {
     DELIVERED: 'delivered'
 };
 
-export const MESSAGE_TYPE = {
-    TEXT: 'text',
-    IMAGE: 'image',
-    LOADING: 'loading'
-};
-
 const chatLogger = createModuleLogger('AI-ConversationStore');
 
 const DB_CONFIG = {
@@ -184,7 +178,7 @@ class ConversationDatabase {
                 const nextEntry = { ...current };
                 if (Object.prototype.hasOwnProperty.call(patch, 'message')) {
                     const nextMessage = sanitizeMessage(patch.message);
-                    if (nextMessage || nextMessage === '') nextEntry.message = nextMessage;
+                    if (nextMessage) nextEntry.message = nextMessage;
                 }
                 if (patch.status) {
                     nextEntry.status = sanitizeStatus(patch.status);
@@ -194,12 +188,6 @@ class ConversationDatabase {
                 }
                 if (patch.timestamp) {
                     nextEntry.timestamp = Number(patch.timestamp) || nextEntry.timestamp;
-                }
-                if (patch.type) {
-                    nextEntry.type = patch.type;
-                }
-                if (Object.prototype.hasOwnProperty.call(patch, 'imageUrl')) {
-                    nextEntry.imageUrl = patch.imageUrl || null;
                 }
                 const updateRequest = store.put(nextEntry);
                 updateRequest.onsuccess = () => resolve({ ...nextEntry });
@@ -395,13 +383,11 @@ function normalizeEntry(entry) {
     if (!entry || typeof entry !== 'object') return null;
     const role = entry.role === 'user' ? 'user' : 'ai';
     const message = sanitizeMessage(entry.message);
-    if (!message && !entry.imageUrl) return null;
+    if (!message) return null;
     return {
         id: typeof entry.id === 'string' && entry.id ? entry.id : generateMessageId(),
         role,
         message,
-        type: entry.type || MESSAGE_TYPE.TEXT,
-        imageUrl: entry.imageUrl || null,
         timestamp: Number(entry.timestamp) || Date.now(),
         status: sanitizeStatus(entry.status),
         error: sanitizeMessage(entry.error)
@@ -410,13 +396,11 @@ function normalizeEntry(entry) {
 
 function createEntry(role, message, options = {}) {
     const text = sanitizeMessage(message);
-    if (!text && !options.imageUrl) return null;
+    if (!text) return null;
     return {
         id: options.id || generateMessageId(),
         role: role === 'user' ? 'user' : 'ai',
-        message: text || '',
-        type: options.type || MESSAGE_TYPE.TEXT,
-        imageUrl: options.imageUrl || null,
+        message: text,
         timestamp: options.timestamp ? Number(options.timestamp) || Date.now() : Date.now(),
         status: sanitizeStatus(options.status || MESSAGE_STATUS.DELIVERED),
         error: sanitizeMessage(options.error)
@@ -478,7 +462,7 @@ export async function updateConversationEntry(imagePath, entryId, patch = {}) {
         const nextEntry = { ...existing };
         if (Object.prototype.hasOwnProperty.call(patch, 'message')) {
             const nextMessage = sanitizeMessage(patch.message);
-            if (nextMessage || nextMessage === '') nextEntry.message = nextMessage;
+            if (nextMessage) nextEntry.message = nextMessage;
         }
         if (patch.status) {
             nextEntry.status = sanitizeStatus(patch.status);
@@ -488,12 +472,6 @@ export async function updateConversationEntry(imagePath, entryId, patch = {}) {
         }
         if (patch.timestamp) {
             nextEntry.timestamp = Number(patch.timestamp) || nextEntry.timestamp;
-        }
-        if (patch.type) {
-            nextEntry.type = patch.type;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, 'imageUrl')) {
-            nextEntry.imageUrl = patch.imageUrl || null;
         }
         history[index] = nextEntry;
         legacyStore[imagePath] = history;

@@ -116,12 +116,6 @@ const AI_QUEUE_TIMEOUT_MS = Number(process.env.AI_QUEUE_TIMEOUT_MS || 60000); //
 const AI_TASK_TIMEOUT_MS = Number(process.env.AI_TASK_TIMEOUT_MS || 120000); // AI任务超时
 const AI_MAX_CONCURRENT = Number(process.env.AI_MAX_CONCURRENT || process.env.AI_CONCURRENCY || 2); // AI最大并发数
 
-// --- AI图片生成配置 ---
-const AI_IMAGE_GEN_URL = process.env.AI_IMAGE_GEN_URL || ''; // AI图片生成API地址
-const AI_IMAGE_GEN_KEY = process.env.AI_IMAGE_GEN_KEY || ''; // AI图片生成API密钥
-const AI_IMAGE_GEN_MODEL = process.env.AI_IMAGE_GEN_MODEL || ''; // AI图片生成模型（默认留空）
-const AI_IMAGE_GEN_TIMEOUT_MS = Number(process.env.AI_IMAGE_GEN_TIMEOUT_MS || 180000); // AI图片生成超时(3分钟)
-
 // --- Worker配置 ---
 const WORKER_MEMORY_MB = Number(process.env.WORKER_MEMORY_MB || __rt.WORKER_MEMORY_MB || 256); // Worker内存限制（智能计算）
 const THUMB_INITIAL_WORKERS = Number(process.env.THUMB_INITIAL_WORKERS || 0); // 初始缩略图worker数量
@@ -210,10 +204,6 @@ module.exports = {
     AI_QUEUE_TIMEOUT_MS,
     AI_TASK_TIMEOUT_MS,
     AI_MAX_CONCURRENT,
-    AI_IMAGE_GEN_URL,
-    AI_IMAGE_GEN_KEY,
-    AI_IMAGE_GEN_MODEL,
-    AI_IMAGE_GEN_TIMEOUT_MS,
 
     // Worker配置
     WORKER_MEMORY_MB,

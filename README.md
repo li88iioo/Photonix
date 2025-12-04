@@ -75,9 +75,9 @@ cd Photonix
 项目提供了灵活的环境变量配置方案：
 
 #### 快速开始
-- **开发环境**：复制 `env.development` 为 `.env`，默认配置即可启动
-- **生产环境**：复制 `env.production` 为 `.env`，根据需要调整
-- 或使用最小模板：复制 `env.example` 为 `.env`（仅核心必配项，其余使用代码默认值）
+- **开发环境**：复制 `env.example/env.development` 为 `.env`，默认配置即可启动
+- **生产环境**：复制 `env.example/env.production` 为 `.env`，根据需要调整
+- 或使用最小模板：复制 `env.example/env.example` 为 `.env`（仅核心必配项，其余使用代码默认值）
 
 #### 快速生成 32+ 位强随机密钥并写入 .env
 
@@ -110,7 +110,7 @@ if (Test-Path .env) {
 ```
 
 #### 详细配置
-- 📖 **完整配置指南**：查看 [ENV_GUIDE.md](./env.example/ENV_GUIDE.md)（精注释版）与 [ENV_GUIDE_MIN.md](./env.example/ENV_GUIDE_MIN.md)（简版速查）
+- 📖 **完整配置指南**：查看 [ENV_GUIDE.md](./env.example/ENV_GUIDE.md)（精注释版）
 - 🔧 **核心配置**：`PORT`、`PHOTOS_DIR`、`DATA_DIR`、`JWT_SECRET`
 - ⚡ **性能优化**：硬件自适应配置，支持 `DETECTED_CPU_COUNT` 和 `DETECTED_MEMORY_GB`
 - 🔒 **安全设置**：生产环境务必修改 `JWT_SECRET` 和 `ADMIN_SECRET`
@@ -147,7 +147,7 @@ docker compose logs -f app
 - **Redis**：`localhost:6379`（可选）
 - **健康检查**：`http://localhost:12080/health`
 
-## 📁 项目架构
+
 ## 📁 项目架构
 
 ```
@@ -156,12 +156,12 @@ Photonix/
 ├── docker-compose.yml                   # 编排（app + redis），端口与卷映射
 ├── README.md                            # 项目说明
 ├── AIPROMPT.md                          # AI 提示词示例
-├── ENV_GUIDE.md                         # 环境变量详细指南
-├── ENV_GUIDE_MIN.md                     # 环境变量简明指南
 ├── .gitignore                           # 忽略配置
-├── env.development                      # 开发环境配置
-├── env.example                          # 配置模板
-└── env.production                       # 生产环境配置
+├── env.example/                         # 环境变量配置目录
+│   ├── env.development                  # 开发环境配置
+│   ├── env.example                      # 配置模板
+│   ├── env.production                   # 生产环境配置
+│   └── ENV_GUIDE.md                     # 环境变量详细指南
 ├── backend/
 │   ├── app.js                           # Express 应用：中间件、/api、静态资源与 SPA 路由
 │   ├── server.js                        # 启动流程：多库初始化、Workers、索引/监控、健康检查
@@ -205,21 +205,21 @@ Photonix/
 └── frontend/
     ├── index.html                        # 页面入口
     ├── manifest.json                     # PWA 清单
+    ├── sw-src.js                         # Service Worker 源文件
     ├── js/
     │   ├── api/                          # API 客户端层
-    │   │   ├── ai.js                     # AI 相关 API
-    │   │   ├── download.js               # 下载相关 API
-    │   │   └── ...
+    │   ├── app/                          # 应用核心
+    │   │   └── router.js                 # 路由管理
+    │   ├── core/                         # 核心基础模块
     │   ├── features/                     # 功能模块
     │   │   ├── download/                 # 下载中心前端逻辑
-    │   │   ├── gallery/                  # 画廊核心逻辑 (懒加载/瀑布流/手势)
+    │   │   ├── gallery/                  # 画廊核心逻辑
     │   │   ├── ai/                       # AI 对话逻辑
     │   │   └── history/                  # 历史记录服务
+    │   ├── modal/                        # 模态框组件
+    │   ├── settings/                     # 设置面板逻辑
     │   ├── shared/                       # 共享工具
-    │   │   ├── indexeddb-helper.js       # 前端存储实现 (History)
-    │   │   └── ...
-    │   ├── main.js                       # 启动流程
-    │   └── router.js                     # 路由管理
+    │   └── main.js                       # 启动流程
     └── assets/                           # 静态资源
 ```
 ## 🔧 配置说明
@@ -325,12 +325,11 @@ Photonix 提供完整的 RESTful API，支持前后端分离开发。
 
 ### 实时功能
 - **SSE 事件流** (`/api/events`)：实时推送处理状态和通知
-- **WebSocket 支持**：计划中的实时协作功能
 
 ### 开发文档
 完整的 API 文档和开发指南请参考项目源码中的路由文件：
 - 后端路由：`backend/routes/`
-- 前端 API 封装：`frontend/js/api.js`
+- 前端 API 封装：`frontend/js/api/`
 
 ## 🛠️ 本地开发
 
@@ -527,7 +526,7 @@ data: {"message":"SSE connection established.","clientId":"..."}
   - 建议统一 HTTPS，同源部署前后端，降低 CSP/COOP 噪音。
 - Redis 高可用
   - 生产建议使用外部 Redis（主从或哨兵/集群）。
-  - 仅需配置 `REDIS_URL`；express-rate-limit 使用 ioredis 客户端，BullMQ 使用独立连接（共享同一 Redis 服务）。
+  - 仅需配置 `REDIS_URL`；用于速率限制、AI 结果缓存等功能。
 - 资源与并发
   - `NUM_WORKERS` 控制缩略图并行度，内存紧张时适当下调。
   - 大相册首次索引耗时较长，建议在业务低峰进行全量重建。
@@ -572,7 +571,7 @@ Photonix 的核心特色功能，通过 AI 让照片中的人物"开口说话"�
 - **内存微服务**：轻量级并发处理，无需外部队列即可完成生成
 - **智能缓存**：Redis 缓存避免重复生成，降低 API 成本
 - **任务去重**：相同图片自动复用已有结果
-- **对话历史**：会话仅存浏览器，可导入导出，最大保留 12 条记录
+- **对话历史**：会话仅存浏览器 IndexedDB，可导入导出
 
 #### 使用方法
 1. **配置 AI 服务**：
@@ -589,7 +588,8 @@ Photonix 的核心特色功能，通过 AI 让照片中的人物"开口说话"�
    - 内置多种对话风格模板
    - 支持完全自定义提示词
    - 参考 `AIPROMPT.md` 获取更多示例
-- **历史管理**：设置面板可导出全部AI对（每个图片会话上限12条）话历史 JSON，或导入备份恢复。
+
+4. **历史管理**：设置面板可导出全部 AI 对话历史 JSON，或导入备份恢复。
 
 ### 运维面板与手动同步
 
@@ -604,7 +604,7 @@ Photonix 在前端设置的“运维”页整合了多项维护能力：
 > 所有手动/自动维护操作都会校验访问密码与管理员密钥，确保敏感操作留痕可控。
 
 #### 技术实现
-- **队列系统**：使用 Redis + BullMQ 处理并发任务
+- **队列系统**：内存微服务架构，支持 Redis 缓存加速
 - **缓存策略**：7天缓存期，智能过期管理
 - **错误处理**：自动重试机制，确保生成成功
 

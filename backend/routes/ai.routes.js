@@ -42,24 +42,5 @@ router.get('/job/:jobId', asyncHandler(aiController.getJobStatus));
 // AI微服务状态查询路由（新增）
 router.get('/status', asyncHandler(aiController.getMicroserviceStatus));
 
-// AI图片生成状态查询路由（检查功能是否可用）
-router.get('/image-gen-status', asyncHandler(aiController.getImageGenStatus));
-
-// AI图片生成路由（图生图）
-const imageGenSchema = Joi.object({
-  image_path: Joi.string().min(1).max(2048).custom((value, helpers) => {
-    if (value.includes('..')) return helpers.error('any.invalid');
-    return value;
-  }, 'path traversal guard').required(),
-  visionConfig: Joi.object({
-    url: Joi.string().uri({ allowRelative: false }).max(2048).required(),
-    key: Joi.string().min(1).max(4096).required(),
-    model: Joi.string().min(1).max(256).required()
-  }).required(),
-  userInstruction: Joi.string().max(500).optional().allow('') // 用户指令（可选）
-});
-
-router.post('/generate-image', rateLimiterMiddleware, aiRateGuard, validate(imageGenSchema), asyncHandler(aiController.generateImageFromChat));
-
 // 导出AI路由模块
 module.exports = router;

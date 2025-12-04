@@ -17,8 +17,7 @@ import {
     clearConversationHistory,
     buildConversationPrompt,
     updateConversationEntry,
-    MESSAGE_STATUS,
-    MESSAGE_TYPE
+    MESSAGE_STATUS
 } from '../features/ai/ai-conversation-store.js';
 
 
@@ -30,10 +29,6 @@ let chatUIInitialized = false;
 let chatStatusTimer = null;
 const AI_CLOSE_HINT_KEY = 'ai_close_hint_seen';
 let pendingMessageContext = null;
-
-// 视觉提取文生图功能状态（需后端配置 AI_IMAGE_GEN_URL 和 AI_IMAGE_GEN_KEY）
-let imageGenEnabled = false;
-let imageGenStatusChecked = false;
 
 /**
  * 获取本地存储中的 AI 配置
@@ -138,32 +133,6 @@ async function renderChatHistory() {
             const roleClass = entry.role === 'user' ? 'user' : 'ai';
             const failedClass = entry.role === 'user' && entry.status === MESSAGE_STATUS.FAILED ? ' failed' : '';
             const meta = renderMessageMeta(entry);
-
-            // 图片消息渲染
-            if (entry.type === MESSAGE_TYPE.IMAGE && entry.imageUrl) {
-                return `
-                    <div class="ai-chat-message ai-chat-message-${roleClass}">
-                        <img src="${escapeHtml(entry.imageUrl)}"
-                             alt="AI生成的图片"
-                             class="ai-chat-image"
-                             loading="lazy">
-                        ${entry.message ? `<div class="ai-chat-image-caption">${escapeHtml(entry.message)}</div>` : ''}
-                    </div>
-                `;
-            }
-
-            // Loading状态渲染
-            if (entry.type === MESSAGE_TYPE.LOADING) {
-                return `
-                    <div class="ai-chat-message ai-chat-message-${roleClass} ai-chat-loading">
-                        <div class="ai-chat-bubble">
-                            <span class="loading-dots">${escapeHtml(entry.message)}</span>
-                        </div>
-                    </div>
-                `;
-            }
-
-            // 普通文本消息渲染
             return `
                 <div class="ai-chat-message ai-chat-message-${roleClass}${failedClass}">
                     <div class="ai-chat-bubble">${escapeHtml(entry.message)}</div>
@@ -382,198 +351,6 @@ async function recordAIReply(imagePath, message) {
     }
 }
 
-/**
- * 检查后端是否启用了视觉提取文生图功能
- * 只在首次调用时查询，之后使用缓存结果
- */
-async function checkImageGenStatus() {
-    if (imageGenStatusChecked) return imageGenEnabled;
-
-    try {
-        const response = await fetch('/api/ai/image-gen-status', {
-            method: 'GET',
-            headers: getAuthHeaders()
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            imageGenEnabled = data.enabled === true;
-        } else {
-            imageGenEnabled = false;
-        }
-    } catch {
-        imageGenEnabled = false;
-    }
-
-    imageGenStatusChecked = true;
-    return imageGenEnabled;
-}
-
-// 图片请求关键词检测
-function detectImageRequest(message) {
-    // 如果后端未配置图片生成功能，直接返回 false（走普通聊天流程）
-    if (!imageGenEnabled) {
-        return false;
-    }
-
-    const imageKeywords = [
-        // 询问类
-        '看看你', '你在干嘛', '你在做什么', '在干嘛',
-        '看看你的', '你现在', '你的样子',
-
-        // 穿搭类
-        '穿搭', '衣服', '今天穿', '你的搭配', '裙子', '裤子',
-
-        // 拍照类
-        '自拍', '照片', '图片', '发张', '来张',
-
-        // 修改类（支持上下文对话）
-        '换一', '换个', '换成', '改成', '变成',
-
-        // 姿势类
-        '姿势', '站着', '坐着', '躺着', '回头',
-
-        // 表情类
-        '笑', '看镜头', '看远方', '严肃', '调皮', '开心',
-
-        // 场景类
-        '场景', '背景', '去海边', '在卧室', '在客厅', '户外',
-
-        // 视角类
-        '角度', '近一点', '远一点', '上半身', '全身'
-    ];
-    return imageKeywords.some(keyword => message.includes(keyword));
-}
-
-// 友好提醒消息库
-const FRIENDLY_REMINDERS = [
-    '我正在整理妆容，等一会哦～',
-    '让我找找最近的照片～',
-    '稍等，正在拍照～',
-    '等我换个角度拍给你看～',
-    '马上就好，别着急～',
-    '让我准备一下～',
-    '正在整理衣服呢～',
-    '等我换一下～',
-    '让我摆个pose～',
-    '稍等一下就好～'
-];
-
-function getRandomReminder() {
-    return FRIENDLY_REMINDERS[Math.floor(Math.random() * FRIENDLY_REMINDERS.length)];
-}
-
-async function requestImageGeneration(payload) {
-    const body = JSON.stringify(payload);
-    const makeRequest = () => fetch('/api/ai/generate-image', {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body
-    });
-
-    let response = await makeRequest();
-    if (response.status === 401) {
-        const refreshed = await refreshAuthToken();
-        if (refreshed) {
-            response = await makeRequest();
-        } else {
-            triggerAuthRequired();
-            const authError = new Error('登录状态已过期，请重新登录');
-            authError.code = 'UNAUTHORIZED';
-            throw authError;
-        }
-    }
-    return response;
-}
-
-// 处理图片生成请求
-async function handleImageGenerationRequest(userMessage, aiConfig) {
-    if (!activeChatImagePath) return;
-
-    // 1. 记录用户请求
-    await appendConversationEntry(activeChatImagePath, 'user', userMessage, {
-        status: MESSAGE_STATUS.DELIVERED
-    });
-
-    // 2. 显示友好提醒
-    const reminder = getRandomReminder();
-    const loadingEntry = await appendConversationEntry(activeChatImagePath, 'ai', reminder, {
-        type: MESSAGE_TYPE.LOADING
-    });
-    await renderChatHistory();
-
-    setChatSendingState(true);
-    setChatStatus('正在为你生成图片...', 'muted');
-    isProcessing = true;
-
-    try {
-        // 3. 调用图片生成API（包含用户指令）
-        const response = await requestImageGeneration({
-            image_path: activeChatImagePath,
-            visionConfig: {
-                url: aiConfig.AI_URL,
-                key: aiConfig.AI_KEY,
-                model: aiConfig.AI_MODEL
-            },
-            userInstruction: userMessage  // 传递用户的完整消息作为指令
-        });
-
-        if (!response.ok) {
-            let errorMessage = '图片生成失败';
-            try {
-                const errorData = await response.json();
-                errorMessage = errorData.message || errorMessage;
-            } catch { }
-            throw new Error(errorMessage);
-        }
-
-        const data = await response.json();
-
-        if (!data.success || !data.imageUrl) {
-            throw new Error('图片生成失败，未返回图片URL');
-        }
-
-        // 4. 将loading消息更新为图片消息（直接覆盖，不需要删除）
-        if (loadingEntry?.id) {
-            await updateConversationEntry(activeChatImagePath, loadingEntry.id, {
-                message: '给你看看～',
-                type: MESSAGE_TYPE.IMAGE,
-                imageUrl: data.imageUrl,
-                status: MESSAGE_STATUS.DELIVERED
-            });
-        } else {
-            // 如果没有loading消息ID，则添加新消息
-            await appendConversationEntry(activeChatImagePath, 'ai', '给你看看～', {
-                type: MESSAGE_TYPE.IMAGE,
-                imageUrl: data.imageUrl
-            });
-        }
-
-        await renderChatHistory();
-        setChatStatus('图片生成完成', 'success');
-    } catch (error) {
-        // 将loading消息更新为错误消息
-        if (loadingEntry?.id) {
-            await updateConversationEntry(activeChatImagePath, loadingEntry.id, {
-                message: `抱歉，${error.message}`,
-                type: MESSAGE_TYPE.TEXT,
-                status: MESSAGE_STATUS.DELIVERED
-            });
-        } else {
-            // 如果没有loading消息ID，则添加错误消息
-            await appendConversationEntry(activeChatImagePath, 'ai', `抱歉，${error.message}`, {
-                status: MESSAGE_STATUS.DELIVERED
-            });
-        }
-
-        await renderChatHistory();
-        setChatStatus(error.message, 'error');
-    } finally {
-        setChatSendingState(false);
-        isProcessing = false;
-    }
-}
-
 async function sendConversationMessage(userMessage, options = {}) {
     if (!activeChatImagePath) return;
     if (isProcessing) {
@@ -584,16 +361,6 @@ async function sendConversationMessage(userMessage, options = {}) {
     const aiConfig = validateAIConfig();
     if (!aiConfig) return;
 
-    // 检测是否为图片请求
-    const isImageRequest = detectImageRequest(userMessage);
-
-    if (isImageRequest) {
-        // 处理图片生成请求
-        await handleImageGenerationRequest(userMessage, aiConfig);
-        return;
-    }
-
-    // 普通聊天流程
     const contextLimit = AI_CHAT?.CONTEXT_MESSAGE_LIMIT || 20;
     const existingHistory = await getConversationHistory(activeChatImagePath, { limit: contextLimit });
     const prompt = buildConversationPrompt(aiConfig.AI_PROMPT, existingHistory, userMessage, {
@@ -1025,9 +792,5 @@ export function updateAIChatContext(imagePath, options = {}) {
     if (enabled) {
         renderChatHistory();
         setChatStatus('', 'muted');
-        // 在首次启用聊天时检查图片生成功能是否可用（异步，不阻塞）
-        if (!imageGenStatusChecked) {
-            checkImageGenStatus().catch(() => { });
-        }
     }
 }
