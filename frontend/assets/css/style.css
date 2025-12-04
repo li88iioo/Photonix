@@ -1298,6 +1298,71 @@ body {
     animation: rotateLoop 1.2s linear infinite;
 }
 
+/* === AI图片消息样式 === */
+.ai-chat-image {
+    max-width: 280px;
+    width: 100%;
+    border-radius: 12px;
+    object-fit: cover;
+    background: rgba(248, 250, 252, 0.05);
+    border: 1px solid rgba(248, 250, 252, 0.1);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    transition: transform 0.2s ease;
+    cursor: pointer;
+}
+
+.ai-chat-image:hover {
+    transform: scale(1.02);
+    border-color: rgba(248, 250, 252, 0.2);
+}
+
+.ai-chat-image-caption {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.7);
+    margin-top: 6px;
+    padding: 0 4px;
+}
+
+/* === Loading状态样式 === */
+.ai-chat-loading .ai-chat-bubble {
+    background: rgba(247, 247, 247, 0.1);
+    border: 1px solid rgba(248, 250, 252, 0.15);
+}
+
+.loading-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.loading-dots::after {
+    content: '...';
+    display: inline-block;
+    width: 20px;
+    text-align: left;
+    animation: loadingDots 1.4s infinite;
+}
+
+@keyframes loadingDots {
+    0%, 20% {
+        content: '.';
+    }
+    40% {
+        content: '..';
+    }
+    60%, 100% {
+        content: '...';
+    }
+}
+
+/* 移动端图片消息样式优化 */
+@media (max-width: 767.98px) {
+    .ai-chat-image {
+        max-width: 220px;
+    }
+}
+
 @keyframes rotateOnce {
     from {
         transform: rotate(0deg);
