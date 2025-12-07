@@ -58,13 +58,63 @@
 
 ## 🚀 快速开始
 
-本项目推荐使用 Docker 进行部署，这是最简单、最快捷的方式。
+本项目提供两种部署方式：
+- **🐳 方式一：使用预构建镜像**（推荐）- 无需构建，直接拉取运行
+- **🔧 方式二：本地构建** - 适合需要自定义修改的用户
 
 ### 1. 环境准备
 - [Docker](https://www.docker.com/get-started) 和 [Docker Compose](https://docs.docker.com/compose/install/)
 - 至少 2GB 可用内存
 
-### 2. 下载项目
+---
+
+### 🐳 方式一：使用预构建镜像（推荐）
+
+无需克隆代码，直接使用 GitHub Container Registry 预构建镜像部署。
+
+#### 1. 创建部署目录
+```bash
+mkdir -p ~/photonix && cd ~/photonix
+```
+
+#### 2. 下载 docker-compose.yml
+```bash
+# 下载配置文件
+curl -O https://raw.githubusercontent.com/li88iioo/Photonix/main/docker-compose.ghcr.yml
+mv docker-compose.ghcr.yml docker-compose.yml
+
+# 修改照片目录路径（将 /your/photos/path 替换为实际路径）
+sed -i 's|/your/photos/path|/opt/photos|g' docker-compose.yml
+```
+
+#### 3. 创建环境配置
+```bash
+# 下载配置模板
+curl -o .env https://raw.githubusercontent.com/li88iioo/Photonix/main/env.example/env.example
+
+# 生成随机密钥（推荐）
+sed -i "s/CHANGE_ME_TO_A_SECURE_32_PLUS_CHAR_STRING/$(openssl rand -base64 48 | tr -d '\n')/" .env
+sed -i "s/nameadmin/$(openssl rand -base64 36 | tr -d '\n')/" .env
+```
+
+#### 4. 启动服务
+```bash
+docker compose up -d
+```
+
+#### 5. 更新镜像
+```bash
+docker compose pull
+docker compose up -d
+```
+
+---
+
+### 🔧 方式二：本地构建
+
+适合需要自定义代码或使用国内镜像源加速构建的用户。
+
+#### 下载项目
 ```bash
 git clone https://github.com/li88iioo/Photonix.git
 cd Photonix

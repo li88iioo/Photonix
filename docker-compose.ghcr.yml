@@ -1,0 +1,58 @@
+# Docker Compose 配置 - 使用 GitHub Container Registry 预构建镜像
+# 使用方法: docker compose -f docker-compose.ghcr.yml up -d
+
+services:
+  app:
+    # 替换 your-username 为你的 GitHub 用户名或组织名
+    image: ghcr.io/li88iioo/photonix:latest
+    ports:
+      - "${APP_PORT:-12080}:13001"
+    volumes:
+      - /your/photos/path:/app/photos # 修改为你的照片目录
+      - ./data:/app/data
+    container_name: Photonix
+    env_file:
+      - ./.env
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "node", "-e", "require('http').get('http://localhost:13001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })" ]
+      interval: 20s
+      timeout: 15s
+      retries: 3
+      start_period: 120s
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - photonix-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+
+  redis:
+    image: redis:7-alpine
+    container_name: Photonix-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - photonix-network
+
+volumes:
+  redis_data:
+
+
+networks:
+  photonix-network:
+    driver: bridge

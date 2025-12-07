@@ -1,0 +1,59 @@
+# --- Stage 1: Build frontend static assets ---
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /app/frontend
+
+# Copy frontend package files and install dependencies
+COPY frontend/package*.json ./
+RUN npm ci || npm install
+
+# Copy frontend source and build
+COPY frontend/ .
+RUN npm run build
+
+
+# --- Stage 2: Build backend production dependencies ---
+FROM node:20-alpine AS backend-builder
+
+WORKDIR /app/backend
+
+# Install build dependencies for native modules
+RUN apk add --no-cache build-base python3 py3-setuptools vips-dev
+
+# Copy backend package files and install production dependencies
+COPY backend/package*.json ./
+RUN npm ci --omit=dev --build-from-source || npm install --omit=dev --build-from-source
+
+
+# --- Stage 3: Final production image (All-in-One) ---
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install pm2 and runtime dependencies
+RUN npm install -g pm2 && \
+    apk add --no-cache gosu ffmpeg vips dcron
+
+# Copy backend dependencies
+COPY --from=backend-builder /app/backend/node_modules ./backend/node_modules
+
+# Copy backend source
+COPY backend/ ./backend/
+
+# Copy frontend build artifacts to backend public directory
+COPY --from=frontend-builder /app/frontend/index.html ./backend/public/
+COPY --from=frontend-builder /app/frontend/manifest.json ./backend/public/
+COPY --from=frontend-builder /app/frontend/sw.js ./backend/public/
+COPY --from=frontend-builder /app/frontend/sw-cache-manager.js ./backend/public/
+
+COPY --from=frontend-builder /app/frontend/js/dist/ ./backend/public/js/dist/
+COPY --from=frontend-builder /app/frontend/assets/ ./backend/public/assets/
+
+# Copy and setup entrypoint script
+COPY backend/entrypoint.sh /usr/local/bin/
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && \
+    chmod +x /usr/local/bin/entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+# Expose application port
+EXPOSE 13001
