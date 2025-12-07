@@ -1,9 +1,5 @@
-# Docker Compose 配置 - 使用 GitHub Container Registry 预构建镜像
-# 使用方法: docker compose -f docker-compose.ghcr.yml up -d
-
 services:
   app:
-    # 替换 your-username 为你的 GitHub 用户名或组织名
     image: ghcr.io/li88iioo/photonix:latest
     ports:
       - "${APP_PORT:-12080}:13001"
