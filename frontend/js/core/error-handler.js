@@ -415,7 +415,7 @@ class ErrorHandler {
         // 这里不再重复显示通知，避免内网穿透环境的频繁误报
         if (!navigator.onLine) {
             // 静默记录，不显示通知
-            this.logger.debug('网络连接已断开', errorInfo);
+            errorLogger.debug('网络连接已断开', errorInfo);
         }
     }
 

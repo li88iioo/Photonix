@@ -187,4 +187,5 @@ module.exports = {
     getCachedQueryResult,
     invalidateQueryCache,
     generateQueryKey,
+    resolveRedisClient,
 };

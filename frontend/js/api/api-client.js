@@ -140,7 +140,7 @@ async function parseResponseError(response) {
             if (textResponse) {
                 message = `HTTP ${response.status}: ${textResponse.substring(0, 100)}`;
             }
-        } catch {}
+        } catch { }
     }
 
     // 根据状态码确定错误类型
@@ -216,8 +216,8 @@ async function executeWithRetry(url, options, policy = {}) {
                 if (response.status === 401 && attempt === 0) {
                     const refreshed = await tryRefreshToken();
                     if (refreshed) {
-                        // 刷新成功，重新尝试请求（更新认证头）
-                        const newOptions = {
+                        // 刷新成功，更新认证头并重新尝试请求
+                        options = {
                             ...options,
                             headers: {
                                 ...options.headers,

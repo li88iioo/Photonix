@@ -372,10 +372,6 @@ async function renderRecentHistory(path, signal) {
             prepareControl.cancelSkeleton();
         }
 
-        if (prepareControl?.cancelSkeleton) {
-            prepareControl.cancelSkeleton();
-        }
-
         if (!historyRecords.length) {
             routerLogger.info('当前目录无浏览历史，回退到实时内容', { path });
             await streamPath(path, signal);

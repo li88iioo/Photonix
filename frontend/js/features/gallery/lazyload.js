@@ -8,7 +8,7 @@ import { AbortBus } from '../../core/abort-bus.js';
 import { triggerMasonryUpdate } from './masonry.js';
 import { getAuthToken } from '../../app/auth.js';
 import { createModuleLogger } from '../../core/logger.js';
-import { safeSetInnerHTML} from '../../shared/dom-utils.js';
+import { safeSetInnerHTML } from '../../shared/dom-utils.js';
 
 const lazyloadLogger = createModuleLogger('Lazyload');
 
@@ -23,11 +23,11 @@ const lazyloadLogger = createModuleLogger('Lazyload');
 const requestQueueManager = {
     // ========== 1. 动态并发控制 ==========
     /** @type {number} 当前最大并发数 */
-    maxConcurrent: 10,
+    maxConcurrent: 16,  // 提高默认并发数（局域网可承受更多）
     /** @type {number} 最小并发数 */
-    minConcurrent: 4,
+    minConcurrent: 6,
     /** @type {number} 最大并发数上限 */
-    maxLimit: 20,
+    maxLimit: 30,  // 提高上限
     /** @type {number} 当前活跃的请求数 */
     activeRequests: 0,
 
@@ -204,9 +204,9 @@ const requestQueueManager = {
         if (this.loadedUrls.has(url)) {
             // 进一步检查图片是否真的已加载
             const isActuallyLoaded = img?.classList.contains('loaded') &&
-                                     img.src &&
-                                     !img.src.startsWith('data:') &&
-                                     img.src.startsWith('blob:');
+                img.src &&
+                !img.src.startsWith('data:') &&
+                img.src.startsWith('blob:');
             if (isActuallyLoaded) {
                 return; // 确认已加载，跳过
             } else {
@@ -428,13 +428,31 @@ const blobUrlManager = {
             this.activeBlobUrls.set(img, newBlobUrl);
             this.blobCreationTimes.set(img, Date.now());
 
-            // 设置图片 src 前监听错误事件
+            // 设置图片加载成功事件（确保 loaded 类被添加）
+            const loadHandler = () => {
+                // 只有非 processing 状态才添加 loaded 类
+                if (img.dataset.thumbStatus !== 'processing') {
+                    img.classList.add('loaded');
+                    img.classList.remove('processing', 'error');
+
+                    // 清理父元素的生成状态类
+                    const parent = img.closest('.photo-item, .album-card');
+                    if (parent) {
+                        parent.classList.remove('thumbnail-generating');
+                    }
+                }
+                img.removeEventListener('load', loadHandler);
+            };
+
+            // 设置图片加载错误事件
             const errorHandler = (e) => {
                 lazyloadLogger.warn('blob URL 加载失败，尝试清理', { newBlobUrl });
                 this.revokeBlobUrl(img);
                 img.removeEventListener('error', errorHandler);
+                img.removeEventListener('load', loadHandler);
             };
 
+            img.addEventListener('load', loadHandler, { once: true });
             img.addEventListener('error', errorHandler, { once: true });
             img.src = newBlobUrl;
 
@@ -789,19 +807,19 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
         const token = getAuthToken();
         const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
         const signal = AbortBus.get('thumb');
-        
+
         // 确保URL包含时间戳参数，避免缓存问题
-        const urlWithTimestamp = thumbnailUrl.includes('?') 
-            ? `${thumbnailUrl}&_t=${Date.now()}` 
+        const urlWithTimestamp = thumbnailUrl.includes('?')
+            ? `${thumbnailUrl}&_t=${Date.now()}`
             : `${thumbnailUrl}?_t=${Date.now()}`;
-        
-        const response = await fetch(urlWithTimestamp, { 
-            headers, 
+
+        const response = await fetch(urlWithTimestamp, {
+            headers,
             signal,
             cache: 'no-store',  // 强制不缓存
             credentials: 'same-origin'
         });
-        
+
         if (response.status === 200) {
             const imageBlob = await response.blob();
             img.dataset.thumbStatus = '';
@@ -811,7 +829,7 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
             blobUrlManager.setBlobUrl(img, imageBlob);
             return;
         }
-        
+
         if (response.status === 202) {
             const imageBlob = await response.blob();
             img.dataset.thumbStatus = 'processing';
@@ -862,7 +880,7 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
             }
             return;
         }
-        
+
         if (response.status === 429) {
             lazyloadLogger.debug('缩略图请求被频率限制，延迟重试', { thumbnailUrl });
             const delay = 1500 + Math.random() * 1500;
@@ -873,18 +891,18 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
             trackManagedTimer(retryTimeoutId);
             return;
         }
-        
+
         // 处理404错误：可能文件还在生成中，进行有限重试
         if (response.status === 404) {
             const retryAttempt = parseInt(img.dataset.retryAttempt || '0', 10);
             const max404Retries = 5; // 404最多重试5次
-            
+
             if (retryAttempt < max404Retries) {
                 const delay = 3000 * (retryAttempt + 1); // 3s, 6s, 9s, 12s, 15s
                 lazyloadLogger.debug(`缩略图未找到(404)，将在 ${delay}ms 后重试 (${retryAttempt + 1}/${max404Retries})`, { thumbnailUrl });
                 img.dataset.retryAttempt = String(retryAttempt + 1);
                 img.dataset.thumbStatus = 'processing'; // 标记为处理中，避免重复请求
-                
+
                 const retryTimeoutId = setTimeout(() => {
                     if (img.isConnected) {
                         requestLazyImage(img);
@@ -900,7 +918,7 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
                 return;
             }
         }
-        
+
         // 处理500错误
         if (response.status === 500) {
             const thumbStatus = response.headers.get('X-Thumbnail-Status') || response.headers.get('X-Thumb-Status');
@@ -913,16 +931,16 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
                 }
                 return;
             }
-            
+
             // 其他500错误，可能是临时故障，进行重试
             const retryAttempt = parseInt(img.dataset.retryAttempt || '0', 10);
             const max500Retries = 3;
-            
+
             if (retryAttempt < max500Retries) {
                 const delay = 2000 * (retryAttempt + 1); // 2s, 4s, 6s
                 lazyloadLogger.debug(`服务器错误(500)，将在 ${delay}ms 后重试 (${retryAttempt + 1}/${max500Retries})`, { thumbnailUrl });
                 img.dataset.retryAttempt = String(retryAttempt + 1);
-                
+
                 const retryTimeoutId = setTimeout(() => {
                     if (img.isConnected) {
                         requestLazyImage(img);
@@ -931,17 +949,17 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
                 trackManagedTimer(retryTimeoutId);
                 return;
             }
-            
+
             lazyloadLogger.error('服务器错误，已达最大重试次数', { thumbnailUrl });
             img.dataset.thumbStatus = 'failed';
             clearSlowRetrySchedule(img);
             delete img.dataset.retryAttempt;
             return;
         }
-        
+
         // 其他错误状态
         lazyloadLogger.warn(`缩略图请求返回异常状态: HTTP ${response.status}`, { thumbnailUrl });
-        
+
         // 对于其他错误，也进行有限重试
         const retryAttempt = parseInt(img.dataset.retryAttempt || '0', 10);
         if (retryAttempt < 2) {
@@ -955,19 +973,19 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
             trackManagedTimer(retryTimeoutId);
             return;
         }
-        
+
         throw new Error(`Server responded with status: ${response.status}`);
     } catch (error) {
         if (error.name !== 'AbortError') {
             lazyloadLogger.error('获取懒加载图片失败', { thumbnailUrl, error });
-            
+
             // 网络错误也进行重试
             const retryAttempt = parseInt(img.dataset.retryAttempt || '0', 10);
             if (retryAttempt < 2) {
                 const delay = 2000 * (retryAttempt + 1);
                 img.dataset.retryAttempt = String(retryAttempt + 1);
                 lazyloadLogger.debug(`网络错误，将在 ${delay}ms 后重试`, { thumbnailUrl });
-                
+
                 const retryTimeoutId = setTimeout(() => {
                     if (img.isConnected) {
                         requestLazyImage(img);
@@ -976,7 +994,7 @@ async function executeThumbnailRequest(img, thumbnailUrl) {
                 trackManagedTimer(retryTimeoutId);
                 return;
             }
-            
+
             img.dispatchEvent(new Event('error'));
         } else {
             clearSlowRetrySchedule(img);

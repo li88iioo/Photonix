@@ -308,10 +308,9 @@ async function prefetchNextPage(type) {
     const currentPage = type === 'browse' ? state.currentBrowsePage : state.currentSearchPage;
     const totalPages = type === 'browse' ? state.totalBrowsePages : state.totalSearchPages;
 
-    // 已到最后一页，无需预加载
-    if (currentPage > totalPages) return;
-
-    const nextPage = currentPage;
+    // 计算下一页，已到最后一页则无需预加载
+    const nextPage = currentPage + 1;
+    if (nextPage > totalPages) return;
     const cacheKey = type === 'browse'
         ? `${state.currentBrowsePath}_${nextPage}`
         : `${state.currentSearchQuery}_${nextPage}`;

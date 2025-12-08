@@ -64,6 +64,92 @@ if (enableMemoryMonitoring) {
 /** 批量补全频率限制Map */
 const batchThrottleMap = new Map();
 
+/** 
+ * 缩略图存在性缓存（Redis 优先 + 内存降级）
+ * 优先使用 Redis 存储，Redis 不可用时降级到内存缓存
+ * 大幅减少磁盘 I/O，提升响应速度
+ */
+const { resolveRedisClient } = require('../services/cache.service');
+const { safeRedisGet, safeRedisSet, safeRedisDel } = require('../utils/helpers');
+
+// 内存降级缓存（当 Redis 不可用时使用）
+const memoryFallbackCache = new Map();
+const THUMB_CACHE_TTL_SECONDS = 300; // 5分钟过期 (Redis 用秒)
+const THUMB_CACHE_TTL_MS = THUMB_CACHE_TTL_SECONDS * 1000; // 内存缓存用毫秒
+const MEMORY_CACHE_MAX_SIZE = 2000; // 内存降级时最大条目（比 Redis 小）
+const REDIS_THUMB_PREFIX = 'thumb_exists:';
+
+/**
+ * 检查缩略图是否存在（带缓存）
+ * @param {string} thumbAbsPath 缩略图绝对路径
+ * @returns {Promise<boolean>}
+ */
+async function checkThumbExists(thumbAbsPath) {
+    const cacheKey = REDIS_THUMB_PREFIX + thumbAbsPath;
+    const now = Date.now();
+    const redisClient = resolveRedisClient('缩略图缓存');
+
+    // 尝试从 Redis 读取
+    if (redisClient) {
+        try {
+            const cached = await safeRedisGet(redisClient, cacheKey, '缩略图缓存');
+            if (cached !== null) {
+                return cached === '1';
+            }
+        } catch {
+            // Redis 读取失败，继续检查文件
+        }
+    } else {
+        // Redis 不可用，检查内存缓存
+        const memCached = memoryFallbackCache.get(thumbAbsPath);
+        if (memCached && (now - memCached.time) < THUMB_CACHE_TTL_MS) {
+            return memCached.exists;
+        }
+    }
+
+    // 缓存未命中，检查文件系统
+    try {
+        await fs.access(thumbAbsPath);
+
+        // 存在，写入缓存
+        if (redisClient) {
+            await safeRedisSet(redisClient, cacheKey, '1', 'EX', THUMB_CACHE_TTL_SECONDS, '缩略图缓存');
+        } else {
+            // 内存降级
+            memoryFallbackCache.set(thumbAbsPath, { exists: true, time: now });
+            if (memoryFallbackCache.size > MEMORY_CACHE_MAX_SIZE) {
+                const keys = Array.from(memoryFallbackCache.keys()).slice(0, 500);
+                keys.forEach(k => memoryFallbackCache.delete(k));
+            }
+        }
+
+        return true;
+    } catch {
+        // 不存在，缓存较短时间（1分钟）
+        if (redisClient) {
+            await safeRedisSet(redisClient, cacheKey, '0', 'EX', 60, '缩略图缓存(不存在)');
+        } else {
+            memoryFallbackCache.set(thumbAbsPath, { exists: false, time: now - THUMB_CACHE_TTL_MS + 60000 });
+        }
+        return false;
+    }
+}
+
+/**
+ * 使缩略图缓存失效
+ * @param {string} thumbAbsPath 
+ */
+async function invalidateThumbCache(thumbAbsPath) {
+    const cacheKey = REDIS_THUMB_PREFIX + thumbAbsPath;
+    memoryFallbackCache.delete(thumbAbsPath);
+    const redisClient = resolveRedisClient('清除缩略图缓存');
+    if (redisClient) {
+        await safeRedisDel(redisClient, cacheKey, '清除缩略图缓存');
+    }
+}
+
+
+
 /**
  * 获取（按需生成）单个缩略图。
  * 增加频率限制，自动返回SVG占位/错误图。
@@ -84,8 +170,6 @@ async function getThumbnail(req, res) {
         }
 
         // 路径检查（防止路径遍历攻击）
-        // 注意：必须检查路径段是否为".."，而不是简单的includes('..')
-        // 因为文件名可能包含"..."（如"ご主人様...優しくしてください_"）
         const normalizedPath = path.normalize(relativePath).replace(/\\/g, '/');
         const pathSegments = normalizedPath.split('/').filter(Boolean);
         const hasPathTraversal = pathSegments.some(seg => seg === '..' || seg === '.');
@@ -93,6 +177,32 @@ async function getThumbnail(req, res) {
             return res.status(400).json({ error: '无效的文件路径' });
         }
 
+        // 根据文件类型确定缩略图路径
+        const isVideo = /\.(mp4|webm|mov)$/i.test(normalizedPath);
+        const extension = isVideo ? '.jpg' : '.webp';
+        const thumbRelPath = normalizedPath.replace(/\.[^.]+$/, extension);
+        const thumbAbsPath = path.join(THUMBS_DIR, thumbRelPath);
+
+        // ✅ 优化：先检查缩略图缓存，避免重复的磁盘 I/O
+        const thumbExists = await checkThumbExists(thumbAbsPath);
+
+        if (thumbExists) {
+            // 缩略图存在，直接发送（跳过源文件检查和 ensureThumbnailExists）
+            try {
+                res.set({
+                    'Cache-Control': 'public, max-age=2592000', // 30天
+                    'Content-Type': isVideo ? 'image/jpeg' : 'image/webp'
+                });
+                return res.sendFile(thumbAbsPath);
+            } catch (error) {
+                // 发送失败，可能是文件被删除，清除缓存后重试
+                await invalidateThumbCache(thumbAbsPath);
+                logger.error(`发送缩略图文件失败: ${thumbAbsPath}`, error);
+                return res.status(500).json({ error: '缩略图文件读取失败' });
+            }
+        }
+
+        // 缩略图不存在，需要验证源文件并可能生成
         const sourceAbsPath = path.join(PHOTOS_DIR, normalizedPath);
 
         // 验证源文件是否存在
@@ -107,41 +217,13 @@ async function getThumbnail(req, res) {
         // 按需生成缩略图
         const result = await ensureThumbnailExists(sourceAbsPath, normalizedPath);
 
-        // 根据文件类型确定缩略图路径
-        const isVideo = /\.(mp4|webm|mov)$/i.test(normalizedPath);
-        const extension = isVideo ? '.jpg' : '.webp';
-        const thumbRelPath = normalizedPath.replace(/\.[^.]+$/, extension);
-        const thumbAbsPath = path.join(THUMBS_DIR, thumbRelPath);
-
         if (result.status === 'exists') {
-            // 双重验证：确保文件真实存在（防止竞态条件）
-            try {
-                await fs.access(thumbAbsPath);
-            } catch (accessError) {
-                // 文件实际不存在，可能是刚生成但检查有延迟，再次检查一次
-                logger.debug(`${LOG_PREFIXES.THUMB_REQUEST || '[缩略图请求]'} 缩略图文件不存在，重新验证: ${thumbAbsPath}`);
-                // 短暂延迟后再次检查（给文件系统时间同步）
-                await new Promise(resolve => setTimeout(resolve, 100));
-                try {
-                    await fs.access(thumbAbsPath);
-                } catch (secondAccessError) {
-                    // 仍然不存在，返回processing状态，让前端重试
-                    logger.debug(`${LOG_PREFIXES.THUMB_REQUEST || '[缩略图请求]'} 缩略图文件仍不存在，返回processing状态`);
-                    const loadingSvg = generateLoadingSvg();
-                    res.set({
-                        'Content-Type': 'image/svg+xml',
-                        'Cache-Control': 'no-cache, no-store, must-revalidate',
-                        'X-Thumbnail-Status': 'processing',
-                        'X-Thumb-Status': 'processing'
-                    });
-                    return res.status(202).send(loadingSvg);
-                }
-            }
+            // 文件刚生成，更新缓存
+            thumbExistsCache.set(thumbAbsPath, { exists: true, time: Date.now() });
 
-            // 文件确认存在，直接返回
             try {
                 res.set({
-                    'Cache-Control': 'public, max-age=2592000', // 30天
+                    'Cache-Control': 'public, max-age=2592000',
                     'Content-Type': isVideo ? 'image/jpeg' : 'image/webp'
                 });
                 return res.sendFile(thumbAbsPath);
@@ -156,7 +238,7 @@ async function getThumbnail(req, res) {
                 'Content-Type': 'image/svg+xml',
                 'Cache-Control': 'no-cache, no-store, must-revalidate',
                 'X-Thumbnail-Status': 'processing',
-                'X-Thumb-Status': 'processing'  // 兼容旧的响应头
+                'X-Thumb-Status': 'processing'
             });
             return res.status(202).send(loadingSvg);
         } else {
@@ -166,7 +248,7 @@ async function getThumbnail(req, res) {
                 'Content-Type': 'image/svg+xml',
                 'Cache-Control': 'public, max-age=300',
                 'X-Thumbnail-Status': 'failed',
-                'X-Thumb-Status': 'failed'  // 兼容旧的响应头
+                'X-Thumb-Status': 'failed'
             });
             return res.status(404).send(errorSvg);
         }
@@ -180,6 +262,7 @@ async function getThumbnail(req, res) {
         return res.status(500).send(errorSvg);
     }
 }
+
 
 /**
  * 批量补全缺失的缩略图（用于设置页发起补全）。
