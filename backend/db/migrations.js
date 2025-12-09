@@ -170,6 +170,15 @@ const initializeMainDB = async () => {
             {
                 key: 'create_idx_items_count_optimization',
                 sql: `CREATE INDEX IF NOT EXISTS idx_items_count_optimization ON items(type, status, mtime)`
+            },
+            {
+                key: 'add_is_leaf_column',
+                sql: `ALTER TABLE items ADD COLUMN is_leaf INTEGER DEFAULT 1`,
+                check: async () => !(await hasColumn('main', 'items', 'is_leaf'))
+            },
+            {
+                key: 'create_idx_items_is_leaf',
+                sql: `CREATE INDEX IF NOT EXISTS idx_items_is_leaf ON items(type, is_leaf) WHERE type = 'album'`
             }
         ];
 
@@ -310,7 +319,7 @@ module.exports = {
     ensureCoreTables: async () => {
         try {
             // 主表兜底创建（幂等）
-            await runAsync('main', `CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE, type TEXT NOT NULL, cover_path TEXT, last_viewed_at DATETIME, mtime INTEGER, width INTEGER, height INTEGER, status TEXT DEFAULT 'active' NOT NULL, processing_state TEXT DEFAULT 'completed' NOT NULL)`);
+            await runAsync('main', `CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE, type TEXT NOT NULL, cover_path TEXT, last_viewed_at DATETIME, mtime INTEGER, width INTEGER, height INTEGER, status TEXT DEFAULT 'active' NOT NULL, processing_state TEXT DEFAULT 'completed' NOT NULL, is_leaf INTEGER DEFAULT 1)`);
             await runAsync('main', `CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(name, content='items', content_rowid='id', tokenize = "unicode61")`);
             await runAsync('main', `CREATE TABLE IF NOT EXISTS album_covers (
                 album_path TEXT PRIMARY KEY,

@@ -155,32 +155,51 @@ async function findCoverPhotosBatchDb(relativeDirs) {
             logger.debug('从 album_covers 表批量读取失败，将回退逐相册计算: ' + (e && e.message));
         }
 
-        // 对仍未命中的相册，回退为逐相册计算（仅个别漏网）
+        // 对仍未命中的相册，使用批量查询代替逐个 LIKE 查询（性能优化）
         const stillMissing = missing.filter(rel => !coversMap.has(path.join(PHOTOS_DIR, rel)));
-        const coverExcludePermanent = `NOT EXISTS (SELECT 1 FROM thumb_status ts WHERE ts.path = i.path AND ts.status = 'permanent_failed')`;
-        for (const rel of stillMissing) {
+
+        if (stillMissing.length > 0) {
             try {
-                const likeParam = rel ? `${rel}/%` : '%';
-                const rows = await dbAll('main',
-                    `SELECT i.path, i.width, i.height, i.mtime
-                     FROM items i
-                     WHERE i.type IN ('photo','video')
-                       AND i.path LIKE ?
-                       AND ${coverExcludePermanent}
-                     ORDER BY i.mtime DESC
-                     LIMIT 1`,
-                    [likeParam]
-                );
-                if (rows && rows.length) {
-                    const r = rows[0];
-                    const absAlbumPath = path.join(PHOTOS_DIR, rel);
-                    const abs = path.join(PHOTOS_DIR, r.path);
-                    const info = { path: abs, width: r.width || 1, height: r.height || 1, mtime: r.mtime || Date.now() };
-                    coversMap.set(absAlbumPath, info);
-                    await safeRedisSet(redis, `cover_info:/${rel}`, JSON.stringify(info), 'EX', CACHE_DURATION, '封面信息缓存');
+                // 使用 Window Function 一次性获取所有相册的最新封面
+                // 通过 SUBSTR + INSTR 提取每个媒体所属的直接父相册路径
+                const coverExcludePermanent = `NOT EXISTS (SELECT 1 FROM thumb_status ts WHERE ts.path = i.path AND ts.status = 'permanent_failed')`;
+
+                // 构建批量查询：为每个相册找到其下最新的媒体文件
+                const BATCH_SIZE = 50;
+                for (let batchStart = 0; batchStart < stillMissing.length; batchStart += BATCH_SIZE) {
+                    const batchRels = stillMissing.slice(batchStart, batchStart + BATCH_SIZE);
+
+                    // 使用 UNION ALL 合并每个相册的查询（子查询需括号包裹）
+                    const unionParts = batchRels.map((rel, idx) => {
+                        const likeParam = rel ? `${rel}/%` : '%';
+                        return `(
+                            SELECT '${rel.replace(/'/g, "''")}' AS album_rel, path, width, height, mtime
+                            FROM items
+                            WHERE type IN ('photo','video')
+                              AND path LIKE '${likeParam.replace(/'/g, "''")}'
+                              AND ${coverExcludePermanent}
+                            ORDER BY mtime DESC
+                            LIMIT 1
+                        )`;
+                    });
+
+                    const batchSql = unionParts.join(' UNION ALL ');
+                    const rows = await dbAll('main', batchSql, []);
+
+                    // 处理结果并缓存
+                    for (const r of rows || []) {
+                        if (!r || !r.path) continue;
+                        const rel = r.album_rel;
+                        const absAlbumPath = path.join(PHOTOS_DIR, rel);
+                        const abs = path.join(PHOTOS_DIR, r.path);
+                        const info = { path: abs, width: r.width || 1, height: r.height || 1, mtime: r.mtime || Date.now() };
+                        coversMap.set(absAlbumPath, info);
+                        // 异步缓存，不阻塞主流程
+                        safeRedisSet(redis, `cover_info:/${rel}`, JSON.stringify(info), 'EX', CACHE_DURATION, '封面信息缓存').catch(() => { });
+                    }
                 }
             } catch (err) {
-                logger.debug('DB 封面逐条查询失败:', rel, err && err.message);
+                logger.debug('批量封面查询失败，跳过: ' + (err && err.message));
             }
         }
     }

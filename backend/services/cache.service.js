@@ -62,9 +62,7 @@ async function invalidateTags(tags) {
         await pipeline.exec();
 
         if ((keysToDelete.length || 0) > 0) {
-            logger.debug(`[Cache] 已根据 ${tagKeys.length} 个标签，失效 ${keysToDelete.length} 个缓存键。`);
-        } else {
-            logger.debug(`[Cache] 根据 ${tagKeys.length} 个标签，无可失效的缓存键。`);
+            // logger.debug(`[Cache] 已根据 ${tagKeys.length} 个标签，失效 ${keysToDelete.length} 个缓存键。`);
         }
 
     } catch (error) {

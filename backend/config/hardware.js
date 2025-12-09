@@ -178,9 +178,10 @@ function detectHardwareConfig() {
   cpuCount = Math.max(1, cpuCount);
   totalMemoryGB = Math.max(1, totalMemoryGB);
 
-  //（只在主线程输出硬件检测日志，避免 Worker 线程重复输出）
+  //（只在主线程首次输出硬件检测日志，避免 Worker 线程和多次调用重复输出）
   const { isMainThread } = require('worker_threads');
-  if (isMainThread) {
+  if (isMainThread && !cachedHardwareConfig) {
+    // 只在缓存未设置时（首次调用）输出日志
     logger.debug(
       formatLog(
         LOG_PREFIXES.HARDWARE,

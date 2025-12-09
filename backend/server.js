@@ -313,16 +313,16 @@ async function handleDatabaseMigration() {
     try {
         await fs.access(DB_FILE);
         oldDbExists = true;
-    } catch (e) {
-        logger.debug('旧数据库文件不存在（正常）:', e && e.message);
+    } catch {
+        // 旧数据库不存在是正常情况
     }
 
     let newDbExists = false;
     try {
         await fs.access(SETTINGS_DB_FILE);
         newDbExists = true;
-    } catch (e) {
-        logger.debug('新数据库文件不存在（正常）:', e && e.message);
+    } catch {
+        // 新数据库不存在是正常情况（首次启动）
     }
 
     let isMigrationNeeded = false;

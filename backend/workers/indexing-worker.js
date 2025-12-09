@@ -380,14 +380,55 @@ const dbTimeoutManager = new DbTimeoutManager();
 
             const dtCovers = ((Date.now() - t0) / 1000).toFixed(1);
             if (coversUpsertOk) {
-                logger.info(`[INDEXING-WORKER] album_covers 重建完成，用时 ${dtCovers}s，生成 ${coverMap.size} 条。`);
+                logger.debug(`[INDEXING-WORKER] album_covers 重建完成，用时 ${dtCovers}s，生成 ${coverMap.size} 条。`);
             } else {
                 logger.debug('[INDEXING-WORKER] album_covers 重建未完成，已记录失败并回滚');
             }
 
-
         } catch (e) {
             logger.error('[INDEXING-WORKER] 重建 album_covers 失败:', e);
+        }
+    }
+
+    /**
+     * 更新 is_leaf 标志：批量计算哪些相册是叶子相册（不包含子相册）
+     * 思路：
+     * 1. 先将所有 album 类型设为 is_leaf=1
+     * 2. 标记有直接子相册的父相册为 is_leaf=0
+     */
+    async function updateIsLeafFlags() {
+        const t0 = Date.now();
+        try {
+            // 步骤1：将所有相册设为叶子（默认值）
+            await dbRun('main', `UPDATE items SET is_leaf = 1 WHERE type = 'album'`);
+
+            // 步骤2：找出有直接子相册的父相册，标记为非叶子
+            // 使用子查询：如果存在一个相册的 path 是当前相册 path 的直接子路径（只多一层）
+            await dbRun('main', `
+                UPDATE items SET is_leaf = 0
+                WHERE type = 'album' AND path IN (
+                    SELECT DISTINCT parent.path
+                    FROM items parent
+                    JOIN items child ON child.type = 'album'
+                        AND child.path LIKE parent.path || '/%'
+                        AND instr(substr(child.path, length(parent.path) + 2), '/') = 0
+                    WHERE parent.type = 'album'
+                )
+            `);
+
+            const dt = ((Date.now() - t0) / 1000).toFixed(2);
+
+            // 统计结果
+            const leafCount = await dbGet('main', `SELECT COUNT(*) as count FROM items WHERE type='album' AND is_leaf=1`);
+            const parentCount = await dbGet('main', `SELECT COUNT(*) as count FROM items WHERE type='album' AND is_leaf=0`);
+
+            // 只在有相册时输出日志
+            const total = (leafCount?.count || 0) + (parentCount?.count || 0);
+            if (total > 0) {
+                logger.debug(`[INDEXING-WORKER] is_leaf 标志更新完成，用时 ${dt}s，叶子相册: ${leafCount?.count || 0}，父相册: ${parentCount?.count || 0}`);
+            }
+        } catch (e) {
+            logger.error('[INDEXING-WORKER] 更新 is_leaf 标志失败:', e);
         }
     }
 
@@ -684,6 +725,8 @@ const dbTimeoutManager = new DbTimeoutManager();
 
                 // 重建完成后，顺带重建一次 album_covers（确保首次体验不卡）
                 await rebuildAlbumCoversFromItems();
+                // 更新 is_leaf 标志，标记叶子相册
+                await updateIsLeafFlags();
                 parentPort.postMessage(createWorkerResult({
                     type: 'rebuild_complete',
                     count,
@@ -721,9 +764,14 @@ const dbTimeoutManager = new DbTimeoutManager();
                 }
 
                 // 3) 写入/更新 FTS 令牌（OR REPLACE）
-                const baseText = item.path.replace(/\.[^.]+$/, '').replace(/[\/\\]/g, ' ');
-                const typeLabel = item.type === 'video' ? ' video' : ' photo';
-                const searchableText = baseText + typeLabel;
+                // 移除扩展名，保持路径名搜索
+                const baseText = item.path.replace(/\.[^.]+$/, '').replace(/[\\/]/g, ' ');
+                // 只为视频添加扩展名标签，支持按 mp4/mov/webm 等搜索视频
+                let searchableText = baseText;
+                if (item.type === 'video') {
+                    const ext = (item.path.match(/\.([^.]+)$/i) || [])[1] || '';
+                    if (ext) searchableText += ` ${ext.toLowerCase()}`;
+                }
                 const tokenizedName = createNgrams(searchableText, 1, 2);
                 ftsStmt.run(rowId, tokenizedName);
 
@@ -906,6 +954,11 @@ const dbTimeoutManager = new DbTimeoutManager();
 
                 if (tagsToInvalidate.size > 0) {
                     await invalidateTags(Array.from(tagsToInvalidate));
+                }
+
+                // 增量索引后更新 is_leaf 标志（确保父/子相册关系正确）
+                if (affectedAlbums.size > 0) {
+                    await updateIsLeafFlags();
                 }
 
                 logger.info('[INDEXING-WORKER] 索引增量更新完成。');
@@ -1108,8 +1161,9 @@ const dbTimeoutManager = new DbTimeoutManager();
             const count = await getCount('album_covers');
             if (count === 0) {
                 // 非阻塞后台构建，避免影响主索引任务
-                setTimeout(() => {
-                    rebuildAlbumCoversFromItems().catch(() => { });
+                setTimeout(async () => {
+                    await rebuildAlbumCoversFromItems().catch(() => { });
+                    await updateIsLeafFlags().catch(() => { });
                 }, 1000);
             }
         } catch (e) {

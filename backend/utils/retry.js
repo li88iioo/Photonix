@@ -171,7 +171,7 @@ class RetryManager {
         try {
             const errorKey = `error_retry:${context}`;
             await safeRedisDel(redis, errorKey, '重置重试计数');
-            logger.debug(`[RetryManager] 已重置重试计数: ${context}`);
+            // logger.debug(`[RetryManager] 已重置重试计数: ${context}`);
             return true;
         } catch (error) {
             logger.error(`[RetryManager] 重置重试计数失败: ${error.message}`);
@@ -292,7 +292,7 @@ class RetryManager {
             // 仅在首次失败时设置 TTL，避免持续失败导致 TTL 被不断刷新
             // 注意：INCR + EXPIRE 不是原子操作，但对于重试计数场景可以接受
             if (retryCount === 1) {
-                await redis.expire(errorKey, 86400).catch(() => {}); // 24小时 = 86400秒
+                await redis.expire(errorKey, 86400).catch(() => { }); // 24小时 = 86400秒
             }
 
             if (retryCount <= maxRetries) {

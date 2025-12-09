@@ -218,8 +218,14 @@ async function getThumbnail(req, res) {
         const result = await ensureThumbnailExists(sourceAbsPath, normalizedPath);
 
         if (result.status === 'exists') {
-            // 文件刚生成，更新缓存
-            thumbExistsCache.set(thumbAbsPath, { exists: true, time: Date.now() });
+            // 文件刚生成，更新缓存（使用正确的缓存键和机制）
+            const cacheKey = REDIS_THUMB_PREFIX + thumbAbsPath;
+            const redisClient = resolveRedisClient('缩略图缓存');
+            if (redisClient) {
+                await safeRedisSet(redisClient, cacheKey, '1', 'EX', THUMB_CACHE_TTL_SECONDS, '缩略图缓存');
+            } else {
+                memoryFallbackCache.set(thumbAbsPath, { exists: true, time: Date.now() });
+            }
 
             try {
                 res.set({

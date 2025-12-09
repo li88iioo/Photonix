@@ -217,7 +217,7 @@ async function executeIdleJob(jobName, fn, opts) {
         }
 
         try {
-            logger.info(`[Orchestrator] 正在执行任务 "${jobName}"`);
+            logger.debug(`[Orchestrator] 正在执行任务 "${jobName}"`);
             await fn();
             return;
         } catch (error) {

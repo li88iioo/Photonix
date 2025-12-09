@@ -50,7 +50,7 @@ function applyPragmas(db, label) {
         db.pragma('foreign_keys = ON');
         db.pragma(`busy_timeout = ${DEFAULT_BUSY_TIMEOUT_MS}`);
         db.pragma('optimize');
-        logger.debug(`[SQLite] ${label} PRAGMA 初始化完成`);
+        // logger.debug(`[SQLite] ${label} PRAGMA 初始化完成`);
     } catch (error) {
         logger.debug(`[SQLite] ${label} PRAGMA 设置失败（忽略）: ${error.message}`);
     }

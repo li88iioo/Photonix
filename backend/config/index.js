@@ -18,7 +18,7 @@ const LOG_LEVEL = process.env.LOG_LEVEL || 'info';      // 日志级别
 const API_BASE = process.env.API_BASE || '';            // API基础URL（为空时使用相对路径）
 
 // --- 目录配置 ---
- // 目录解析：优先 env；否则若容器默认目录存在则用之；否则回退到项目内目录
+// 目录解析：优先 env；否则若容器默认目录存在则用之；否则回退到项目内目录
 function resolveDir(envKey, dockerDefault, projectFallback) {
     const envVal = process.env[envKey];
     if (envVal && envVal.trim() !== '') return envVal;
@@ -55,7 +55,7 @@ const ENABLE_AUTH_DEBUG_LOGS = (process.env.AUTH_DEBUG_LOGS || '').toLowerCase()
 // 只在主线程输出配置日志，避免Worker线程重复输出
 const { isMainThread } = require('worker_threads');
 if (isMainThread) {
-    logger.debug(formatLog(LOG_PREFIXES.CONFIG, `最终硬件配置: CPU=${cpuCount}核, 内存=${totalMemoryGB}GB, 工作线程=${NUM_WORKERS}, Worker内存=${__rt.WORKER_MEMORY_MB}MB`));
+    logger.info(formatLog(LOG_PREFIXES.CONFIG, `最终硬件配置: CPU=${cpuCount}核, 内存=${totalMemoryGB}GB, 工作线程=${NUM_WORKERS}, Worker内存=${__rt.WORKER_MEMORY_MB}MB`));
 }
 
 // --- 缩略图配置 ---

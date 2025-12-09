@@ -44,21 +44,15 @@ async function performSearch(query, page, limit) {
         return { query, results: [], page: 1, totalPages: 1, totalResults: 0, limit };
     }
 
+    // 使用预计算字段优化搜索性能
     let whereCondition = 'items_fts.name MATCH ?';
     const queryParams = [ftsQuery];
-    const leafAlbumPredicate = `(
-        i.type = 'video'
-        OR (
-            i.type = 'album'
-            AND NOT EXISTS (
-                SELECT 1 FROM items child
-                WHERE child.type = 'album'
-                  AND child.path LIKE i.path || '/%'
-            )
-        )
-    )`;
 
-    whereCondition += ` AND ${leafAlbumPredicate}`;
+    // 使用预计算的 is_leaf 字段过滤叶子相册（性能优化：避免嵌套 LIKE 子查询）
+    // is_leaf=1 表示叶子相册（不包含子相册），is_leaf=0 表示父相册
+    const typeFilter = `(i.type = 'video' OR (i.type = 'album' AND i.is_leaf = 1))`;
+    whereCondition += ` AND ${typeFilter}`;
+
     const excludePermanentFailed = `NOT EXISTS (SELECT 1 FROM thumb_status ts WHERE ts.path = i.path AND ts.status = 'permanent_failed')`;
     whereCondition += ` AND ${excludePermanentFailed}`;
 

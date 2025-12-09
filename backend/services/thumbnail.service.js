@@ -526,9 +526,7 @@ async function processWorkerSuccess(task, skipped) {
         const thumbAbsPath = path.join(THUMBS_DIR, thumbRelPath);
         const thumbMtime = await fs.stat(thumbAbsPath).then((s) => s.mtimeMs).catch(() => Date.now());
         await queueThumbStatusUpdate(task.relativePath, thumbMtime, 'exists');
-        if (!skipped) {
-            logger.debug(`[THUMB] 更新缩略图状态: ${task.relativePath}, mtime: ${thumbMtime}`);
-        }
+        // if (!skipped) { logger.debug(`[THUMB] 更新缩略图状态: ${task.relativePath}, mtime: ${thumbMtime}`); }
     } catch (dbErr) {
         logger.debug(`写入缩略图状态队列失败（成功分支，已忽略）：${dbErr && dbErr.message}`);
     }
