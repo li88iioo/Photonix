@@ -179,6 +179,12 @@ const initializeMainDB = async () => {
             {
                 key: 'create_idx_items_is_leaf',
                 sql: `CREATE INDEX IF NOT EXISTS idx_items_is_leaf ON items(type, is_leaf) WHERE type = 'album'`
+            },
+            // HLS 状态持久化：避免运行时检查文件系统
+            {
+                key: 'add_hls_ready_column',
+                sql: `ALTER TABLE items ADD COLUMN hls_ready INTEGER DEFAULT 0`,
+                check: async () => !(await hasColumn('main', 'items', 'hls_ready'))
             }
         ];
 

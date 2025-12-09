@@ -661,6 +661,14 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
             if (result.success) {
                 logger.info(`成功处理视频: ${filePath}`);
                 failureCounts.delete(filePath);
+
+                // 更新 items.hls_ready = 1，使后续查询无需检查文件系统
+                try {
+                    await runAsync('main', `UPDATE items SET hls_ready = 1 WHERE path = ?`, [relativePath]);
+                } catch (dbErr) {
+                    logger.debug(`更新 hls_ready 失败（已忽略）: ${dbErr && dbErr.message}`);
+                }
+
                 parentPort.postMessage(createWorkerResult({
                     type: 'video_task_complete',
                     ...result,

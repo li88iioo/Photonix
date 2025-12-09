@@ -505,16 +505,18 @@ async function getHlsFileStats() {
       logger.debug(`${LOG_PREFIXES.SYSTEM_MAINTENANCE} 统计 HLS 失败记录时读取 Redis 失败（忽略）:`, redisErr && redisErr.message);
     }
 
-    const skipped = Math.max(0, totalVideos - processed - failed);
+    // pending = 未处理的视频（不包括路径验证失败的 skip）
+    const pending = Math.max(0, totalVideos - processed - failed - skip);
     return {
       total: totalVideos,
       processed,
       failed,
-      skipped,
-      totalProcessed: processed + failed + skipped
+      skipped: skip,  // 真正跳过的（路径验证失败）
+      pending,        // 待处理的
+      totalProcessed: processed + failed  // 只计算真正处理过的
     };
   } catch (error) {
-    return { total: 0, processed: 0, failed: 0, skipped: 0, totalProcessed: 0 };
+    return { total: 0, processed: 0, failed: 0, skipped: 0, pending: 0, totalProcessed: 0 };
   }
 }
 
@@ -532,17 +534,18 @@ async function getHlsStatus() {
     const processedVideos = hlsStats.processed || 0;
     const failedVideos = hlsStats.failed || 0;
     const skippedVideos = hlsStats.skipped || 0;
+    const pendingVideos = hlsStats.pending || 0;
     const totalProcessed = hlsStats.totalProcessed || 0;
 
     // 根据处理情况确定状态
     let status = 'unknown';
     if (totalVideos === 0) {
       status = 'no-videos';
-    } else if (totalProcessed === 0) {
+    } else if (totalProcessed === 0 && pendingVideos > 0) {
       status = 'pending';
-    } else if (totalProcessed < totalVideos) {
+    } else if (pendingVideos > 0) {
       status = 'processing';
-    } else if (totalProcessed === totalVideos) {
+    } else if (totalProcessed >= totalVideos - skippedVideos) {
       status = 'complete';
     }
 
@@ -553,6 +556,7 @@ async function getHlsStatus() {
       processedVideos,
       failedVideos,
       skippedVideos,
+      pendingVideos,  // 新增：待处理的视频数
       totalProcessed,
       lastSync: new Date().toISOString()
     };
@@ -565,6 +569,7 @@ async function getHlsStatus() {
       processedVideos: 0,
       failedVideos: 0,
       skippedVideos: 0,
+      pendingVideos: 0,
       totalProcessed: 0,
       error: error.message
     };

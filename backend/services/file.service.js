@@ -30,8 +30,50 @@ const { getVideoDimensions } = require('../utils/media.utils.js');
 const CACHE_DURATION = Number(process.env.FILE_CACHE_DURATION || 604800); // 7天缓存
 // 外部化缓存：移除进程内大 LRU，统一使用 Redis 作为封面缓存后端
 
+// ====== 目录存在性内存缓存（优化 validateDirectory 性能） ======
+const dirExistsCache = new Map();
+const DIR_CACHE_TTL_MS = Number(process.env.DIR_CACHE_TTL_MS || 60000);  // 60秒
+const DIR_CACHE_MAX_SIZE = Number(process.env.DIR_CACHE_MAX_SIZE || 2000);
 
+/**
+ * 获取缓存的目录存在性
+ * @param {string} dirPath 目录绝对路径
+ * @returns {boolean|undefined} 存在返回true，不存在返回false，未缓存返回undefined
+ */
+function getCachedDirExists(dirPath) {
+    const cached = dirExistsCache.get(dirPath);
+    if (cached && (Date.now() - cached.time) < DIR_CACHE_TTL_MS) {
+        return cached.exists;
+    }
+    // 过期则删除
+    if (cached) {
+        dirExistsCache.delete(dirPath);
+    }
+    return undefined;
+}
 
+/**
+ * 设置目录存在性缓存
+ * @param {string} dirPath 目录绝对路径
+ * @param {boolean} exists 是否存在
+ */
+function setCachedDirExists(dirPath, exists) {
+    // LRU 淘汰：超过最大数量时删除最老的条目
+    if (dirExistsCache.size >= DIR_CACHE_MAX_SIZE) {
+        const firstKey = dirExistsCache.keys().next().value;
+        dirExistsCache.delete(firstKey);
+    }
+    dirExistsCache.set(dirPath, { exists, time: Date.now() });
+}
+
+/**
+ * 使目录缓存失效（目录变更时调用）
+ * @param {string} dirPath 目录绝对路径
+ */
+function invalidateDirCache(dirPath) {
+    dirExistsCache.delete(dirPath);
+}
+// ====== 目录存在性缓存结束 ======
 
 // 确保用于浏览/封面的关键索引，仅执行一次
 let browseIndexesEnsured = false;
@@ -261,11 +303,11 @@ async function getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, 
     `;
 
     // albums 子查询（不跨库 JOIN）
-    const albumsSelect = `SELECT 1 AS is_dir, i.name, i.path, i.mtime, i.width, i.height, NULL AS last_viewed
+    const albumsSelect = `SELECT 1 AS is_dir, i.name, i.path, i.mtime, i.width, i.height, NULL AS last_viewed, 0 AS hls_ready
            FROM items i
            WHERE i.type = 'album' AND (${whereClause})`;
 
-    const mediaSelect = `SELECT 0 AS is_dir, i.name, i.path, i.mtime, i.width, i.height, NULL AS last_viewed
+    const mediaSelect = `SELECT 0 AS is_dir, i.name, i.path, i.mtime, i.width, i.height, NULL AS last_viewed, COALESCE(i.hls_ready, 0) AS hls_ready
                          FROM items i
                          WHERE i.type IN ('photo','video') AND (${whereClause}) AND ${mediaExclusionCondition}`;
 
@@ -366,13 +408,29 @@ async function getDirectoryContents(relativePathPrefix, page, limit, userId, sor
 }
 
 /**
- * 验证目录是否存在且可访问
+ * 验证目录是否存在且可访问（带内存缓存）
  */
 async function validateDirectory(relativePathPrefix) {
     const directory = path.join(PHOTOS_DIR, relativePathPrefix);
+
+    // 先检查缓存
+    const cachedExists = getCachedDirExists(directory);
+    if (cachedExists === true) {
+        return { exists: true, directory };
+    }
+    if (cachedExists === false) {
+        if (relativePathPrefix === '') {
+            return { exists: false };
+        }
+        const { NotFoundError } = require('../utils/errors');
+        throw new NotFoundError(`路径 ${relativePathPrefix}`, { path: relativePathPrefix });
+    }
+
+    // 缓存未命中，执行 fs.stat
     const stats = await fs.stat(directory).catch(() => null);
 
     if (!stats || !stats.isDirectory()) {
+        setCachedDirExists(directory, false);
         if (relativePathPrefix === '') {
             logger.warn('照片根目录似乎不存在或不可读，返回空列表。');
             return { exists: false };
@@ -381,37 +439,43 @@ async function validateDirectory(relativePathPrefix) {
         throw new NotFoundError(`路径 ${relativePathPrefix}`, { path: relativePathPrefix });
     }
 
+    setCachedDirExists(directory, true);
     return { exists: true, directory };
 }
 
 
 
 /**
- * 处理视频HLS状态
+ * 处理视频HLS状态（优化版：直接从查询结果读取，避免额外数据库/文件系统查询）
+ * @param {Array} rows - 查询结果行（包含 hls_ready 字段）
+ * @returns {Set} HLS 就绪的视频路径集合
  */
 async function processHlsStatus(rows) {
-    const videoRows = rows.filter(r => !r.is_dir && /\.(mp4|webm|mov)$/i.test(r.name));
     const hlsReadySet = new Set();
 
-    if (videoRows.length === 0) {
-        return hlsReadySet;
+    // 直接从查询结果读取 hls_ready 状态，无需额外查询
+    for (const row of rows) {
+        if (!row.is_dir && row.hls_ready === 1) {
+            hlsReadySet.add(row.path);
+        }
     }
 
-    const { USE_FILE_SYSTEM_HLS_CHECK } = require('../config');
-
-    if (USE_FILE_SYSTEM_HLS_CHECK) {
-        try {
-            const { batchCheckHlsStatus } = require('../utils/hls.utils');
-            const videoPaths = videoRows.map(r => r.path);
-            const result = await batchCheckHlsStatus(videoPaths);
-            result.forEach(path => hlsReadySet.add(path));
-            logger.debug(`文件系统检查HLS状态: ${hlsReadySet.size}/${videoPaths.length} 个视频已就绪`);
-        } catch (e) {
-            logger.debug(`文件系统检查HLS状态失败，回退到数据库查询: ${e.message}`);
+    // 如果没有从 DB 获取到任何 HLS 状态且有视频，回退到旧逻辑（兼容迁移期间）
+    const videoRows = rows.filter(r => !r.is_dir && /\.(mp4|webm|mov)$/i.test(r.name));
+    if (hlsReadySet.size === 0 && videoRows.length > 0) {
+        const { USE_FILE_SYSTEM_HLS_CHECK } = require('../config');
+        if (USE_FILE_SYSTEM_HLS_CHECK) {
+            try {
+                const { batchCheckHlsStatus } = require('../utils/hls.utils');
+                const videoPaths = videoRows.map(r => r.path);
+                const result = await batchCheckHlsStatus(videoPaths);
+                result.forEach(path => hlsReadySet.add(path));
+            } catch (e) {
+                await fallbackToDatabaseCheck(videoRows, hlsReadySet);
+            }
+        } else {
             await fallbackToDatabaseCheck(videoRows, hlsReadySet);
         }
-    } else {
-        await fallbackToDatabaseCheck(videoRows, hlsReadySet);
     }
 
     return hlsReadySet;
