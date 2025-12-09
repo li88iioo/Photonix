@@ -819,18 +819,6 @@ function finalizeNewContent(pathKey) {
     }
     state.update('currentColumnCount', getMasonryColumns());
     preloadVisibleImages();
-
-    // 修复：不恢复滚动位置，始终从顶部开始
-    // 滚动位置恢复会导致进入新目录时出现在中间位置
-    // const scrollPositions = state.scrollPositions;
-    // const scrollY = scrollPositions.get(pathKey);
-    // if (scrollY && scrollY > 0) {
-    //     window.scrollTo({ top: scrollY, behavior: 'instant' });
-    //     const newScrollPositions = new Map(scrollPositions);
-    //     newScrollPositions.delete(pathKey);
-    //     state.scrollPositions = newScrollPositions;
-    // }
-
     elements.contentGrid.style.minHeight = '';
     state.update('isInitialLoad', false);
 }
