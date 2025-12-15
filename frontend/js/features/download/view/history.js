@@ -19,12 +19,13 @@ export function renderHistory(entries) {
     const size = formatBytes(entry?.size || entry?.bytes || 0);
     const completed = formatRelativeTime(entry?.completedAt || entry?.finishedAt || entry?.timestamp);
     const status = sanitize(entry?.status || '已完成');
+    const imageCount = entry?.imageCount || entry?.images?.length || 0;
     return `
       <div class="history-card">
         <h4>${title}</h4>
         <div class="history-meta">
           <span>来源：${feed}</span>
-          <span>文件大小：${size}</span>
+          <span>文件大小：${size} · 下载图片：${imageCount} 张</span>
           <span>状态：${status}</span>
           <span>完成时间：${completed}</span>
         </div>

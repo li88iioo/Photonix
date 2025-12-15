@@ -194,7 +194,12 @@ async function findCoverPhotosBatchDb(relativeDirs) {
                 }
             }
         } catch (e) {
-            logger.debug('从 album_covers 表批量读取失败，将回退逐相册计算: ' + (e && e.message));
+            // 容错：表不存在或查询失败时静默回退，不影响用户体验
+            if (/no such table/i.test(e && e.message)) {
+                logger.debug('album_covers 表尚未创建，回退到 items 表查询');
+            } else {
+                logger.debug('从 album_covers 表批量读取失败，将回退逐相册计算: ' + (e && e.message));
+            }
         }
 
         // 对仍未命中的相册，使用批量查询代替逐个 LIKE 查询（性能优化）
@@ -202,8 +207,8 @@ async function findCoverPhotosBatchDb(relativeDirs) {
 
         if (stillMissing.length > 0) {
             try {
-                // 使用 Window Function 一次性获取所有相册的最新封面
-                // 通过 SUBSTR + INSTR 提取每个媒体所属的直接父相册路径
+                // 使用 CTE + ROW_NUMBER() 窗口函数获取每个相册的最新封面
+                // SQLite 3.25+ 支持窗口函数
                 const coverExcludePermanent = `NOT EXISTS (SELECT 1 FROM thumb_status ts WHERE ts.path = i.path AND ts.status = 'permanent_failed')`;
 
                 // 构建批量查询：为每个相册找到其下最新的媒体文件
@@ -211,26 +216,46 @@ async function findCoverPhotosBatchDb(relativeDirs) {
                 for (let batchStart = 0; batchStart < stillMissing.length; batchStart += BATCH_SIZE) {
                     const batchRels = stillMissing.slice(batchStart, batchStart + BATCH_SIZE);
 
-                    // 使用 UNION ALL 合并每个相册的查询（子查询需括号包裹）
-                    const unionParts = batchRels.map((rel, idx) => {
+                    // 构建 CASE 表达式来匹配相册路径
+                    // 重要：按路径长度降序排序，确保嵌套路径（如 'photos/2024'）在父路径（如 'photos'）之前匹配
+                    const sortedRels = [...batchRels].sort((a, b) => b.length - a.length);
+                    const caseParts = sortedRels.map((rel, idx) => {
                         const likeParam = rel ? `${rel}/%` : '%';
-                        return `(
-                            SELECT '${rel.replace(/'/g, "''")}' AS album_rel, path, width, height, mtime
-                            FROM items
-                            WHERE type IN ('photo','video')
-                              AND path LIKE '${likeParam.replace(/'/g, "''")}'
-                              AND ${coverExcludePermanent}
-                            ORDER BY mtime DESC
-                            LIMIT 1
-                        )`;
-                    });
+                        const escapedRel = rel.replace(/'/g, "''");
+                        const escapedLike = likeParam.replace(/'/g, "''");
+                        return `WHEN path LIKE '${escapedLike}' THEN '${escapedRel}'`;
+                    }).join(' ');
 
-                    const batchSql = unionParts.join(' UNION ALL ');
+                    // 构建 WHERE 条件来过滤路径
+                    const orConditions = batchRels.map(rel => {
+                        const likeParam = rel ? `${rel}/%` : '%';
+                        return `path LIKE '${likeParam.replace(/'/g, "''")}'`;
+                    }).join(' OR ');
+
+                    // 使用 CTE + ROW_NUMBER 获取每个相册的最新媒体
+                    const batchSql = `
+                        WITH ranked AS (
+                            SELECT 
+                                CASE ${caseParts} END AS album_rel,
+                                path, width, height, mtime,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY CASE ${caseParts} END 
+                                    ORDER BY mtime DESC
+                                ) AS rn
+                            FROM items i
+                            WHERE type IN ('photo','video')
+                              AND (${orConditions})
+                              AND ${coverExcludePermanent}
+                        )
+                        SELECT album_rel, path, width, height, mtime
+                        FROM ranked
+                        WHERE rn = 1
+                    `;
                     const rows = await dbAll('main', batchSql, []);
 
                     // 处理结果并缓存
                     for (const r of rows || []) {
-                        if (!r || !r.path) continue;
+                        if (!r || !r.path || !r.album_rel) continue;
                         const rel = r.album_rel;
                         const absAlbumPath = path.join(PHOTOS_DIR, rel);
                         const abs = path.join(PHOTOS_DIR, r.path);

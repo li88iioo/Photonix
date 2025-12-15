@@ -105,14 +105,39 @@ const redisCache = new RedisCacheHelper();
 
 /**
  * 清理过期的缓存项
+ * 同时清理 hlsCache 和 lastCheckTimes
  */
 function cleanupCache() {
     const now = Date.now();
+    let cleanedHls = 0;
+    let cleanedTimes = 0;
+
+    // 清理 HLS 缓存
     for (const [key, value] of hlsCache.entries()) {
         if (now - value.timestamp > CACHE_TTL) {
             hlsCache.delete(key);
+            cleanedHls++;
         }
     }
+
+    // 清理检查时间记录
+    for (const [key, timestamp] of lastCheckTimes.entries()) {
+        if (now - timestamp > CACHE_TTL) {
+            lastCheckTimes.delete(key);
+            cleanedTimes++;
+        }
+    }
+
+    if (cleanedHls > 0 || cleanedTimes > 0) {
+        logger.debug(`[HLS_CACHE_CLEANUP] 清理了 ${cleanedHls} 个 HLS 缓存项和 ${cleanedTimes} 个检查时间记录`);
+    }
+}
+
+// 定期清理过期缓存（每 30 分钟）
+const HLS_CACHE_CLEANUP_INTERVAL_MS = 30 * 60 * 1000;
+const hlsCacheCleanupTimer = setInterval(cleanupCache, HLS_CACHE_CLEANUP_INTERVAL_MS);
+if (typeof hlsCacheCleanupTimer.unref === 'function') {
+    hlsCacheCleanupTimer.unref(); // 防止阻止进程退出
 }
 
 /**
@@ -244,15 +269,15 @@ async function checkHlsExists(videoPath) {
  */
 async function batchCheckHlsStatus(videoPaths) {
     const hlsReadySet = new Set();
-    
+
     // 清理过期缓存
     cleanupCache();
-    
+
     // 并行检查，但限制并发数避免系统压力
     const batchSize = HLS_CHECK_BATCH_SIZE;
     for (let i = 0; i < videoPaths.length; i += batchSize) {
         const batch = videoPaths.slice(i, i + batchSize);
-        
+
         // 硬盘保护：串行处理批次，避免并发I/O压力
         for (const videoPath of batch) {
             const exists = await checkHlsExists(videoPath);
@@ -260,13 +285,13 @@ async function batchCheckHlsStatus(videoPaths) {
                 hlsReadySet.add(videoPath);
             }
         }
-        
+
         // 批次间延迟，给硬盘休息时间
         if (i + batchSize < videoPaths.length) {
             await new Promise(resolve => setTimeout(resolve, HLS_BATCH_DELAY_MS));
         }
     }
-    
+
     return hlsReadySet;
 }
 
@@ -279,14 +304,14 @@ async function createHlsRecord(videoPath, metadata = {}) {
     try {
         const recordDir = path.join(THUMBS_DIR, 'hls', '_records');
         await fs.mkdir(recordDir, { recursive: true });
-        
+
         const recordFile = path.join(recordDir, `${videoPath.replace(/[\/\\]/g, '_')}.json`);
         const record = {
             videoPath,
             processedAt: new Date().toISOString(),
             ...metadata
         };
-        
+
         await fs.writeFile(recordFile, JSON.stringify(record, null, 2));
 
         // 更新缓存
@@ -317,7 +342,7 @@ async function checkHlsRecord(videoPath) {
     try {
         const recordDir = path.join(THUMBS_DIR, 'hls', '_records');
         const recordFile = path.join(recordDir, `${videoPath.replace(/[\/\\]/g, '_')}.json`);
-        
+
         return await fs.access(recordFile).then(() => true).catch(() => false);
     } catch (error) {
         return false;
@@ -332,13 +357,13 @@ async function cleanupHlsRecords(maxAge = 30) {
     try {
         const recordDir = path.join(THUMBS_DIR, 'hls', '_records');
         const files = await fs.readdir(recordDir).catch(() => []);
-        
+
         const cutoffTime = Date.now() - (maxAge * 24 * 60 * 60 * 1000);
         let cleanedCount = 0;
-        
+
         for (const file of files) {
             if (!file.endsWith('.json')) continue;
-            
+
             const filePath = path.join(recordDir, file);
             try {
                 const stats = await fs.stat(filePath);
@@ -350,7 +375,7 @@ async function cleanupHlsRecords(maxAge = 30) {
                 logger.debug(`清理HLS记录失败: ${file}`, e.message);
             }
         }
-        
+
         if (cleanedCount > 0) {
             logger.info(`清理了 ${cleanedCount} 个过期的HLS处理记录`);
         }

@@ -75,6 +75,9 @@ class DownloadManager {
     // 初始化历史追踪数据库
     await this.historyTracker.initializeDatabase();
 
+    // 清理上次意外中断留下的临时文件
+    await this.cleanupStaleTempFiles(paths.baseFolder);
+
     // 初始化任务管理器
     this.taskManager = new TaskManager(() => this.historyTracker.db);
 
@@ -1170,6 +1173,77 @@ class DownloadManager {
     const size = value / Math.pow(1024, exponent);
     const precision = size >= 10 ? 0 : 1;
     return `${size.toFixed(precision)} ${units[exponent]}`;
+  }
+
+  /**
+   * 清理意外中断遗留的临时下载文件
+   * 
+   * 当容器重启或进程崩溃时，正在下载的文件会以 .download.tmp 后缀残留。
+   * 此方法在服务启动时递归扫描下载目录，删除这些不完整的文件。
+   * 
+   * @param {string} directory - 要扫描的根目录
+   * @returns {Promise<number>} 删除的文件数量
+   */
+  async cleanupStaleTempFiles(directory) {
+    if (!directory) return 0;
+
+    let cleanedCount = 0;
+    const TEMP_SUFFIX = '.download.tmp';
+
+    const scanDir = async (dir) => {
+      let entries;
+      try {
+        entries = await fsp.readdir(dir, { withFileTypes: true });
+      } catch (err) {
+        // 目录不存在或无权访问，静默跳过
+        return;
+      }
+
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        try {
+          if (entry.isDirectory()) {
+            await scanDir(fullPath);
+          } else if (entry.isFile() && entry.name.endsWith(TEMP_SUFFIX)) {
+            await fsp.unlink(fullPath);
+            cleanedCount += 1;
+            if (this.logManager) {
+              this.logManager.log('info', `清理残留临时文件: ${entry.name}`, {
+                scope: '下载器',
+                path: fullPath
+              });
+            }
+          }
+        } catch (unlinkErr) {
+          // 删除失败时记录但不中断
+          if (this.logManager) {
+            this.logManager.log('warning', `无法删除临时文件: ${fullPath}`, {
+              scope: '下载器',
+              error: unlinkErr.message
+            });
+          }
+        }
+      }
+    };
+
+    try {
+      await scanDir(directory);
+      if (cleanedCount > 0 && this.logManager) {
+        this.logManager.log('info', `启动清理完成：删除了 ${cleanedCount} 个残留临时文件`, {
+          scope: '下载器',
+          cleanedCount
+        });
+      }
+    } catch (error) {
+      if (this.logManager) {
+        this.logManager.log('warning', '清理临时文件时发生错误', {
+          scope: '下载器',
+          error: error.message
+        });
+      }
+    }
+
+    return cleanedCount;
   }
 }
 

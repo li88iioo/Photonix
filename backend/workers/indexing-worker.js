@@ -1158,7 +1158,18 @@ const dbTimeoutManager = new DbTimeoutManager();
     (async () => {
         try {
             await ensureAlbumCoversTable();
-            const count = await getCount('album_covers');
+            // 容错：如果表创建失败，getCount 可能抛出异常
+            let count = 0;
+            try {
+                count = await getCount('album_covers');
+            } catch (countErr) {
+                if (/no such table/i.test(countErr && countErr.message)) {
+                    logger.debug('[INDEXING-WORKER] album_covers 表尚未就绪，将在后台重建');
+                    count = 0; // 触发重建
+                } else {
+                    throw countErr;
+                }
+            }
             if (count === 0) {
                 // 非阻塞后台构建，避免影响主索引任务
                 setTimeout(async () => {
@@ -1171,3 +1182,4 @@ const dbTimeoutManager = new DbTimeoutManager();
         }
     })();
 })();
+

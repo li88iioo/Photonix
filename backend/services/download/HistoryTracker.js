@@ -13,6 +13,21 @@ class HistoryTracker {
     this.config = config;
     this.paths = paths;
     this.db = null;
+
+    // 内存缓存层（减少仪表盘加载时的重复查询）
+    this._statsCache = { data: null, expireAt: 0 };
+    this._countCache = { data: null, expireAt: 0 };
+    this._sizeCache = { data: null, expireAt: 0 };
+  }
+
+  /**
+   * 清除所有统计缓存
+   * 在写入操作后调用，确保下次查询获取最新数据
+   */
+  _invalidateCache() {
+    this._statsCache = { data: null, expireAt: 0 };
+    this._countCache = { data: null, expireAt: 0 };
+    this._sizeCache = { data: null, expireAt: 0 };
   }
 
   /**
@@ -153,6 +168,7 @@ class HistoryTracker {
         VALUES (@taskId, @title, @feedTitle, @entryLink, datetime('now'))
       `);
       stmt.run({ taskId, title, feedTitle, entryLink });
+      this._invalidateCache(); // 新增记录后清除统计缓存
     } catch (error) {
       logger.warn('写入下载历史失败', { error: error.message });
     }
@@ -203,6 +219,9 @@ class HistoryTracker {
         completedAt: normalizedEntry.completedAt,
         totalSize: normalizedEntry.size
       });
+
+      // 清除缓存，确保下次查询获取最新数据
+      this._invalidateCache();
 
       return normalizedEntry;
     } catch (error) {
@@ -263,6 +282,8 @@ class HistoryTracker {
 
     try {
       transaction(entries);
+      // 清除缓存，确保下次查询获取最新数据
+      this._invalidateCache();
     } catch (error) {
       logger.error('批量添加历史记录失败', {
         error: error.message,
@@ -299,10 +320,18 @@ class HistoryTracker {
   }
 
   /**
-   * 获取历史记录数量
+   * 获取历史记录数量（带缓存）
    * @returns {number}
    */
   getHistoryCount() {
+    const CACHE_TTL_MS = 30000; // 30秒缓存
+    const now = Date.now();
+
+    // 检查缓存是否有效
+    if (this._countCache.data !== null && now < this._countCache.expireAt) {
+      return this._countCache.data;
+    }
+
     if (!this.db) {
       return 0;
     }
@@ -310,7 +339,11 @@ class HistoryTracker {
     try {
       const stmt = this.db.prepare('SELECT COUNT(*) as count FROM download_history_full');
       const result = stmt.get();
-      return result.count || 0;
+      const count = result.count || 0;
+
+      // 更新缓存
+      this._countCache = { data: count, expireAt: now + CACHE_TTL_MS };
+      return count;
     } catch (error) {
       logger.error('获取历史记录数量失败', { error: error.message });
       return 0;
@@ -371,10 +404,18 @@ class HistoryTracker {
   }
 
   /**
-   * 估算历史记录占用的字节数
+   * 估算历史记录占用的字节数（带缓存）
    * @returns {number}
    */
   getTotalSizeEstimate() {
+    const CACHE_TTL_MS = 60000; // 60秒缓存（变化不频繁）
+    const now = Date.now();
+
+    // 检查缓存是否有效
+    if (this._sizeCache.data !== null && now < this._sizeCache.expireAt) {
+      return this._sizeCache.data;
+    }
+
     if (!this.db) {
       return 0;
     }
@@ -382,7 +423,11 @@ class HistoryTracker {
     try {
       const stmt = this.db.prepare('SELECT SUM(total_size) as total FROM download_history_full');
       const result = stmt.get();
-      return result.total || 0;
+      const total = result.total || 0;
+
+      // 更新缓存
+      this._sizeCache = { data: total, expireAt: now + CACHE_TTL_MS };
+      return total;
     } catch (error) {
       logger.error('获取存储大小失败', { error: error.message });
       return 0;
@@ -434,6 +479,7 @@ class HistoryTracker {
 
       if (result.changes > 0) {
         logger.info(`清理了 ${result.changes} 条过期的下载历史记录`);
+        this._invalidateCache(); // 删除记录后清除统计缓存
       }
     } catch (error) {
       logger.warn('清理历史记录失败', { error: error.message });
@@ -441,10 +487,21 @@ class HistoryTracker {
   }
 
   /**
-   * 获取统计信息
+   * 获取统计信息（带缓存）
+   * 
+   * 优化：合并3个COUNT查询为1个聚合查询 + 30秒TTL缓存
+   * 
    * @returns {object} 统计信息
    */
   getStatistics() {
+    const CACHE_TTL_MS = 30000; // 30秒缓存
+    const now = Date.now();
+
+    // 检查缓存是否有效
+    if (this._statsCache.data && now < this._statsCache.expireAt) {
+      return this._statsCache.data;
+    }
+
     if (!this.db) {
       return {
         totalDownloads: 0,
@@ -454,18 +511,25 @@ class HistoryTracker {
     }
 
     try {
-      const totalStmt = this.db.prepare('SELECT COUNT(*) as count FROM download_history');
-      const feedsStmt = this.db.prepare('SELECT COUNT(DISTINCT feed_title) as count FROM download_history');
-      const recentStmt = this.db.prepare(`
-        SELECT COUNT(*) as count FROM download_history 
-        WHERE downloaded_at > datetime('now', '-24 hours')
+      // 合并3个查询为1个聚合查询
+      const stmt = this.db.prepare(`
+        SELECT
+          COUNT(*) as total_downloads,
+          COUNT(DISTINCT feed_title) as unique_feeds,
+          SUM(CASE WHEN downloaded_at > datetime('now', '-24 hours') THEN 1 ELSE 0 END) as recent_downloads
+        FROM download_history
       `);
+      const row = stmt.get();
 
-      return {
-        totalDownloads: totalStmt.get().count,
-        uniqueFeeds: feedsStmt.get().count,
-        recentDownloads: recentStmt.get().count
+      const result = {
+        totalDownloads: row.total_downloads || 0,
+        uniqueFeeds: row.unique_feeds || 0,
+        recentDownloads: row.recent_downloads || 0
       };
+
+      // 更新缓存
+      this._statsCache = { data: result, expireAt: now + CACHE_TTL_MS };
+      return result;
     } catch (error) {
       logger.warn('获取统计信息失败', { error: error.message });
       return {

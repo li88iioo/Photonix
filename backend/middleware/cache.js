@@ -36,7 +36,7 @@ function acquireSingleFlight(key) {
         createdAt: Date.now()
     };
     // 预附加 catch，避免在没有跟随者时触发未处理的 Promise 拒绝日志
-    promise.catch(() => {});
+    promise.catch(() => { });
     singleFlightEntries.set(key, entry);
     return { isLeader: true, promise, entry };
 }
@@ -187,6 +187,11 @@ function attachWritersWithCache(res, key, ttlSeconds) {
      */
     const cacheAndTag = (body) => {
         try {
+            // 新增：如果响应标记为不缓存（如封面未就绪），则跳过缓存
+            if (res.get('X-No-Cache') === 'true') {
+                logger.debug(`[CACHE] 响应标记为不缓存，跳过: ${key}`);
+                return;
+            }
             if (!streamingWritten && res.statusCode >= 200 && res.statusCode < 300 && res.req && res.req.method === 'GET') {
                 const env = buildEnvelope(res, body);
                 if (env) {

@@ -21,7 +21,7 @@ exports.browseDirectory = async (req, res) => {
     const userId = (req.user && req.user.id) ? String(req.user.id) : 'anonymous';
     // 从中间件获取已经过验证和清理的路径
     const sanitizedPath = req.sanitizedPath;
-    
+
     // 获取分页限制，默认50项
     const limit = parseInt(req.query.limit, 10) || 50;
     // 获取页码，默认第1页
@@ -31,17 +31,29 @@ exports.browseDirectory = async (req, res) => {
     try {
         // 获取目录内容，路径验证已由中间件完成
         const { items, totalPages, totalResults } = await getDirectoryContents(sanitizedPath, page, limit, userId, sort);
-        
+
+        // 检查是否有封面缺失的相册（未索引完成时会有占位符封面）
+        const hasIncompleteCover = items.some(item =>
+            item.type === 'album' &&
+            (!item.data?.coverUrl || item.data.coverUrl.startsWith('data:'))
+        );
+
+        // 如果有封面缺失，设置响应头阻止缓存,避免索引完成前的响应被长期缓存
+        if (hasIncompleteCover) {
+            res.setHeader('X-No-Cache', 'true');
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        }
+
         // 构建响应数据
         const responseData = { items, page, totalPages, totalResults };
-        
+
         // 返回目录内容
         res.json(responseData);
     } catch (error) {
         // 捕获服务层抛出的路径不存在等错误
         if (error.message.includes('路径未找到')) {
             return res.status(404).json({ code: 'PATH_NOT_FOUND', message: error.message, requestId: req.requestId });
-        } 
+        }
         // 对于其他未知错误，传递给全局错误处理器
         throw error;
     }

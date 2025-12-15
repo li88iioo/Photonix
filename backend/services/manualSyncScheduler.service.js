@@ -90,7 +90,14 @@ async function runManualSync(trigger, raw) {
 
   state.running = true;
   try {
-    logger.info(`${LOG_PREFIXES.AUTO_SYNC} 触发手动同步: trigger=${trigger}, schedule=${raw}`);
+    const isScheduled = trigger === 'schedule';
+    logger.info(`${LOG_PREFIXES.AUTO_SYNC} 开始${isScheduled ? '自动' : '手动'}维护周期: trigger=${trigger}, schedule=${raw}`);
+
+    if (isScheduled) {
+      await runScheduledMaintenancePipeline();
+    }
+
+    logger.info(`${LOG_PREFIXES.AUTO_SYNC} 启动索引同步`);
     const result = await albumManagementService.syncAlbumsAndMedia();
     logger.info(`${LOG_PREFIXES.AUTO_SYNC} 手动同步完成: changes=${result?.summary?.totalChanges || 0}`);
 
@@ -135,9 +142,6 @@ async function runManualSync(trigger, raw) {
       }
     }
 
-    if (trigger === 'schedule') {
-      await runScheduledMaintenancePipeline();
-    }
   } catch (error) {
     logger.error(`${LOG_PREFIXES.AUTO_SYNC} 手动同步失败:`, error);
   } finally {

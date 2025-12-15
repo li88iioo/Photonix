@@ -38,13 +38,13 @@ class ImageDownloader {
       while (queue.length > 0) {
         const url = queue.shift();
         const started = Date.now();
-        
+
         try {
           const info = await this.downloadImageWithValidation(task, url, directory);
           if (info) {
             info.durationMs = Date.now() - started;
             downloaded.push(info);
-            
+
             if (this.logger) {
               this.logger.log('success', `成功下载 ${info.filename} (${this.formatBytes(info.size)}, ${info.durationMs}ms)`, {
                 ...context,
@@ -54,7 +54,7 @@ class ImageDownloader {
               });
             }
           }
-          
+
           await this.applySecurityDelay();
         } catch (error) {
           if (this.logger) {
@@ -64,7 +64,7 @@ class ImageDownloader {
               error: error.message
             });
           }
-          
+
           await this.delay(this.config.retryDelay * 1000);
         }
       }
@@ -72,12 +72,18 @@ class ImageDownloader {
 
     const workers = Array.from({ length: Math.min(limit, queue.length) }, () => worker());
     await Promise.all(workers);
-    
+
     return downloaded;
   }
 
   /**
-   * 下载并验证单个图片
+   * 下载并验证单个图片（原子写入模式）
+   * 
+   * 使用临时文件 + 原子重命名策略防止以下问题：
+   * - 容器重启导致文件写入不完整
+   * - 网络中断导致的半成品文件
+   * - 进程崩溃时的数据损坏
+   * 
    * @param {object} task 任务对象
    * @param {string} url 图片URL
    * @param {string} directory 保存目录
@@ -91,7 +97,8 @@ class ImageDownloader {
 
     while (attempt < maxRetries) {
       attempt += 1;
-      
+      let tempPath = null;
+
       try {
         const headers = this.resolveHeadersForUrl(task, url, this.config.imageHeaders);
         const response = await axios.get(url, {
@@ -105,25 +112,39 @@ class ImageDownloader {
         const filename = `${Date.now()}-${this.slugify(path.basename(url).split('.')[0] || 'image')}${extension}`;
         const filePath = path.join(directory, filename);
 
-        await pipeline(response.data, fs.createWriteStream(filePath));
-        const stats = await fsp.stat(filePath);
+        // 原子写入：先写入临时文件
+        tempPath = `${filePath}.download.tmp`;
+        await pipeline(response.data, fs.createWriteStream(tempPath));
+        const stats = await fsp.stat(tempPath);
 
         // 验证文件大小
         if (stats.size < this.config.minImageBytes) {
-          await fsp.unlink(filePath).catch(() => {});
+          await fsp.unlink(tempPath).catch(() => { });
+          tempPath = null;
           throw new Error('文件体积过小');
         }
 
         // 图片验证（如果启用）
         if (this.config.imageValidation.enabled) {
-          const valid = await this.validateImage(filePath, stats.size);
+          const valid = await this.validateImage(tempPath, stats.size);
           if (!valid) {
-            if (this.config.imageValidation.strictMode) {
-              await fsp.unlink(filePath).catch(() => {});
+            // 非严格模式下，验证失败仅记录警告，仍接受文件
+            if (!this.config.imageValidation.strictMode) {
+              if (this.logger) {
+                this.logger.log('warn', `图片验证失败但非严格模式，继续保留: ${url}`);
+              }
+            } else {
+              // 严格模式下，验证失败则删除并抛出错误
+              await fsp.unlink(tempPath).catch(() => { });
+              tempPath = null;
               throw new Error('图片验证失败');
             }
           }
         }
+
+        // 验证通过，原子重命名到最终路径
+        await fsp.rename(tempPath, filePath);
+        tempPath = null; // 已成功重命名，不需要清理
 
         return {
           filename,
@@ -132,6 +153,10 @@ class ImageDownloader {
           url
         };
       } catch (error) {
+        // 清理可能残留的临时文件
+        if (tempPath) {
+          await fsp.unlink(tempPath).catch(() => { });
+        }
         lastError = error;
         await this.delay(this.config.retryDelay * 1000);
       }
@@ -147,7 +172,7 @@ class ImageDownloader {
     try {
       const workerPath = path.join(__dirname, 'imageValidationWorker.js');
       this.validationWorker = new Worker(workerPath);
-      
+
       this.validationWorker.on('message', ({ taskId, result }) => {
         const task = this.validationTasks.get(taskId);
         if (task) {
@@ -155,7 +180,7 @@ class ImageDownloader {
           this.validationTasks.delete(taskId);
         }
       });
-      
+
       this.validationWorker.on('error', (error) => {
         if (this.logger) {
           this.logger.log('error', 'Worker线程错误', { error: error.message });
@@ -187,7 +212,7 @@ class ImageDownloader {
         const taskId = uuidv4();
         const promise = new Promise((resolve, reject) => {
           this.validationTasks.set(taskId, { resolve, reject });
-          
+
           // 设置超时
           setTimeout(() => {
             if (this.validationTasks.has(taskId)) {
@@ -196,7 +221,7 @@ class ImageDownloader {
             }
           }, 5000);
         });
-        
+
         // 发送任务到Worker
         this.validationWorker.postMessage({
           taskId,
@@ -205,7 +230,7 @@ class ImageDownloader {
           minWidth: this.config.minImageWidth,
           minHeight: this.config.minImageHeight
         });
-        
+
         const result = await promise;
         return result.valid;
       } catch (error) {
@@ -216,7 +241,7 @@ class ImageDownloader {
         return this.validateImageSync(filePath, fileSize);
       }
     }
-    
+
     // 没有Worker，使用同步验证
     return this.validateImageSync(filePath, fileSize);
   }
@@ -231,11 +256,11 @@ class ImageDownloader {
     try {
       const buffer = await fsp.readFile(filePath);
       if (buffer.length !== fileSize) return false;
-      
+
       const dimensions = imageSize(buffer);
       const meetsWidth = !this.config.minImageWidth || dimensions.width >= this.config.minImageWidth;
       const meetsHeight = !this.config.minImageHeight || dimensions.height >= this.config.minImageHeight;
-      
+
       return meetsWidth && meetsHeight;
     } catch (error) {
       if (this.logger) {
@@ -251,7 +276,7 @@ class ImageDownloader {
   async applySecurityDelay() {
     const [min, max] = this.config.security?.requestInterval || [0, 0];
     if (min <= 0 && max <= 0) return;
-    
+
     const wait = this.randomBetween(min, max) * 1000;
     if (wait > 0) {
       await this.delay(wait);
@@ -263,17 +288,17 @@ class ImageDownloader {
    */
   resolveHeadersForUrl(task, targetUrl, baseHeaders = {}) {
     const headers = { ...(baseHeaders || {}) };
-    
+
     if (!task?.cookie) {
       return headers;
     }
-    
+
     const domain = task.cookieDomain || '';
     if (!domain) {
       headers.Cookie = task.cookie;
       return headers;
     }
-    
+
     try {
       const resolvedUrl = targetUrl ? new URL(targetUrl, task.feedUrl) : null;
       const hostname = resolvedUrl?.hostname?.toLowerCase();
@@ -283,7 +308,7 @@ class ImageDownloader {
     } catch {
       // ignore malformed URL
     }
-    
+
     return headers;
   }
 
@@ -295,7 +320,7 @@ class ImageDownloader {
       const pathname = new URL(url).pathname;
       const ext = path.extname(pathname);
       if (ext) return ext;
-    } catch {}
+    } catch { }
     return '.jpg';
   }
 
@@ -342,16 +367,16 @@ class ImageDownloader {
     const size = Number(bytes);
     if (!Number.isFinite(size) || size <= 0) return '';
     if (size < 1024) return `${size}B`;
-    
+
     const units = ['KB', 'MB', 'GB', 'TB'];
     let index = -1;
     let value = size;
-    
+
     do {
       value /= 1024;
       index += 1;
     } while (value >= 1024 && index < units.length - 1);
-    
+
     return `${value.toFixed(value >= 10 ? 1 : 2)}${units[index]}`;
   }
 

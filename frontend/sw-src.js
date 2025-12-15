@@ -376,8 +376,9 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // 2. /api/browse/ 采用网络优先 + 细化缓存控制
-  if (url.pathname.startsWith('/api/browse/')) {
+  // 2. /api/browse 和 /api/browse/ 采用网络优先 + 细化缓存控制
+  // 注意：首页请求路径是 /api/browse（无尾部斜杠），子目录是 /api/browse/xxx
+  if (url.pathname === '/api/browse' || url.pathname.startsWith('/api/browse/')) {
     event.respondWith(handleBrowseRequest(request, url, hasAuth));
     return;
   }

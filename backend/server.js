@@ -25,7 +25,7 @@ const { handleUncaughtException, handleUnhandledRejection } = require('./middlew
 // 延后加载 Redis，避免无 Redis 环境下启动即触发连接
 const { PORT, THUMBS_DIR, DB_FILE, SETTINGS_DB_FILE, PHOTOS_DIR, DATA_DIR } = require('./config');
 const { initializeConnections, closeAllConnections, withTimeout, dbAllOnPath } = require('./db/multi-db');
-const { initializeAllDBs } = require('./db/migrations');
+const { initializeAllDBs, ensureCoreTables } = require('./db/migrations');
 const { migrateToMultiDB } = require('./db/migrate-to-multi-db');
 const { startAdaptiveScheduler } = require('./services/adaptive.service');
 const { setupWorkerListeners } = require('./services/indexer.service');
@@ -366,6 +366,9 @@ async function initializeDatabase() {
     // 初始化/建表等迁移步骤
     await initializeAllDBs();
 
+    // 兜底确保核心表存在（幂等，防止迁移遗漏）
+    await ensureCoreTables();
+
     logger.info('数据库初始化完成');
 }
 
@@ -467,6 +470,18 @@ async function setupIndexingAndMonitoring() {
             // 冷启动立即索引，非冷启动走 idle 调度
             if (itemCount === 0) {
                 logger.info('检测到冷启动（items=0）：跳过 runWhenIdle，立即触发全量索引。');
+
+                // 冷启动时清除 browse 路由缓存，避免缓存空响应导致首页一直显示"无相册"
+                try {
+                    const { scanAndDelete } = require('./middleware/cache');
+                    const cleared = await scanAndDelete('route_cache:*browse*');
+                    if (cleared > 0) {
+                        logger.info(`冷启动：已清除 ${cleared} 条 browse 路由缓存`);
+                    }
+                } catch (e) {
+                    logger.debug('冷启动清除 browse 缓存失败（忽略）:', e && e.message);
+                }
+
                 setTimeout(() => {
                     try {
                         require('./services/indexer.service').buildSearchIndex().catch((e) => {
