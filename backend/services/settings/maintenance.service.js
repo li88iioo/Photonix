@@ -397,7 +397,12 @@ async function getIndexStatus() {
     const ftsCount = Number(ftsStats?.[0]?.count) || 0;
 
     const currentTime = new Date().toISOString();
-    const lastUpdated = row?.last_updated || currentTime;
+    // SQLite CURRENT_TIMESTAMP 返回 UTC 时间但不带 'Z' 后缀
+    // 添加 'Z' 后缀使其成为有效的 ISO 8601 UTC 时间，前端才能正确转换为本地时间
+    let lastUpdated = row?.last_updated || currentTime;
+    if (lastUpdated && !lastUpdated.endsWith('Z') && !lastUpdated.includes('+')) {
+      lastUpdated = lastUpdated.replace(' ', 'T') + 'Z';
+    }
 
     let totalFiles = Number(row?.total_files);
     if (!Number.isFinite(totalFiles) || totalFiles <= 0) {

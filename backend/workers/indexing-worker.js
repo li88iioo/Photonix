@@ -708,6 +708,18 @@ const dbTimeoutManager = new DbTimeoutManager();
                 externalCache.clear();
                 logger.debug(`索引完成后清理本地缓存: ${finalCacheSize}个条目已清理`);
 
+                // 清理 Sharp 缓存，释放 libvips 内存
+                try {
+                    sharp.cache(false);  // 禁用并清空缓存
+                    sharp.cache({ memory: 16, items: 50, files: 0 });  // 重新启用较小缓存
+                    logger.debug('[INDEXING-WORKER] 已清理 Sharp 缓存');
+                } catch (e) {
+                    logger.debug('[INDEXING-WORKER] 清理 Sharp 缓存失败（忽略）:', e && e.message);
+                }
+                // 注意：Worker 环境下 global.gc 不可用（需要主进程的 --expose-gc）
+                // Worker 有独立内存空间，Node.js 会自动进行垃圾回收
+
+
                 logger.info(`[INDEXING-WORKER] 索引重建完成，共处理 ${count} 个条目。`);
 
                 if (syncThumbnails) {

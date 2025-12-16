@@ -961,7 +961,10 @@ async function batchGenerateMissingThumbnails(limit = 1000) {
             // 只有在非循环批量模式且确实空闲时才销毁worker池
             if (active === 0 && qlen === 0 && !state.thumbnail.isBatchLoopActive()) {
                 try {
+                    // 销毁 worker 池时，Piscina 会终止所有 worker 线程，
+                    // worker 进程的内存（包括 Sharp 缓存）会随之释放
                     require('./worker.manager').destroyThumbnailWorkerPool();
+                    logger.debug('[THUMBNAIL] 批量任务完成，已销毁 worker 池（内存随线程释放）');
                 } catch (error) {
                     logThumbIgnore('批量任务销毁缩略图线程池', error);
                 }

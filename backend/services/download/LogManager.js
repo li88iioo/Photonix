@@ -49,9 +49,7 @@ class LogManager {
         }
       }
 
-      if (loadedCount > 0) {
-        console.log(`[LogManager] 成功加载 ${loadedCount} 条历史日志`);
-      }
+      // 启动信息已加载，不需要输出日志
     } catch (error) {
       // 静默失败 - 不阻塞服务启动
       console.warn('[LogManager] 加载历史日志失败:', error.message);

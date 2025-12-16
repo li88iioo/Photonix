@@ -90,7 +90,7 @@ async function resolveStore() {
     if (ready) {
         try {
             const RedisStore = require('rate-limit-redis');
-            logger.info('[RateLimiter] 已启用 Redis 限流存储');
+            logger.debug('[限流器] 已启用 Redis 限流存储');
             return new RedisStore({ sendCommand: (...args) => redis.call(...args) });
         } catch (error) {
             logger.debug('[RateLimiter] 初始化 Redis 限流存储失败，已降级为本地内存限流', { error: error && error.message });

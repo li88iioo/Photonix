@@ -116,7 +116,7 @@ class HistoryTracker {
       this.db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_feed_url ON tasks(feed_url);');
       this.db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_updated ON tasks(updated_at);');
 
-      logger.info(`${LOG_PREFIXES.DOWNLOADER} 数据库连接成功 | 去重模式: ${this.getDedupScopeDisplay(this.config.dedupScope)} | 路径: ${this.paths.databasePath}`);
+      logger.debug(`${LOG_PREFIXES.DOWNLOADER} 数据库连接成功 | 去重模式: ${this.getDedupScopeDisplay(this.config.dedupScope)} | 路径: ${this.paths.databasePath}`);
     } catch (error) {
       logger.error('初始化下载历史数据库失败', { error: error.message });
       throw new Error('无法初始化下载历史数据库');

@@ -80,6 +80,8 @@ function spawnCoreWorker(name, workerData = {}) {
     }
     const worker = new Worker(script, {
         workerData,
+        // 注意：某些 Node.js 环境不允许在 Worker 中使用 --expose-gc
+        // Worker 有独立的内存空间，会自动进行垃圾回收
         resourceLimits: { maxOldGenerationSizeMb: WORKER_MEMORY_MB }
     });
     attachCoreWorkerLogging(worker, name);

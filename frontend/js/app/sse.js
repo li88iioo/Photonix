@@ -266,8 +266,9 @@ function startEventSource() {
         sseLog('连接已建立');
     };
 
-    eventSource.onerror = (err) => {
-        sseError('连接错误:', err);
+    eventSource.onerror = () => {
+        // 连接断开是正常现象（页面刷新、网络波动等），自动重连即可
+        sseLog('连接断开，准备重连');
         clearActiveConnection();
         scheduleReconnect();
     };

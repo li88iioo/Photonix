@@ -1,109 +1,32 @@
 /**
  * @file router.js
  * @description 前端路由管理。负责页面导航、内容渲染、多路由场景切换等。
+ * 
+ * 模块拆分：
+ * - router/utils.js    - 工具函数（墓碑过滤、面包屑HTML、路径处理）
+ * - router/scroll.js   - 滚动位置管理、页面内容准备
+ * - router/search.js   - 搜索路由处理
+ * - router/browse.js   - 相册浏览路由处理
  */
 
-import { state, clearExpiredAlbumTombstones, getAlbumTombstonesMap } from '../core/state.js';
-import { elements } from '../shared/dom-elements.js';
-import { applyMasonryLayout, getMasonryColumns } from '../features/gallery/masonry.js';
-import { setupLazyLoading, clearLazyloadQueue } from '../features/gallery/lazyload.js';
-import { fetchSearchResults, fetchBrowseResults } from './api.js';
-import {
-    renderBreadcrumb,
-    renderBrowseGrid,
-    renderSearchGrid,
-    renderSortDropdown,
-    applyLayoutMode,
-    renderLayoutToggleOnly,
-    ensureLayoutToggleVisible,
-    adjustScrollOptimization,
-    clearSortCache,
-    removeSortControls
-} from '../features/gallery/ui.js';
-import { scheduleThumbnailPreheat } from '../features/gallery/preheat.js';
-import { recordHierarchyView, loadRecentHistoryRecords } from '../features/history/history-service.js';
+import { state } from '../core/state.js';
+import { CACHE } from '../core/constants.js';
 import { AbortBus } from '../core/abort-bus.js';
-import { refreshPageEventListeners } from '../features/gallery/listeners.js';
-import {
-    showNetworkError,
-    showEmptySearchResults,
-    showEmptyAlbum,
-    showIndexBuildingError,
-    showMinimalLoader,
-    showMissingAlbumState,
-    showEmptyViewedHistory
-} from '../features/gallery/loading-states.js';
 import { routerLogger } from '../core/logger.js';
-import { safeSetInnerHTML } from '../shared/dom-utils.js';
-import { showNotification } from '../shared/utils.js';
-import { setManagedTimeout } from '../core/timer-manager.js';
-import { CACHE, ROUTER } from '../core/constants.js';
-import { escapeHtml } from '../shared/security.js';
+import { refreshPageEventListeners } from '../features/gallery/listeners.js';
+import { clearSortCache } from '../features/gallery/ui.js';
+import { clearLazyloadQueue } from '../features/gallery/lazyload.js';
 import { isDownloadRoute, showDownloadPage, hideDownloadPage } from '../features/download/index.js';
+import { elements } from '../shared/dom-elements.js';
 
-let currentRequestController = null;
-const HISTORY_RENDER_LIMIT = 1000;
+// 导入子模块
+import { handleSearchRoute } from './router/search.js';
+import { handleBrowseRoute, streamPath } from './router/browse.js';
+import { saveCurrentScrollPosition } from './router/scroll.js';
+import { getPathOnlyFromHash } from './router/utils.js';
 
-/**
- * 过滤集合，剔除被“墓碑”标记的相册项。
- * @param {Array} collection - 原始项目集合（相册和照片）
- * @returns {Object} { items: 过滤后的集合, removed: 被移除数量 }
- */
-function applyAlbumTombstones(collection) {
-    clearExpiredAlbumTombstones();
-    const tombstones = getAlbumTombstonesMap();
-    if (!(tombstones instanceof Map) || tombstones.size === 0) {
-        return { items: collection, removed: 0 };
-    }
-    const filtered = [];
-    let removed = 0;
-    for (const item of collection || []) {
-        if (item?.type === 'album') {
-            const albumPath = item?.data?.path;
-            if (albumPath && tombstones.has(albumPath)) {
-                removed += 1;
-                continue;
-            }
-        }
-        filtered.push(item);
-    }
-    return { items: filtered, removed };
-}
-
-/**
- * 生成面包屑导航HTML，保证安全性。
- * @param {Object} data - 搜索结果数据
- * @param {string} query - 搜索查询词
- * @returns {string} HTML 字符串
- */
-function generateBreadcrumbHTML(data, query) {
-    const preSearchHash = state.preSearchHash;
-    const hasResults = data.results && data.results.length > 0;
-    const searchQuery = escapeHtml(data.query || query || '');
-    const totalResults = data.totalResults || 0;
-    return `
-       <div class="flex items-center justify-between w-full">
-           <div class="flex items-center">
-               <a href="${preSearchHash}" class="flex items-center text-gray-500 hover:text-black transition-colors duration-200 group breadcrumb-link">
-                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="mr-1 group-hover:-translate-x-1 transition-transform"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
-                   返回
-               </a>
-               ${hasResults ? `<span class="mx-3 text-gray-300">/</span><span class="text-black font-bold">搜索结果: "${searchQuery}" (${totalResults}项)</span>` : ''}
-           </div>
-           <div id="sort-container" class="flex-shrink-0 ml-4"></div>
-       </div>`;
-}
-
-/**
- * 获取当前hash对应的路由路径（去除modal后缀与参数）。
- * @returns {string} 路径
- */
-function getPathOnlyFromHash() {
-    const cleanHashString = window.location.hash.replace(/#modal$/, '');
-    const newDecodedPath = decodeURIComponent(cleanHashString.substring(1).replace(/^\//, ''));
-    const questionMarkIndex = newDecodedPath.indexOf('?');
-    return questionMarkIndex !== -1 ? newDecodedPath.substring(0, questionMarkIndex) : newDecodedPath;
-}
+// 重新导出供外部使用
+export { streamPath };
 
 /**
  * 路由初始化。恢复session状态并监听hash变化。
@@ -247,7 +170,7 @@ function buildNavigationContext(cleanHashString, newDecodedPath) {
 }
 
 /**
- * 判断是否需要复用当前内容（避免重复渲染）。只有路径与排序都不变且已渲染内容时复用。
+ * 判断是否需要复用当前内容（避免重复渲染）。
  * @param {Object} navigation
  * @returns {boolean}
  */
@@ -273,6 +196,7 @@ function updatePreSearchHash(cleanHashString) {
 
 /**
  * 管理"来源搜索页"的hash，用于面包屑"返回搜索"功能。
+ * 只在从搜索页直接进入的第一个相册显示"返回"，继续导航到子相册时清除。
  * @param {string} newDecodedPath - 新的路径
  */
 function manageFromSearchHash(newDecodedPath) {
@@ -282,666 +206,34 @@ function manageFromSearchHash(newDecodedPath) {
     if (isTargetSearch || newDecodedPath === '') {
         try {
             sessionStorage.removeItem('sg_from_search_hash');
+            sessionStorage.removeItem('sg_from_search_first_album');
             state.update('fromSearchHash', null);
         } catch (e) {
             // 忽略sessionStorage错误
         }
     } else {
-        // 不是搜索页，从sessionStorage同步到state
+        // 非搜索页/首页，检查是否是从搜索页直接进入的第一个相册
         try {
             const savedHash = sessionStorage.getItem('sg_from_search_hash');
+            const firstAlbum = sessionStorage.getItem('sg_from_search_first_album');
+
             if (savedHash) {
-                state.update('fromSearchHash', savedHash);
+                if (!firstAlbum) {
+                    // 第一次从搜索页进入相册：记录这个相册路径，显示返回链接
+                    sessionStorage.setItem('sg_from_search_first_album', newDecodedPath);
+                    state.update('fromSearchHash', savedHash);
+                } else if (firstAlbum === newDecodedPath) {
+                    // 仍在第一个相册（可能是回退）：保持返回链接
+                    state.update('fromSearchHash', savedHash);
+                } else {
+                    // 已导航到其他相册：清除返回链接
+                    state.update('fromSearchHash', null);
+                }
+            } else {
+                state.update('fromSearchHash', null);
             }
         } catch (e) {
             // 忽略sessionStorage错误
         }
     }
-}
-
-/**
- * 搜索路由处理业务入口。
- * @param {Object} navigation
- * @param {AbortSignal} pageSignal
- */
-async function handleSearchRoute(navigation, pageSignal) {
-    const queryIndex = navigation.newDecodedPath.indexOf('?');
-    const searchParams = queryIndex !== -1 ? navigation.newDecodedPath.substring(queryIndex) : '';
-    const urlParams = new URLSearchParams(searchParams);
-    const query = urlParams.get('q') || '';
-    await executeSearch(query, pageSignal);
-}
-
-/**
- * 普通相册浏览路由处理业务入口。
- * @param {Object} navigation
- * @param {AbortSignal} pageSignal
- */
-async function handleBrowseRoute(navigation, pageSignal) {
-    const previousPath = state.currentBrowsePath;
-    const enhancedNavigation = { ...navigation, previousPath };
-    state.currentSort = navigation.currentSortValue;
-    state.currentBrowsePath = navigation.pathOnly;
-    renderBreadcrumb(navigation.pathOnly);
-
-    if (navigation.pathChanged || navigation.sortChanged) {
-        state.entrySort = navigation.currentSortValue;
-    }
-
-    if (navigation.currentSortValue === 'viewed_desc') {
-        await renderRecentHistory(navigation.pathOnly, pageSignal);
-        return;
-    }
-
-    await streamPath(navigation.pathOnly, pageSignal, enhancedNavigation);
-    enhancedNavigation.previousPath = navigation.pathOnly;
-
-    try {
-        setManagedTimeout(async () => {
-            const stillSameRoute = getPathOnlyFromHash() === navigation.pathOnly && AbortBus.get('page') === pageSignal;
-            const noRealContent = !(elements.contentGrid && elements.contentGrid.querySelector('.grid-item'));
-            const hasErrorState = elements.contentGrid && elements.contentGrid?.classList.contains('error-container');
-            const hasEmptyState = elements.contentGrid && elements.contentGrid.querySelector('.empty-state');
-            const allowRetry = !hasErrorState && !hasEmptyState;
-            if (stillSameRoute && noRealContent && allowRetry) {
-                const retrySignal = AbortBus.next('page');
-                await streamPath(navigation.pathOnly, retrySignal, enhancedNavigation);
-            }
-        }, ROUTER.ROUTE_RETRY_DELAY, 'route-retry-delay');
-    } catch { }
-}
-
-async function renderRecentHistory(path, signal) {
-    const prepareControl = await prepareForNewContent();
-    state.isBrowseLoading = true;
-    state.currentBrowsePage = 1;
-    state.totalBrowsePages = 1;
-
-    renderBreadcrumb(path);
-
-    try {
-        const historyRecords = await loadRecentHistoryRecords(path, {
-            limit: HISTORY_RENDER_LIMIT,
-            signal
-        });
-        if (!historyRecords || signal.aborted || AbortBus.get('page') !== signal || getPathOnlyFromHash() !== path) {
-            return;
-        }
-
-        if (prepareControl?.cancelSkeleton) {
-            prepareControl.cancelSkeleton();
-        }
-
-        if (!historyRecords.length) {
-            routerLogger.info('当前目录无浏览历史，回退到实时内容', { path });
-            await streamPath(path, signal);
-            return;
-        }
-
-        const items = historyRecords
-            .map(convertHistoryRecordToItem)
-            .filter(Boolean);
-
-        if (!items.length) {
-            routerLogger.info('浏览历史无有效项目，回退到实时内容', { path });
-            await streamPath(path, signal);
-            return;
-        }
-
-        const { contentElements, newMediaUrls } = renderBrowseGrid(items, 0);
-        const minimalLoader = document.getElementById('minimal-loader');
-        if (minimalLoader) {
-            minimalLoader.replaceWith(...contentElements);
-        } else {
-            safeSetInnerHTML(elements.contentGrid, '');
-            elements.contentGrid.append(...contentElements);
-        }
-
-        state.currentPhotos = newMediaUrls;
-        state.currentBrowsePage = 1;
-        state.totalBrowsePages = 1;
-
-        if (AbortBus.get('page') !== signal || getPathOnlyFromHash() !== path) return;
-
-        if (path) {
-            recordHierarchyView(path, {
-                entryType: 'album',
-                name: path.split('/').pop() || ''
-            }).catch(() => { });
-        }
-
-        const hasMediaFiles = items.some(item => item.type === 'photo' || item.type === 'video');
-
-        import('../shared/dom-elements.js').then(({ reinitializeElements }) => {
-            reinitializeElements();
-            const sortContainer = document.getElementById('sort-container');
-            if (sortContainer) {
-                if (hasMediaFiles) {
-                    renderLayoutToggleOnly(true);
-                } else {
-                    renderLayoutToggleOnly(false);
-                    renderSortDropdown();
-                }
-            }
-            applyLayoutMode();
-            finalizeNewContent(path);
-        });
-
-        setManagedTimeout(() => {
-            ensureLayoutToggleVisible();
-            adjustScrollOptimization(path);
-        }, 50, 'layout-post-render');
-    } catch (error) {
-        routerLogger.warn('加载最近浏览记录失败', error);
-        showEmptyViewedHistory();
-    } finally {
-        state.isBrowseLoading = false;
-        if (!elements.contentGrid?.classList.contains('error-container')) {
-            elements.contentGrid.style.minHeight = '';
-        }
-    }
-}
-
-/**
- * 主相册/目录内容流式加载及UI渲染方法。
- * @param {string} path 路径
- * @param {AbortSignal} signal
- */
-export async function streamPath(path, signal, navigation = null) {
-    const requestStart = performance.now();
-    const prepareControl = await prepareForNewContent(navigation);
-    state.isBrowseLoading = true;
-    state.currentBrowsePage = 1;
-    state.totalBrowsePages = 1;
-
-    renderBreadcrumb(path);
-
-    if (path.startsWith('search?q=')) {
-        routerLogger.error('搜索页面不应该调用 streamPath 函数');
-        return;
-    }
-
-    try {
-        const data = await fetchBrowseResults(path, state.currentBrowsePage, signal);
-
-        if (!data || signal.aborted || AbortBus.get('page') !== signal || getPathOnlyFromHash() !== path) return;
-
-        // 数据到达后取消加载器
-        const responseTime = performance.now() - requestStart;
-        if (prepareControl && prepareControl.cancelSkeleton) {
-            prepareControl.cancelSkeleton();
-        }
-
-        const { items: filteredItems, removed: removedAlbums } = applyAlbumTombstones(data.items || []);
-        data.items = filteredItems;
-        if (removedAlbums > 0 && typeof data.totalResults === 'number') {
-            data.totalResults = Math.max(0, data.totalResults - removedAlbums);
-        }
-
-        state.currentBrowsePath = path;
-        state.totalBrowsePages = data.totalPages;
-
-        // 记录浏览历史（带元数据）
-        // 提取当前路径的名称（最后一级目录名）
-        const pathName = path ? path.split('/').pop() : '首页';
-
-
-        if (!data.items || data.items.length === 0) {
-            const sortContainer = document.getElementById('sort-container');
-            if (sortContainer) safeSetInnerHTML(sortContainer, '');
-            state.totalBrowsePages = 0;
-            state.currentBrowsePage = 1;
-            // 隐藏无限加载器，提升UI性能
-            if (elements.infiniteScrollLoader) elements.infiniteScrollLoader?.classList.remove('visible');
-            showEmptyAlbum();
-            return;
-        }
-
-        const hasMediaFiles = data.items.some(item => item.type === 'photo' || item.type === 'video');
-
-        // 记录浏览历史（目录与相册均记录）
-        const coverSource = data.items.find(item => item.type === 'photo' || item.type === 'video')
-            || data.items.find(item => item.type === 'album');
-        const coverData = coverSource?.data || coverSource;
-        const coverUrl = coverData?.coverUrl || coverData?.thumbnailUrl || '';
-        const coverWidth = coverData?.coverWidth || coverData?.width || 0;
-        const coverHeight = coverData?.coverHeight || coverData?.height || 0;
-
-        onAlbumViewed(path, {
-            name: pathName,
-            coverUrl,
-            thumbnailUrl: coverData?.thumbnailUrl || coverUrl,
-            width: coverWidth,
-            height: coverHeight
-        }).catch(() => { });
-
-        // 直接渲染所有项目（移除分批渲染逻辑）
-        const { contentElements, newMediaUrls } = renderBrowseGrid(data.items, 0);
-        const minimalLoader = document.getElementById('minimal-loader');
-        if (minimalLoader) {
-            minimalLoader.replaceWith(...contentElements);
-        } else {
-            safeSetInnerHTML(elements.contentGrid, '');
-            elements.contentGrid.append(...contentElements);
-        }
-
-        const viewKind = (!path || path === '') ? 'home' : (hasMediaFiles ? 'album' : 'directory');
-        scheduleThumbnailPreheat({
-            mode: hasMediaFiles ? 'media' : 'album',
-            container: elements.contentGrid,
-            reason: `${viewKind}-preheat`
-        });
-
-        // 更新状态
-        state.currentPhotos = newMediaUrls;
-        state.currentBrowsePage++;
-
-        if (AbortBus.get('page') !== signal || getPathOnlyFromHash() !== path) return;
-
-        // UI恢复与布局切换
-        import('../shared/dom-elements.js').then(({ reinitializeElements }) => {
-            reinitializeElements();
-            const sortContainer = document.getElementById('sort-container');
-            if (sortContainer) {
-                // 优化：布局切换始终显示，排序按钮仅在相册列表时显示
-                if (hasMediaFiles) {
-                    // 图片/视频页（相册页）：使用动画
-                    renderLayoutToggleOnly(true);
-                } else {
-                    // 相册列表页（首页/目录页）：不使用动画
-                    renderLayoutToggleOnly(false);
-                    renderSortDropdown();
-                }
-            }
-            applyLayoutMode();
-            finalizeNewContent(path);
-        });
-
-        setManagedTimeout(() => {
-            ensureLayoutToggleVisible();
-            adjustScrollOptimization(path);
-        }, 50, 'layout-post-render');
-    } catch (error) {
-        if (error?.code === 'ALBUM_NOT_FOUND') {
-            if (prepareControl?.cancelSkeleton) {
-                prepareControl.cancelSkeleton();
-            }
-            showMissingAlbumState();
-            showNotification('相册不存在或已被移除', 'warning');
-            state.isBrowseLoading = false;
-            return;
-        }
-        if (error.name === 'AbortError') {
-            return;
-        }
-        routerLogger.warn('路径流式加载失败', { path, error: error.message });
-        showNetworkError();
-        return;
-    } finally {
-        state.isBrowseLoading = false;
-        if (!elements.contentGrid?.classList.contains('error-container')) {
-            elements.contentGrid.style.minHeight = '';
-        }
-    }
-}
-
-/**
- * 执行全局搜索并渲染结果。
- * @param {string} query - 搜索关键词
- * @param {AbortSignal} signal - 中止信号
- */
-async function executeSearch(query, signal) {
-    const prepareControl = await prepareForNewContent();
-    state.currentPhotos = [];
-    state.currentSearchQuery = query;
-    state.currentSearchPage = 1;
-    state.totalSearchPages = 1;
-    state.isSearchLoading = true;
-
-    removeSortControls();
-
-    try {
-        const data = await fetchSearchResults(query, state.currentSearchPage, signal);
-
-        const searchPathKey = `search?q=${query}`;
-        if (signal.aborted || AbortBus.get('page') !== signal) return;
-
-        // 到达后取消骨架
-        if (prepareControl && prepareControl.cancelSkeleton) {
-            prepareControl.cancelSkeleton();
-        }
-
-        if (!data || !data.results) {
-            routerLogger.error('搜索返回数据不完整', data);
-            showNetworkError();
-            return;
-        }
-
-        const { items: filteredResults, removed: removedAlbums } = applyAlbumTombstones(data.results || []);
-        data.results = filteredResults;
-        if (removedAlbums > 0 && typeof data.totalResults === 'number') {
-            data.totalResults = Math.max(0, data.totalResults - removedAlbums);
-        }
-
-        state.currentBrowsePath = searchPathKey;
-
-        safeSetInnerHTML(elements.breadcrumbNav, generateBreadcrumbHTML(data, query));
-
-        if (data.results.length === 0) {
-            state.totalSearchPages = 0;
-            state.currentSearchPage = 1;
-            // 隐藏加载器
-            const loaderContainer = document.getElementById('infinite-scroll-loader-container');
-            if (loaderContainer) loaderContainer?.classList.remove('visible');
-            showEmptySearchResults(query);
-            elements.contentGrid.style.minHeight = '';
-            return;
-        }
-
-        // 直接渲染所有搜索结果（移除分批渲染逻辑）
-        const { contentElements, newMediaUrls } = renderSearchGrid(data.results, 0);
-        const minimalLoader = document.getElementById('minimal-loader');
-        if (minimalLoader) {
-            minimalLoader.replaceWith(...contentElements);
-        } else {
-            safeSetInnerHTML(elements.contentGrid, '');
-            elements.contentGrid.append(...contentElements);
-        }
-
-        scheduleThumbnailPreheat({
-            mode: 'media',
-            container: elements.contentGrid,
-            reason: 'search-preheat'
-        });
-
-        // 更新状态
-        state.currentPhotos = newMediaUrls;
-        state.totalSearchPages = data.totalPages;
-        state.currentSearchPage++;
-
-        if (AbortBus.get('page') !== signal) return;
-        import('../shared/dom-elements.js').then(({ reinitializeElements }) => {
-            reinitializeElements();
-            // 搜索页是图片列表，使用动画
-            renderLayoutToggleOnly(true);
-            removeSortControls();
-        });
-
-        applyLayoutMode();
-        finalizeNewContent(searchPathKey);
-
-        setManagedTimeout(() => {
-            ensureLayoutToggleVisible();
-            adjustScrollOptimization(searchPathKey);
-        }, 50, 'search-layout-post-render');
-    } catch (error) {
-        if (error.name === 'AbortError') {
-            return;
-        }
-        routerLogger.warn('搜索请求失败', { query, error: error.message });
-        if (error.message && error.message.includes('搜索索引正在构建中')) {
-            showIndexBuildingError();
-        } else {
-            showNetworkError();
-        }
-        return;
-    } finally {
-        state.isSearchLoading = false;
-        if (!elements.contentGrid?.classList.contains('error-container')) {
-            elements.contentGrid.style.minHeight = '';
-        }
-    }
-}
-
-
-
-/**
- * 准备新内容渲染，清理旧页面与状态，并处理loading效果。
- * @param {Object} [navigation] - 导航上下文对象
- * @returns {Promise<{ cancelSkeleton():void }>} 控制对象
- */
-function prepareForNewContent(navigation = null) {
-    return new Promise(resolve => {
-
-        // 1. 先清空内容，避免滚动时看到旧内容移动
-        safeSetInnerHTML(elements.contentGrid, '');
-
-        // 2. 立即滚动到顶部（此时内容已清空，看不到滚动）
-        if (window.scrollY > 0) {
-            window.scrollTo(0, 0);
-        }
-
-        // 3. 清除目标路径的保存位置，避免恢复到旧位置
-        // 但不清除以下情况：
-        // - 当前路径的位置（用于modal返回）
-        // - 上级路径的位置（用于返回上级目录）
-        if (navigation && navigation.pathOnly) {
-            const targetPath = navigation.pathOnly;
-            const previousPath = navigation.previousPath;
-            const pathChanged = !previousPath || targetPath !== previousPath;
-
-            if (pathChanged) {
-                // 判断是否是返回上级目录
-                const isGoingBack = previousPath && previousPath.startsWith(`${targetPath}/`);
-
-                // 只有前进到新页面时才清除，返回上级时保留
-                if (!isGoingBack) {
-                    const newScrollPositions = new Map(state.scrollPositions);
-                    newScrollPositions.delete(targetPath);
-                    state.scrollPositions = newScrollPositions;
-                }
-            }
-        }
-
-        // 4. topbar状态已在preCalculateTopbarOffset中处理
-
-        const scroller = state.virtualScroller;
-        if (scroller) {
-            scroller.destroy();
-            state.update('virtualScroller', null);
-        }
-        // 清理预加载缓存
-        if (typeof window !== 'undefined' && window.clearPrefetchCache) {
-            window.clearPrefetchCache();
-        }
-
-        let loaderShown = false;
-        let dataArrived = false;
-        let loaderTimer = null;
-
-        // 延迟 600ms 显示加载器（局域网不显示，3G网络必定显示）
-        loaderTimer = setTimeout(() => {
-            if (!loaderShown && !dataArrived) {
-                showMinimalLoader({ text: '加载中' });
-                loaderShown = true;
-            }
-        }, 600);
-
-        // 立即返回控制对象
-        const controlObject = {
-            cancelSkeleton: () => {
-                dataArrived = true;
-
-                if (loaderTimer) {
-                    clearTimeout(loaderTimer);
-                    loaderTimer = null;
-                }
-
-                if (loaderShown) {
-                    const loader = document.getElementById('minimal-loader');
-                    if (loader && loader.parentNode) {
-                        loader.remove();
-                    }
-                    loaderShown = false;
-                }
-            }
-        };
-
-        // 立即resolve，让streamPath能马上调用cancelSkeleton
-        resolve(controlObject);
-
-        // 后台继续执行清理工作
-        setManagedTimeout(() => {
-            elements.contentGrid.style.height = 'auto';
-            // 隐藏加载器
-            if (elements.infiniteScrollLoader) {
-                elements.infiniteScrollLoader?.classList.remove('visible');
-            }
-            // 仅路径切换才清空图片状态
-            const currentPath = state.currentBrowsePath;
-            const isSamePathReload = currentPath && currentPath === getPathOnlyFromHash();
-            if (!isSamePathReload) {
-                state.update('currentPhotos', []);
-            }
-        }, 100, 'content-transition');
-    });
-}
-
-/**
- * 新内容渲染完成后，处理懒加载与滚动状态恢复。
- * @param {string} pathKey
- */
-function finalizeNewContent(pathKey) {
-    if (!state.virtualScroller) {
-        setupLazyLoading();
-        let stateRestored = false;
-        if (window.restorePageLazyState) {
-            stateRestored = window.restorePageLazyState(pathKey);
-        }
-        if (!stateRestored && elements.contentGrid?.classList.contains('masonry-mode')) {
-            // 延迟执行瀑布流布局，确保图片容器已正确渲染
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                    applyMasonryLayout();
-                });
-            });
-        }
-    }
-    state.update('currentColumnCount', getMasonryColumns());
-    preloadVisibleImages();
-    elements.contentGrid.style.minHeight = '';
-    state.update('isInitialLoad', false);
-}
-
-/**
- * 预加载首屏与可视区域图片，加速首屏体验与布局稳定性。
- */
-function preloadVisibleImages() {
-    if (!elements.contentGrid) return;
-    const viewportHeight = window.innerHeight;
-    const lazyImages = Array.from(elements.contentGrid.querySelectorAll('.lazy-image:not(.loaded)'));
-    if (lazyImages.length === 0) return;
-    // 可见范围判断
-    const visibleImages = lazyImages.filter(img => {
-        const rect = img.getBoundingClientRect();
-        return rect.top < viewportHeight * 2.5;
-    });
-    // 优先前20张图片
-    const priorityImages = visibleImages.slice(0, 20);
-    if (priorityImages.length > 0) {
-        import('../features/gallery/lazyload.js').then(lazyloadModule => {
-            priorityImages.forEach(img => {
-                if (typeof lazyloadModule.enqueueLazyImage === 'function') {
-                    lazyloadModule.enqueueLazyImage(img, {
-                        rect: img.getBoundingClientRect(),
-                        priority: 'high'
-                    });
-                }
-            });
-        }).catch(error => {
-            routerLogger.warn('预加载图片失败', error);
-        });
-    }
-}
-
-/**
- * 保存当前滚动位置到state和sessionStorage。
- */
-function saveCurrentScrollPosition() {
-    const key = state.currentBrowsePath;
-    if (typeof key === 'string' && key.length > 0) {
-        const newScrollPositions = new Map(state.scrollPositions);
-        newScrollPositions.set(key, window.scrollY);
-        state.scrollPositions = newScrollPositions;
-        try {
-            const obj = Object.fromEntries(state.scrollPositions);
-            const entries = Object.entries(obj);
-            const limited = entries.slice(-200);
-            sessionStorage.setItem('sg_scroll_positions', JSON.stringify(Object.fromEntries(limited)));
-            sessionStorage.setItem('sg_pre_search_hash', state.preSearchHash || '#/');
-        } catch { }
-    }
-}
-
-// 页面可见性变化时自动保存当前滚动位置
-window.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') {
-        saveCurrentScrollPosition();
-    }
-});
-
-// 页面卸载前自动保存当前滚动位置
-window.addEventListener('beforeunload', () => {
-    saveCurrentScrollPosition();
-});
-
-/**
- * 上传并记录某路径被浏览的行为，支持离线同步。
- * @param {string} path - 相册路径
- * @param {Object} metadata - 元数据（可选）
- * @param {string} metadata.name - 相册名称
- * @param {string} metadata.coverUrl - 封面URL
- */
-async function onAlbumViewed(path, metadata = {}) {
-    if (!path) return;
-
-    await recordHierarchyView(path, {
-        timestamp: Date.now(),
-        name: metadata.name || '',
-        entryType: 'album',
-        coverUrl: metadata.coverUrl || '',
-        thumbnailUrl: metadata.thumbnailUrl || metadata.coverUrl || '',
-        width: metadata.width || 0,
-        height: metadata.height || 0,
-        needsHydration: !metadata.coverUrl
-    });
-}
-
-function convertHistoryRecordToItem(record) {
-    if (!record || !record.path) return null;
-    const visitedAt = Number(record.viewedAt || record.timestamp || Date.now());
-
-    if (record.entryType === 'album') {
-        const coverUrl = record.coverUrl || record.thumbnailUrl || '';
-        return {
-            type: 'album',
-            data: {
-                name: record.name || record.path.split('/').pop() || '未命名相册',
-                path: record.path,
-                coverUrl,
-                coverWidth: record.width || 1,
-                coverHeight: record.height || 1,
-                mtime: visitedAt
-            }
-        };
-    }
-
-    const originalUrl = buildStaticUrlFromPath(record.path);
-    const thumbnailUrl = record.thumbnailUrl || record.coverUrl || '';
-
-    return {
-        type: record.entryType === 'video' ? 'video' : 'photo',
-        data: {
-            originalUrl,
-            thumbnailUrl: thumbnailUrl || originalUrl,
-            width: record.width || 1,
-            height: record.height || 1,
-            mtime: visitedAt
-        }
-    };
-}
-
-function buildStaticUrlFromPath(path) {
-    const normalized = (path || '').split('/').filter(Boolean).map(segment => encodeURIComponent(segment));
-    return `/static/${normalized.join('/')}`;
 }
