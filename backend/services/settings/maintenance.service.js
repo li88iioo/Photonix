@@ -399,8 +399,9 @@ async function getIndexStatus() {
     const currentTime = new Date().toISOString();
     // SQLite CURRENT_TIMESTAMP 返回 UTC 时间但不带 'Z' 后缀
     // 添加 'Z' 后缀使其成为有效的 ISO 8601 UTC 时间，前端才能正确转换为本地时间
-    let lastUpdated = row?.last_updated || currentTime;
-    if (lastUpdated && !lastUpdated.endsWith('Z') && !lastUpdated.includes('+')) {
+    let lastUpdated = row?.last_updated || currentTime;    // 确保时间戳符合 ISO 8601 格式
+    // 检查是否已包含时区信息（+、- 或 Z），避免重复添加
+    if (typeof lastUpdated === 'string' && lastUpdated && !lastUpdated.includes('Z') && !/[+-]\d{2}:\d{2}$/.test(lastUpdated)) {
       lastUpdated = lastUpdated.replace(' ', 'T') + 'Z';
     }
 

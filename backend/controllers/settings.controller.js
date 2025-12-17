@@ -146,7 +146,10 @@ exports.updateSettings = async (req, res) => {
 
     return res.status(response.statusCode).json(response.body);
   } catch (error) {
-    logger.error('设置更新过程中发生未预期的错误:', error);
+    // 预期的业务错误（如密钥错误）使用warn级别，避免日志噪音
+    const isExpectedError = error instanceof AuthorizationError || error instanceof ValidationError;
+    const logLevel = isExpectedError ? 'warn' : 'error';
+    logger[logLevel](`设置更新失败: ${error.message}`, isExpectedError ? undefined : error);
     throw error;
   }
 };

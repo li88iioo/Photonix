@@ -9,12 +9,23 @@ const logger = require('../config/logger');
 const { ENABLE_AUTH_DEBUG_LOGS } = require('../config');
 const { getUserRole } = require('./permissions');
 const state = require('../services/state.manager');
+const bcrypt = require('bcryptjs');
+const db = require('../db/multi-db');
 
 const shouldLogVerbose = () => ENABLE_AUTH_DEBUG_LOGS;
 
 // 认证缓存，避免重复验证相同的token
 const authCache = new Map();
-const AUTH_CACHE_TTL = 30000; // 30秒缓存
+// 认证缓存 TTL - 添加边界验证防止环境变量攻击
+const RAW_CACHE_TTL = Number(process.env.AUTH_CACHE_TTL) || 30000;
+const MIN_CACHE_TTL = 5000;   // 最小 5 秒
+const MAX_CACHE_TTL = 3600000; // 最大 1 小时
+const AUTH_CACHE_TTL = Math.max(MIN_CACHE_TTL, Math.min(RAW_CACHE_TTL, MAX_CACHE_TTL));
+
+// 如果配置值超出范围，记录警告
+if (AUTH_CACHE_TTL !== RAW_CACHE_TTL) {
+    logger.warn(`[Auth] AUTH_CACHE_TTL (${RAW_CACHE_TTL}ms) 超出安全范围，已限制为 ${AUTH_CACHE_TTL}ms (范围: ${MIN_CACHE_TTL}-${MAX_CACHE_TTL}ms)`);
+}
 
 /**
  * JWT密钥配置
@@ -144,15 +155,6 @@ module.exports = async function (req, res, next) {
             timestamp: now
         });
 
-        // 清理缓存
-        if (authCache.size > 100) {
-            for (const [key, value] of authCache.entries()) {
-                if (now - value.timestamp > AUTH_CACHE_TTL) {
-                    authCache.delete(key);
-                }
-            }
-        }
-
         next();
 
     } catch (err) {
@@ -168,3 +170,23 @@ module.exports = async function (req, res, next) {
         return res.status(500).json({ code: 'AUTH_ERROR', message: '服务器认证时出错', requestId: req.requestId });
     }
 };
+
+// 定期清理过期缓存,避免在请求处理路径上清理影响性能
+const cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    let cleaned = 0;
+    for (const [key, value] of authCache.entries()) {
+        if (now - value.timestamp > AUTH_CACHE_TTL) {
+            authCache.delete(key);
+            cleaned++;
+        }
+    }
+    if (cleaned > 0) {
+        logger.debug(`[Auth] 清理了 ${cleaned} 个过期认证缓存`);
+    }
+}, AUTH_CACHE_TTL); // 每30秒清理一次
+
+// 允许进程退出
+if (typeof cleanupInterval.unref === 'function') {
+    cleanupInterval.unref();
+}

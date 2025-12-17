@@ -710,9 +710,17 @@ const dbTimeoutManager = new DbTimeoutManager();
 
                 // 清理 Sharp 缓存，释放 libvips 内存
                 try {
-                    sharp.cache(false);  // 禁用并清空缓存
-                    sharp.cache({ memory: 16, items: 50, files: 0 });  // 重新启用较小缓存
-                    logger.debug('[INDEXING-WORKER] 已清理 Sharp 缓存');
+                    // 安全的缓存清理：先设为0，等待100ms后重新启用
+                    // 避免在禁用期间其他请求调用 Sharp 导致未定义行为
+                    sharp.cache({ memory: 0, items: 0, files: 0 });
+
+                    await new Promise(resolve => setTimeout(resolve, 100));
+
+                    // 从环境变量读取配置，提供灵活性
+                    const cacheMemory = parseInt(process.env.SHARP_CACHE_MEMORY_MB || '16', 10);
+                    const cacheItems = parseInt(process.env.SHARP_CACHE_ITEMS || '50', 10);
+                    sharp.cache({ memory: cacheMemory, items: cacheItems, files: 0 });
+                    logger.debug(`[INDEXING-WORKER] 已清理 Sharp 缓存 (memory: ${cacheMemory}MB, items: ${cacheItems})`);
                 } catch (e) {
                     logger.debug('[INDEXING-WORKER] 清理 Sharp 缓存失败（忽略）:', e && e.message);
                 }

@@ -295,18 +295,10 @@ async function runPreparedBatch(dbType, sql, rows, options = {}) {
     }
 }
 
+// 注意: 信号处理（SIGINT, SIGTERM）已在 server.js 中集中管理
+// 避免重复注册导致竞态条件，server.js 会在退出时调用 closeAllConnections()
 process.on('beforeExit', async () => {
     await closeAllConnections();
-});
-process.on('SIGINT', async () => {
-    logger.info('收到 SIGINT，清理 SQLite 连接');
-    await closeAllConnections();
-    process.exit(0);
-});
-process.on('SIGTERM', async () => {
-    logger.info('收到 SIGTERM，清理 SQLite 连接');
-    await closeAllConnections();
-    process.exit(0);
 });
 
 const dbHealthStatus = new Map();

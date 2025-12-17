@@ -376,7 +376,7 @@
   THUMB_TARGET_WIDTH=800
   THUMB_QUALITY_HIGH=85
 
-2) USE_FILE_SYSTEM_HLS_CHECK / HLS_*（TTL/批次/间隔/延迟）
+7) USE_FILE_SYSTEM_HLS_CHECK / HLS_*（TTL/批次/间隔/延迟）
 - 作用：基于文件系统检查 HLS 就绪与缓存
 - 默认值：true / 300000 / 10 / 1000 / 100
 - 取值/格式：布尔 / 毫秒 / 数量
@@ -385,7 +385,7 @@
 - 代码引用：backend/config/index.js
 - 示例：HLS_CACHE_TTL_MS=300000
 
-3) FFMPEG_PRESET
+8) FFMPEG_PRESET
 - 作用：FFmpeg 编码预设（速度/质量权衡）
 - 默认值：veryfast
 - 取值/范围：ultrafast|superfast|veryfast|faster|fast|medium|slow|slower|veryslow
@@ -394,7 +394,7 @@
 - 代码引用：services/adaptive.service.js、workers/video-processor.js
 - 示例：FFMPEG_PRESET=fast
 
-4) SHARP_CACHE_*（MEMORY_MB/ITEMS/FILES）/ SHARP_MAX_PIXELS
+9) SHARP_CACHE_*（MEMORY_MB/ITEMS/FILES）/ SHARP_MAX_PIXELS
 - 作用：Sharp 内存与最大像素保护
 - 默认值：32 / 100 / 0 / 576000000
 - 取值/格式：整数
@@ -403,7 +403,7 @@
 - 代码引用：workers/thumbnail-worker.js、workers/indexing-worker.js、services/file.service.js
 - 示例：SHARP_CACHE_MEMORY_MB=64
 
-5) DIMENSION_PROBE_CONCURRENCY
+10) DIMENSION_PROBE_CONCURRENCY
 - 作用：文件尺寸探测并发（文件服务）
 - 默认值：4
 - 取值/格式：>=1 的整数
@@ -412,7 +412,7 @@
 - 代码引用：services/file.service.js
 - 示例：DIMENSION_PROBE_CONCURRENCY=4
 
-6) AI_*（AI_CACHE_MAX_BYTES / AI_DAILY_LIMIT / AI_PER_IMAGE_COOLDOWN_SEC / AI_ENABLE_VISION_PROBE）
+11) AI_*（AI_CACHE_MAX_BYTES / AI_DAILY_LIMIT / AI_PER_IMAGE_COOLDOWN_SEC / AI_ENABLE_VISION_PROBE）
 - 作用：AI 缓存与配额/冷却
 - 默认值：268435456（生产建议）/ 200 / 60（开发较小）/ false
 - 取值/格式：字节数/次数/秒/true|false
@@ -422,7 +422,7 @@
 - 示例：AI_CACHE_MAX_BYTES=268435456
 - 额外说明：`AI_ENABLE_VISION_PROBE=true` 时，未知模型会自动发送一张 1x1 png 进行视觉能力探测，仅在需要时额外消耗极少 token
 
-7) PERFORMANCE_MODE
+12) PERFORMANCE_MODE
 - 作用：全局性能模式（自适应提示）
 - 默认值：auto
 - 取值/格式：auto|low|medium|high
@@ -433,22 +433,34 @@
 - 日志节流：`ADAPTIVE_LOG_THROTTLE_MS` 控制 `[自适应]` 调度日志的最小输出间隔（默认 300000ms ≈ 5 分钟），
   调大（如 600000-900000）可进一步降噪，调小可更频繁观测负载切换
 
-8) DETECTED_CPU_COUNT / DETECTED_MEMORY_GB
-- 作用：显式指定硬件资源供配置算法参考，当系统自动检测不准确时使用
-- 默认值：未设置时自动检测系统硬件
-- 取值/格式：CPU_COUNT为1-64整数，MEMORY_GB为1-1024整数
+13) DETECTED_CPU_COUNT / DETECTED_MEMORY_GB
+- 作用：
+  - DETECTED_CPU_COUNT：服务器核心数，显式指定 CPU 核心数量
+  - DETECTED_MEMORY_GB：服务器内存（GB），显式指定可用内存大小
+  - 当系统自动检测不准确时使用（如容器环境）
+  - **与 docker-compose.yml 容器资源限制联动**：
+    ```yaml
+    deploy:
+      resources:
+        limits:
+          cpus: '${DETECTED_CPU_COUNT:-1}'
+          memory: ${DETECTED_MEMORY_GB:-2}G
+    ```
+- 默认值：未设置时自动检测系统硬件（docker-compose 默认 1核/2GB）
+- 取值/格式：CPU_COUNT 为 1-64 整数，MEMORY_GB 为 1-1024 整数
 - 推荐配置方案：
-  - 容器环境：根据容器限制设置（如Docker --cpus --memory）
-  - 虚拟机环境：根据分配的虚拟硬件设置
-  - 云服务器：根据实例规格设置
+  - Docker 部署：在 .env 中设置，同时控制应用配置和容器资源限制
+  - 虚拟机/云服务器：根据实例规格设置
   - 物理机：通常不需要设置，自动检测即可
 - 风险：设置过高会高估系统能力导致过载；设置过低会浪费硬件资源
-- 代码引用：backend/config/hardware.js、config/runtime.js
+- 代码引用：backend/config/hardware.js、config/runtime.js、docker-compose.yml
 - 示例：
+  # 服务器核心数（同时限制 Docker 容器 CPU）
   DETECTED_CPU_COUNT=4
+  # 服务器内存 GB（同时限制 Docker 容器内存）
   DETECTED_MEMORY_GB=8
 
-9) ENABLE_APP_CSP
+14) ENABLE_APP_CSP
 - 作用：启用后端层面的 Content-Security-Policy
 - 默认值：false
 - 取值/格式：true|false
@@ -457,7 +469,7 @@
 - 代码引用：backend/app.js（helmet csp）
 - 示例：ENABLE_APP_CSP=true
 
-10) THUMB_ONDEMAND_RESERVE（按需预留机制）
+15) THUMB_ONDEMAND_RESERVE（按需预留机制）
 - 作用：检测到按需任务时，为按需生成预留 worker 槽位，防止批量补全占满所有并发
 - 默认值：1（检测到按需任务时，保留1个槽位）
 - 取值/格式：0-NUM_WORKERS 的整数
@@ -487,7 +499,7 @@
 - 代码引用：services/thumbnail.service.js（THUMB_ONDEMAND_RESERVE 常量）
 - 示例：THUMB_ONDEMAND_RESERVE=1
 
-11) THUMB_ONDEMAND_QUEUE_MAX
+16) THUMB_ONDEMAND_QUEUE_MAX
 - 作用：缩略图按需生成队列最大长度
 - 默认值：2000
 - 取值/格式：>=1 的整数
@@ -496,7 +508,7 @@
 - 代码引用：services/thumbnail.service.js
 - 示例：THUMB_ONDEMAND_QUEUE_MAX=2000
 
-12) THUMB_ONDEMAND_IDLE_DESTROY_MS
+17) THUMB_ONDEMAND_IDLE_DESTROY_MS
 - 作用：缩略图按需生成worker空闲销毁时间（毫秒）
 - 默认值：30000（30秒）
 - 取值/格式：毫秒整数
@@ -505,7 +517,7 @@
 - 代码引用：services/thumbnail.service.js
 - 示例：THUMB_ONDEMAND_IDLE_DESTROY_MS=30000
 
-13) THUMB_ONDEMAND_BUSY_THRESHOLD（批量补全自动让路阈值）
+18) THUMB_ONDEMAND_BUSY_THRESHOLD（批量补全自动让路阈值）
 - 作用：批量缩略图补全时，当按需任务数量超过此阈值时，自动暂停批量补全为前台让路
 - 默认值：5
 - 取值/格式：>=1 的整数
@@ -563,7 +575,7 @@
   - 代码引用：workers/indexing-worker.js
   - 示例：INDEX_CACHE_LOG_INTERVAL_MS=60000
 
-13) THUMB_IDLE_SHUTDOWN_MS
+19) THUMB_IDLE_SHUTDOWN_MS
 - 作用：缩略图worker空闲自动关闭时间（毫秒）
 - 默认值：600000（10分钟）
 - 取值/格式：毫秒整数
@@ -572,7 +584,7 @@
 - 代码引用：services/worker.manager.js
 - 示例：THUMB_IDLE_SHUTDOWN_MS=600000
 
-14) THUMB_CHECK_INTERVAL_MS
+20) THUMB_CHECK_INTERVAL_MS
 - 作用：缩略图worker状态检查间隔（毫秒）
 - 默认值：60000（1分钟）
 - 取值/格式：毫秒整数
@@ -581,7 +593,7 @@
 - 代码引用：services/worker.manager.js
 - 示例：THUMB_CHECK_INTERVAL_MS=60000
 
-15) API_BASE
+21) API_BASE
 - 作用：API 基础 URL（为空使用相对路径）
 - 默认值：空字符串
 - 取值/格式：URL 前缀
@@ -590,7 +602,7 @@
 - 代码引用：backend/config/index.js
 - 示例：API_BASE=/api
 
-16) ENABLE_REDIS
+22) ENABLE_REDIS
 - 作用：是否启用Redis连接（总开关）
 - 默认值：false
 - 取值/格式：true | false
@@ -606,7 +618,7 @@
   - RATE_LIMIT_REDIS_WAIT_MS（默认5000）：限流中间件在启动时等待 Redis 就绪的最大时长（毫秒），避免因握手延迟而降级到内存模式。超时仍会自动回退。
   - RATE_LIMIT_REDIS_POLL_INTERVAL_MS（默认200）：等待窗口内的检查间隔（毫秒）。增大可降低启动期间的 Redis 压力，减小可加快检测响应。
 
-17) METRICS_TOKEN
+23) METRICS_TOKEN
 - 作用：访问metrics端点的认证令牌
 - 默认值：空字符串（无认证）
 - 取值/格式：任意字符串
@@ -615,7 +627,7 @@
 - 代码引用：backend/routes/metrics.routes.js
 - 示例：METRICS_TOKEN=secure_metrics_token
 
-18) MEMORY_MONITOR_ENABLED / MEMORY_MONITOR_INTERVAL_MS / MEMORY_MONITOR_LOG_THROTTLE_MS / MEMORY_MONITOR_LOG_LEVEL
+24) MEMORY_MONITOR_ENABLED / MEMORY_MONITOR_INTERVAL_MS / MEMORY_MONITOR_LOG_THROTTLE_MS / MEMORY_MONITOR_LOG_LEVEL
 - 作用：控制缩略图服务内置的 Node 进程内存采样与日志输出频率，避免 `[内存监控]` 调试日志刷屏
 - 默认值：`MEMORY_MONITOR_ENABLED` 在 development 自动开启、production 关闭；`MEMORY_MONITOR_INTERVAL_MS=60000`；
   `MEMORY_MONITOR_LOG_THROTTLE_MS=300000`（5分钟）；`MEMORY_MONITOR_LOG_LEVEL=debug`
@@ -629,7 +641,7 @@
   MEMORY_MONITOR_LOG_THROTTLE_MS=900000
   MEMORY_MONITOR_LOG_LEVEL=info
 
-19) HEAVY_CACHE_TTL_MS
+25) HEAVY_CACHE_TTL_MS
 - 作用：重型缓存TTL时间（毫秒）
 - 默认值：3000（3秒）
 - 取值/格式：毫秒整数
@@ -638,7 +650,7 @@
 - 代码引用：backend/services/orchestrator.js
 - 示例：HEAVY_CACHE_TTL_MS=3000
 
-20) EVENT_LOOP_SAMPLE_INTERVAL
+26) EVENT_LOOP_SAMPLE_INTERVAL
 - 作用：事件循环延迟采样间隔（毫秒）
 - 默认值：1000（1秒）
 - 取值/格式：毫秒整数
@@ -647,7 +659,7 @@
 - 代码引用：backend/services/orchestrator.js
 - 示例：EVENT_LOOP_SAMPLE_INTERVAL=1000
 
-21) DB_MAINT_INTERVAL_MS
+27) DB_MAINT_INTERVAL_MS
 - 作用：数据库维护任务执行间隔（毫秒）
 - 默认值：86400000（1天）
 - 取值/格式：毫秒整数
@@ -656,7 +668,7 @@
 - 代码引用：backend/services/orchestrator.js
 - 示例：DB_MAINT_INTERVAL_MS=86400000
 
-22) DB_MAINT_RETRY_MS
+28) DB_MAINT_RETRY_MS
 - 作用：数据库维护任务重试间隔（毫秒）
 - 默认值：21600000（6小时）
 - 取值/格式：毫秒整数
@@ -665,7 +677,7 @@
 - 代码引用：backend/services/orchestrator.js
 - 示例：DB_MAINT_RETRY_MS=21600000
 
-23) DB_MAINT_TIMEOUT_MS
+29) DB_MAINT_TIMEOUT_MS
 - 作用：数据库维护任务超时时间（毫秒）
 - 默认值：600000（10分钟）
 - 取值/格式：毫秒整数
@@ -673,6 +685,38 @@
 - 风险：过小可能导致维护任务被取消
 - 代码引用：backend/services/orchestrator.js
 - 示例：DB_MAINT_TIMEOUT_MS=600000
+
+30) ENABLE_MANUAL_GC
+- 作用：启用主进程空闲时自动垃圾回收
+- 默认值：true
+- 取值/格式：true | false
+- 推荐配置方案：
+  - 生产环境：保持 true（默认），定期释放内存
+  - 调试/性能测试：可设为 false 观察原生 GC 行为
+- 工作原理：
+  - 每2分钟检查一次系统负载
+  - 仅在系统空闲时（isHeavy() 返回 false）触发 GC
+  - 采样日志（每10次记录详细指标），减少 memoryUsage() 开销
+- 前置条件：需要主进程使用 --expose-gc 启动（已在 ecosystem.config.js 配置）
+- 风险：关闭可能导致任务完成后内存不及时释放
+- 代码引用：backend/services/orchestrator.js
+- 示例：ENABLE_MANUAL_GC=true
+
+31) AUTH_CACHE_TTL
+- 作用：认证缓存 TTL（毫秒），控制 Token 验证结果缓存时间
+- 默认值：30000（30秒）
+- 取值/格式：5000-3600000（5秒-1小时）的整数毫秒
+- 推荐配置方案：
+  - 高安全场景：5000-10000ms（Token 变更快速生效）
+  - 一般场景：30000ms（默认，平衡性能和安全）
+  - 高流量场景：60000-120000ms（减少验证开销）
+- 安全边界：
+  - 最小值：5000ms（防止缓存过短导致性能问题）
+  - 最大值：3600000ms（防止缓存过长的安全风险）
+  - 超出范围会自动限制并记录警告
+- 风险：过短增加认证开销；过长可能导致 Token 失效后仍被缓存接受
+- 代码引用：backend/middleware/auth.js
+- 示例：AUTH_CACHE_TTL=30000
 
 - SQLITE_BUSY_LOG_THRESHOLD / SQLITE_TIMEOUT_LOG_THRESHOLD / SQLITE_TELEMETRY_INTERVAL_MS
   - 作用：控制 SQLite 忙重试与超时的遥测日志频率
@@ -701,7 +745,7 @@
   - 推荐：多实例排障时显式设置（例如 `INSTANCE_TOKEN=node-a`）
   - 引用：backend/services/orchestrator.js
 
-24) WATCH_CUSTOM_IGNORES
+32) WATCH_CUSTOM_IGNORES
 - 作用：文件监听自定义忽略模式
 - 默认值：空字符串
 - 取值/格式：glob模式字符串
@@ -710,7 +754,7 @@
 - 代码引用：backend/services/indexer.service.js
 - 示例：WATCH_CUSTOM_IGNORES=**/*.tmp,**/*.log
 
-25) WATCH_STABILITY_THRESHOLD
+33) WATCH_STABILITY_THRESHOLD
 - 作用：文件变更稳定性阈值（毫秒）
 - 默认值：2000（2秒）
 - 取值/格式：毫秒整数
@@ -719,7 +763,7 @@
 - 代码引用：backend/services/indexer.service.js
 - 示例：WATCH_STABILITY_THRESHOLD=2000
 
-26) WATCHER_IDLE_STOP_MS
+34) WATCHER_IDLE_STOP_MS
 - 作用：文件监听器空闲停止时间（毫秒）
 - 默认值：120000（2分钟）
 - 取值/格式：毫秒整数
@@ -728,7 +772,7 @@
 - 代码引用：backend/services/indexer.service.js
 - 示例：WATCHER_IDLE_STOP_MS=120000
 
-27) DIMENSION_CACHE_TTL
+35) DIMENSION_CACHE_TTL
 - 作用：图片尺寸信息缓存TTL（秒）
 - 默认值：2592000（30天）
 - 取值/格式：秒整数
@@ -737,7 +781,7 @@
 - 代码引用：backend/services/file.service.js
 - 示例：DIMENSION_CACHE_TTL=2592000
 
-28) FILE_CACHE_DURATION
+36) FILE_CACHE_DURATION
 - 作用：文件缓存持续时间（秒）
 - 默认值：604800（7天）
 - 取值/格式：秒整数
@@ -746,7 +790,7 @@
 - 代码引用：backend/services/file.service.js
 - 示例：FILE_CACHE_DURATION=604800
 
-29) CACHE_CLEANUP_DAYS
+37) CACHE_CLEANUP_DAYS
 - 作用：缓存清理天数阈值
 - 默认值：1（天）
 - 取值/格式：天数整数
@@ -755,7 +799,7 @@
 - 代码引用：backend/services/file.service.js
 - 示例：CACHE_CLEANUP_DAYS=1
 
-30) BATCH_LOG_FLUSH_INTERVAL
+38) BATCH_LOG_FLUSH_INTERVAL
 - 作用：批量日志刷新间隔（毫秒）
 - 默认值：5000（5秒）
 - 取值/格式：毫秒整数
@@ -764,7 +808,7 @@
 - 代码引用：backend/services/file.service.js
 - 示例：BATCH_LOG_FLUSH_INTERVAL=5000
 
-31) FILE_BATCH_SIZE
+39) FILE_BATCH_SIZE
 - 作用：文件处理批量大小
 - 默认值：200
 - 取值/格式：>=1 的整数
@@ -773,7 +817,7 @@
 - 代码引用：backend/services/file.service.js
 - 示例：FILE_BATCH_SIZE=200
 
-32) DIM_BACKFILL_BATCH
+40) DIM_BACKFILL_BATCH
 - 作用：图片尺寸回填批量大小
 - 默认值：500
 - 取值/格式：>=1 的整数
@@ -782,7 +826,7 @@
 - 代码引用：backend/workers/indexing-worker.js
 - 示例：DIM_BACKFILL_BATCH=500
 
-33) DIM_BACKFILL_SLEEP_MS
+41) DIM_BACKFILL_SLEEP_MS
 - 作用：图片尺寸回填休眠时间（毫秒）
 - 默认值：200
 - 取值/格式：毫秒整数
@@ -791,7 +835,7 @@
 - 代码引用：backend/workers/indexing-worker.js
 - 示例：DIM_BACKFILL_SLEEP_MS=200
 
-34) MTIME_BACKFILL_BATCH
+42) MTIME_BACKFILL_BATCH
 - 作用：修改时间回填批量大小
 - 默认值：500
 - 取值/格式：>=1 的整数
@@ -800,7 +844,7 @@
 - 代码引用：backend/workers/indexing-worker.js
 - 示例：MTIME_BACKFILL_BATCH=500
 
-35) MTIME_BACKFILL_SLEEP_MS
+43) MTIME_BACKFILL_SLEEP_MS
 - 作用：修改时间回填休眠时间（毫秒）
 - 默认值：200
 - 取值/格式：毫秒整数
@@ -809,7 +853,7 @@
 - 代码引用：backend/workers/indexing-worker.js
 - 示例：MTIME_BACKFILL_SLEEP_MS=200
 
-36) HLS_BATCH_TIMEOUT_MS
+44) HLS_BATCH_TIMEOUT_MS
 - 作用：HLS批量处理超时时间（毫秒）
 - 默认值：600000（10分钟）
 - 取值/格式：毫秒整数
@@ -818,7 +862,7 @@
 - 代码引用：backend/services/video.service.js
 - 示例：HLS_BATCH_TIMEOUT_MS=600000
 
-37) DISABLE_STARTUP_INDEX
+45) DISABLE_STARTUP_INDEX
 - 作用：是否禁用启动时索引
 - 默认值：false
 - 取值/格式：true | false
@@ -827,7 +871,7 @@
 - 代码引用：backend/server.js
 - 示例：DISABLE_STARTUP_INDEX=false
 
-38) INDEX_START_DELAY_MS
+46) INDEX_START_DELAY_MS
 - 作用：索引启动延迟时间（毫秒）
 - 默认值：5000（5秒）
 - 取值/格式：毫秒整数
@@ -836,7 +880,7 @@
 - 代码引用：backend/server.js
 - 示例：INDEX_START_DELAY_MS=5000
 
-39) INDEX_RETRY_INTERVAL_MS
+47) INDEX_RETRY_INTERVAL_MS
 - 作用：索引重试间隔（毫秒）
 - 默认值：60000（1分钟）
 - 取值/格式：毫秒整数
@@ -845,7 +889,7 @@
 - 代码引用：backend/server.js
 - 示例：INDEX_RETRY_INTERVAL_MS=60000
 
-40) INDEX_TIMEOUT_MS
+48) INDEX_TIMEOUT_MS
 - 作用：索引超时时间（毫秒）
 - 默认值：timeUtils.minutes(20)（20分钟）
 - 取值/格式：毫秒整数
@@ -854,7 +898,7 @@
 - 代码引用：backend/server.js
 - 示例：INDEX_TIMEOUT_MS=1200000
 
-41) INDEX_LOCK_TTL_SEC
+49) INDEX_LOCK_TTL_SEC
 - 作用：索引锁TTL时间（秒）
 - 默认值：7200（2小时）
 - 取值/格式：秒整数
@@ -973,8 +1017,9 @@
 
 ## 3) 场景化配置片段
 
-微型配置（1H/1G）
-```
+### 微型配置（1核/1GB）
+```bash
+# 核心配置
 PORT=13001
 NODE_ENV=production
 LOG_LEVEL=info
@@ -984,51 +1029,41 @@ REDIS_URL=redis://redis:6379
 JWT_SECRET=<32+ 强随机>
 ADMIN_SECRET=<强口令>
 
-# 安全限制（防止超长路径攻击）
-MAX_PATH_LENGTH=1024
-MAX_PATH_DEPTH=20
-
-# 内存优化（1G环境关键）
-WORKER_MEMORY_MB=256
-THUMB_WORKER_MEMORY_MB=256
-UV_THREADPOOL_SIZE=2
-FFMPEG_THREADS=1
-SHARP_CONCURRENCY=1
-
-# Sharp像素限制（低配环境降低）
-SHARP_MAX_PIXELS=30000000
-
-# 数据库优化（低配环境）
-SQLITE_BUSY_TIMEOUT=30000
-SQLITE_QUERY_TIMEOUT=45000
-
-# 限流收紧（保护低配环境）
-RATE_LIMIT_WINDOW_MINUTES=15
-RATE_LIMIT_MAX_REQUESTS=50
-REFRESH_RATE_WINDOW_MS=60000
-REFRESH_RATE_MAX=30
-
-# 性能模式（低配优化）
-PERFORMANCE_MODE=low
+# 硬件声明
 DETECTED_CPU_COUNT=1
 DETECTED_MEMORY_GB=1
 
-# Sharp内存限制（1G环境必需）
+# 资源配置（智能计算：1核→2个worker）
+NUM_WORKERS=2
+WORKER_MEMORY_MB=256
+UV_THREADPOOL_SIZE=2
+
+# 媒体处理（低配单线程）
+FFMPEG_THREADS=1
+SHARP_CONCURRENCY=1
+VIDEO_TASK_DELAY_MS=2000
+
+# Sharp 保护（防止 OOM）
+SHARP_MAX_PIXELS=30000000
 SHARP_CACHE_MEMORY_MB=16
 SHARP_CACHE_ITEMS=50
 
-# AI限制（可选，低配环境建议限制）
-AI_DAILY_LIMIT=50
-AI_PER_IMAGE_COOLDOWN_SEC=120
+# 数据库（增加等待容忍）
+SQLITE_BUSY_TIMEOUT=30000
+SQLITE_QUERY_TIMEOUT=45000
 
-# 缩略图优化
-THUMB_ONDEMAND_RESERVE=1
-THUMB_POOL_MAX=1
+# 限流（保护低配）
+RATE_LIMIT_WINDOW_MINUTES=15
+RATE_LIMIT_MAX_REQUESTS=50
 
+# 性能模式
+PERFORMANCE_MODE=low
+THUMB_ONDEMAND_RESERVE=0
 ```
 
-小型家庭（2C/4G，NAS/本地盘）
-```
+### 小型家庭（2核/4GB）
+```bash
+# 核心配置
 PORT=13001
 NODE_ENV=production
 LOG_LEVEL=info
@@ -1038,37 +1073,102 @@ REDIS_URL=redis://redis:6379
 JWT_SECRET=<32+ 强随机>
 ADMIN_SECRET=<强口令>
 
+# 硬件声明
+DETECTED_CPU_COUNT=2
+DETECTED_MEMORY_GB=4
+
+# 资源配置（智能计算：2核×1.5=3个worker）
+NUM_WORKERS=3
 WORKER_MEMORY_MB=384
+UV_THREADPOOL_SIZE=4
+
+# 媒体处理
 FFMPEG_THREADS=1
 SHARP_CONCURRENCY=1
+VIDEO_TASK_DELAY_MS=1500
+
+# 数据库
 SQLITE_BUSY_TIMEOUT=20000
 SQLITE_QUERY_TIMEOUT=30000
 
+# 预留按需任务槽位
+THUMB_ONDEMAND_RESERVE=1
 ```
 
-中型生产（4C/8G）
-```
-#安全限制（默认值，适合大多数场景）
-MAX_PATH_LENGTH=1024
-MAX_PATH_DEPTH=20
+### 中型生产（4核/8GB）
+```bash
+# 核心配置
+PORT=13001
+NODE_ENV=production
+LOG_LEVEL=info
+PHOTOS_DIR=/app/photos
+DATA_DIR=/app/data
+REDIS_URL=redis://redis:6379
+JWT_SECRET=<32+ 强随机>
+ADMIN_SECRET=<强口令>
 
-# 内存与性能优化
+# 硬件声明
+DETECTED_CPU_COUNT=4
+DETECTED_MEMORY_GB=8
+
+# 资源配置（智能计算：4核×1.5=6个worker）
+NUM_WORKERS=6
 WORKER_MEMORY_MB=512
-THUMB_WORKER_MEMORY_MB=512
 UV_THREADPOOL_SIZE=4
+
+# 媒体处理
 FFMPEG_THREADS=2
 SHARP_CONCURRENCY=2
+VIDEO_TASK_DELAY_MS=1000
 
-# Sharp像素限制（支持8K图片）
+# Sharp（支持 8K 图片）
 SHARP_MAX_PIXELS=50000000
 
-# 并发优化
-THUMB_POOL_MAX=6
-
-# 限流与缓存
+# 限流（中等规模）
 RATE_LIMIT_WINDOW_MINUTES=15
-RATE_LIMIT_MAX_REQUESTS=100
+RATE_LIMIT_MAX_REQUESTS=200
+
+# 预留按需任务槽位
+THUMB_ONDEMAND_RESERVE=1
 ```
+
+### 高配生产（8核/16GB）
+```bash
+# 核心配置
+PORT=13001
+NODE_ENV=production
+LOG_LEVEL=info
+PHOTOS_DIR=/app/photos
+DATA_DIR=/app/data
+REDIS_URL=redis://redis:6379
+JWT_SECRET=<32+ 强随机>
+ADMIN_SECRET=<强口令>
+
+# 硬件声明
+DETECTED_CPU_COUNT=8
+DETECTED_MEMORY_GB=16
+
+# 资源配置（智能计算：8核×1.75≈14个worker，但限制16）
+NUM_WORKERS=14
+WORKER_MEMORY_MB=768
+UV_THREADPOOL_SIZE=8
+
+# 媒体处理
+FFMPEG_THREADS=4
+SHARP_CONCURRENCY=4
+VIDEO_TASK_DELAY_MS=500
+
+# Sharp（支持超高分辨率）
+SHARP_MAX_PIXELS=100000000
+
+# 限流（高并发）
+RATE_LIMIT_WINDOW_MINUTES=15
+RATE_LIMIT_MAX_REQUESTS=500
+
+# 预留按需任务槽位
+THUMB_ONDEMAND_RESERVE=2
+```
+
 
 ## 4) 部署与注入方式
 
@@ -1098,7 +1198,7 @@ module.exports = {
 ```
 
 - PowerShell（Windows）
-```
+```powershell
 $env:PORT="13001"; $env:NODE_ENV="production"; node backend/server.js
 ```
 

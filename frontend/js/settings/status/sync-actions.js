@@ -86,6 +86,13 @@ export async function triggerSync(type, options = {}, loadStatusTables) {
         return data;
     } catch (error) {
         settingsLogger.error('触发补全操作失败', { type, error: error.message });
+
+        // 失败时立即停止监控并隐藏进度
+        syncState.stopMonitoring();
+        if (!syncState.isSilent) {
+            showProgressUpdate(type, false);
+        }
+
         throw error;
     } finally {
         ongoingRequests.delete(type);
@@ -222,6 +229,8 @@ export async function resyncThumbnails(loadStatusTables) {
  * @param {'index'|'thumbnail'|'hls'} type 任务类型
  */
 export function startRealtimeMonitoring(type) {
+    // 先停止旧的监控（清除旧定时器），再启动新的
+    // 注意：stopMonitoring 必须在 startMonitoring 之前调用，避免竞态条件
     syncState.stopMonitoring();
     syncState.startMonitoring(type);
     validateSyncState();
@@ -291,6 +300,11 @@ export function startRealtimeMonitoring(type) {
         }
     }, type === 'index' ? 2000 : 10000);
 
+    // 根据任务类型设置合适的超时时间
+    // index: 5分钟（索引重建通常需要较长时间）
+    // thumbnail/hls: 10分钟（批量处理可能很慢）
+    const timeoutDuration = type === 'index' ? 300000 : 600000;
+
     const timeoutId = setTimeout(() => {
         syncState.stopMonitoring();
         validateSyncState();
@@ -298,8 +312,10 @@ export function startRealtimeMonitoring(type) {
         if (!syncState.isSilent) {
             showProgressUpdate(type, false);
         }
-    }, 30000);
+    }, timeoutDuration);
 
+    // 关键修复：必须原子性地设置定时器，确保旧定时器已被 stopMonitoring 清除
+    // 这样可以防止并发调用导致定时器泄漏
     syncState.setMonitoringTimers(intervalId, timeoutId);
 }
 

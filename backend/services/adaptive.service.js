@@ -121,7 +121,9 @@ async function startAdaptiveScheduler() {
 
     await run();
     // 每分钟重新评估一次
-    setInterval(run, 60000);
+    const timer = setInterval(run, 60000);
+    // 允许进程退出（定时器不阻止进程退出）
+    if (typeof timer.unref === 'function') timer.unref();
 }
 
 function getCurrentMode() {

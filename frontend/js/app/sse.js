@@ -166,8 +166,19 @@ function clearActiveConnection() {
  * 安排自动重连
  */
 function scheduleReconnect() {
+    // 防止无限重连 - 最多重试10次
+    const MAX_RETRY_ATTEMPTS = 10;
+    if (retryCount >= MAX_RETRY_ATTEMPTS) {
+        sseError(`SSE 重连次数达到上限 (${MAX_RETRY_ATTEMPTS})，停止重连。请检查网络或认证状态。`);
+        window.dispatchEvent(new CustomEvent('sse:max-retries-reached', {
+            detail: { retryCount, maxRetries: MAX_RETRY_ATTEMPTS }
+        }));
+        return;
+    }
+
     const delay = Math.min(SSE.MAX_RETRY_DELAY, 1000 * Math.pow(2, retryCount));
     retryCount++;
+    sseLog(`SSE 重连中... (尝试 ${retryCount}/${MAX_RETRY_ATTEMPTS}, 延迟 ${delay}ms)`);
     setManagedTimeout(connect, delay, 'sse-reconnect');
 }
 

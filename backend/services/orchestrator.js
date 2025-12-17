@@ -386,8 +386,12 @@ function scheduleDbMaintenance() {
         runWhenIdle(LOG_PREFIXES.DB_MAINTENANCE, performDbMaintenance, { startDelayMs: 0, retryIntervalMs: retryMs });
     };
 
-    setTimeout(enqueueMaintenance, DB_MAINT_INITIAL_DELAY_MS);
-    setInterval(enqueueMaintenance, intervalMs);
+    const initialTimer = setTimeout(enqueueMaintenance, DB_MAINT_INITIAL_DELAY_MS);
+    const intervalTimer = setInterval(enqueueMaintenance, intervalMs);
+
+    // 允许进程退出（定时器不阻止进程退出）
+    if (typeof initialTimer.unref === 'function') initialTimer.unref();
+    if (typeof intervalTimer.unref === 'function') intervalTimer.unref();
 }
 
 /**
@@ -399,6 +403,49 @@ function start() {
     } catch (error) {
         logSoftIgnore('数据库维护定时安排', error);
     }
+
+    // 定期触发垃圾回收（需要 --expose-gc）
+    // 可通过环境变量 ENABLE_MANUAL_GC 控制
+    const ENABLE_MANUAL_GC = (process.env.ENABLE_MANUAL_GC || 'true').toLowerCase() === 'true';
+
+    if (typeof global.gc === 'function' && ENABLE_MANUAL_GC) {
+        logger.debug('[调度器] 已启用手动垃圾回收调度');
+
+        let gcLogCount = 0; // GC 日志计数器，用于采样
+
+        const gcInterval = setInterval(() => {
+            try {
+                // 只在空闲时触发 GC
+                if (!isHeavy()) {
+                    gcLogCount++;
+                    // 采样：每10次GC记录一次详细指标，减少 memoryUsage() 开销
+                    const shouldLogDetails = (gcLogCount % 10 === 0);
+
+                    let memBefore, gcStartTime, gcDuration, heapReleased;
+                    if (shouldLogDetails) {
+                        memBefore = process.memoryUsage();
+                        gcStartTime = Date.now();
+                    }
+
+                    global.gc();
+
+                    if (shouldLogDetails) {
+                        gcDuration = Date.now() - gcStartTime;
+                        const memAfter = process.memoryUsage();
+                        heapReleased = ((memBefore.heapUsed - memAfter.heapUsed) / 1024 / 1024).toFixed(2);
+                        logger.debug(`[调度器] GC #${gcLogCount} | 耗时: ${gcDuration}ms | 释放堆内存: ${heapReleased}MB | 当前堆: ${(memAfter.heapUsed / 1024 / 1024).toFixed(2)}MB`);
+                    }
+                }
+            } catch (e) {
+                logger.debug('[调度器] 内存回收失败（忽略）:', e.message);
+            }
+        }, 120000); // 每2分钟检查一次
+
+        if (typeof gcInterval.unref === 'function') gcInterval.unref();
+    } else if (typeof global.gc !== 'function' && ENABLE_MANUAL_GC) {
+        logger.warn('[调度器] ENABLE_MANUAL_GC=true 但 global.gc 不可用，请使用 --expose-gc 启动');
+    }
+
     logger.silly('[Orchestrator] 启动完成');
 }
 

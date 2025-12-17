@@ -14,11 +14,11 @@ services:
       - ./.env
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:13001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"]
+      test: [ "CMD", "node", "-e", "require('http').get('http://localhost:13001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })" ]
       interval: 20s
-      timeout: 15s
+      timeout: 5s
       retries: 3
-      start_period: 120s
+      start_period: 60s
     depends_on:
       redis:
         condition: service_healthy
@@ -27,20 +27,21 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 4G
+          # 容器资源限制 - 与应用配置保持一致
+          cpus: '${DETECTED_CPU_COUNT:-1}'
+          memory: ${DETECTED_MEMORY_GB:-2}G
 
   redis:
     # Redis 服务，缓存和消息队列
     image: redis:7-alpine
     container_name: Photonix-redis
     ports:
-      - "6379:6379"  # 映射 Redis 端口
-    command: redis-server --appendonly yes  # 开启持久化
+      - "6379:6379" # 映射 Redis 端口
+    command: redis-server --appendonly yes # 开启持久化
     volumes:
-      - redis_data:/data  # Redis 数据持久化卷
+      - redis_data:/data # Redis 数据持久化卷
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]  # 健康检查
+      test: [ "CMD", "redis-cli", "ping" ] # 健康检查
       interval: 10s
       timeout: 5s
       retries: 3
@@ -49,12 +50,12 @@ services:
     networks:
       - photonix-network
 
-
 # 卷定义
 volumes:
-  redis_data:  # Redis 数据卷
+  redis_data:
+    # Redis 数据卷
 
-# 网络定义
+    # 网络定义
 networks:
   photonix-network:
-    driver: bridge  # 桥接网络
+    driver: bridge # 桥接网络
