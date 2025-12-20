@@ -79,10 +79,10 @@ const SHARP_MAX_PIXELS = Number(process.env.SHARP_MAX_PIXELS || (24000 * 24000))
 const VIDEO_TASK_DELAY_MS = __rt.VIDEO_TASK_DELAY_MS; // 视频任务间延迟
 const VIDEO_MAX_CONCURRENCY = __rt.VIDEO_MAX_CONCURRENCY; // 视频任务最大并发
 const HLS_BATCH_TIMEOUT_MS = Number(process.env.HLS_BATCH_TIMEOUT_MS || 600000); // HLS批处理超时
-const FFMPEG_THREADS = parseInt(process.env.FFMPEG_THREADS) || 2; // FFmpeg线程数
+const FFMPEG_THREADS = parseInt(process.env.FFMPEG_THREADS, 10) || 2; // FFmpeg线程数
 
 // --- 索引配置 ---
-const INDEX_STABILIZE_DELAY_MS = parseInt(process.env.INDEX_STABILIZE_DELAY_MS) || 2000; // 索引稳定化延迟
+const INDEX_STABILIZE_DELAY_MS = parseInt(process.env.INDEX_STABILIZE_DELAY_MS, 10) || 2000; // 索引稳定化延迟
 const INDEX_BATCH_SIZE = __rt.INDEX_BATCH_SIZE; // 索引批量大小
 const INDEX_CONCURRENCY = __rt.INDEX_CONCURRENCY; // 索引并发数
 
@@ -128,7 +128,7 @@ const HLS_MIN_CHECK_INTERVAL_MS = Math.max(100, parseInt(process.env.HLS_MIN_CHE
 const HLS_BATCH_DELAY_MS = Math.max(10, parseInt(process.env.HLS_BATCH_DELAY_MS, 10) || 100);
 
 // HLS批次大小配置（相对固定，不需要动态调整）
-const HLS_CHECK_BATCH_SIZE = parseInt(process.env.HLS_CHECK_BATCH_SIZE) || 10; // HLS检查批次大小
+const HLS_CHECK_BATCH_SIZE = parseInt(process.env.HLS_CHECK_BATCH_SIZE, 10) || 10; // HLS检查批次大小
 
 module.exports = {
     // 基础配置

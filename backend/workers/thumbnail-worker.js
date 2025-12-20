@@ -18,8 +18,8 @@ const path = require('path');
 const fs = require('fs').promises;
 const { errorMessageTranslator } = require('../utils/errorMessageTranslator');
 
-// 像素限制配置（防止OOM），默认值：5000万像素
-const LIMIT_PIXELS = Number(process.env.SHARP_MAX_PIXELS || 50_000_000);
+// 像素限制配置（防止OOM），默认值：2.68亿像素（约16384x16384）
+const LIMIT_PIXELS = Number(process.env.SHARP_MAX_PIXELS || 268_000_000);
 const THUMB_TARGET_WIDTH = Number(process.env.THUMB_TARGET_WIDTH || 500);
 const PIXEL_THRESHOLD_HIGH = Number(process.env.THUMB_PIXEL_THRESHOLD_HIGH || 8_000_000);
 const PIXEL_THRESHOLD_MEDIUM = Number(process.env.THUMB_PIXEL_THRESHOLD_MEDIUM || 2_000_000);
@@ -27,6 +27,8 @@ const QUALITY_LOW = Number(process.env.THUMB_QUALITY_LOW || 65);
 const QUALITY_MEDIUM = Number(process.env.THUMB_QUALITY_MEDIUM || 70);
 const QUALITY_HIGH = Number(process.env.THUMB_QUALITY_HIGH || 80);
 const SAFE_MODE_QUALITY = Number(process.env.THUMB_SAFE_MODE_QUALITY || 60);
+const VIDEO_THUMB_TIMEOUT_MS = Math.max(1000, Number(process.env.VIDEO_THUMB_TIMEOUT_MS || 60000));
+const VIDEO_THUMB_MAX_BUFFER = 2 * 1024 * 1024;
 
 // 使用统一的错误消息转换器
 function translateErrorMessage(error) {
@@ -95,21 +97,55 @@ async function generateImageThumbnail(imagePath, thumbPath) {
 }
 
 
-// 基于 ffmpeg 的 thumbnail 过滤器快速截帧，避免多帧计算造成阻塞
+// 基于 ffmpeg 的快速截帧，在视频 10% 位置截取一帧
+// 使用 -ss 在 -i 之前实现快速 seek，避免 thumbnail 过滤器的全量扫描
 async function generateVideoThumbnail(videoPath, thumbPath) {
     return new Promise((resolve) => {
-        const args = [
+        // 先用 ffprobe 获取视频时长，然后在 10% 处截帧
+        const probeArgs = [
             '-v', 'error',
-            '-y',
-            '-i', videoPath,
-            // thumbnail=N 选取代表帧，这里给出较大的采样窗口，提高代表性
-            '-vf', 'thumbnail=300,scale=320:-2',
-            '-frames:v', '1',
-            thumbPath
+            '-select_streams', 'v:0',
+            '-show_entries', 'format=duration',
+            '-of', 'json',
+            videoPath
         ];
-        execFile('ffmpeg', args, (err) => {
-            if (err) return resolve({ success: false, error: err.message });
-            resolve({ success: true });
+
+        execFile('ffprobe', probeArgs, { timeout: 10000, maxBuffer: VIDEO_THUMB_MAX_BUFFER, windowsHide: true }, (probeErr, stdout) => {
+            let seekTime = 3; // 默认 3 秒位置
+
+            if (!probeErr && stdout) {
+                try {
+                    const data = JSON.parse(stdout);
+                    const duration = parseFloat(data.format?.duration || 0);
+                    if (duration > 10) {
+                        seekTime = Math.min(duration * 0.1, 60); // 10% 位置，最多 60 秒
+                    } else if (duration > 3) {
+                        seekTime = 1; // 短视频取 1 秒处
+                    }
+                } catch (e) {
+                    // 解析失败，使用默认值
+                }
+            }
+
+            // 使用 -ss 在 -i 之前进行快速 seek（keyframe seek）
+            const args = [
+                '-v', 'error',
+                '-y',
+                '-ss', String(seekTime),
+                '-i', videoPath,
+                '-vf', 'scale=320:-2',
+                '-frames:v', '1',
+                '-q:v', '5',
+                thumbPath
+            ];
+
+            execFile('ffmpeg', args, { timeout: VIDEO_THUMB_TIMEOUT_MS, maxBuffer: VIDEO_THUMB_MAX_BUFFER, windowsHide: true }, (err, stdout, stderr) => {
+                if (err) {
+                    const errorDetail = stderr || err.message || 'Unknown ffmpeg error';
+                    return resolve({ success: false, error: errorDetail });
+                }
+                resolve({ success: true });
+            });
         });
     });
 }

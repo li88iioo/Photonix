@@ -32,7 +32,8 @@ const thumbnailRateLimiter = rateLimit({
         if (req.user && req.user.id) {
             return `user:${req.user.id}`;
         }
-        return req.ip || req.headers['x-forwarded-for'] || 'anonymous';
+        // 注意：不要直接信任 X-Forwarded-For 头，是否信任代理应由 Express `trust proxy` 控制
+        return req.ip || 'anonymous';
     },
     handler: (_req, res) => {
         const errorSvg = generateErrorSvg();

@@ -71,7 +71,9 @@ const ROLE_PERMISSIONS = {
  *     2. 否则视为访客，角色为 GUEST
  */
 function getUserRole(req) {
-    if (req.user && req.user.id) {
+    // 约定：auth 中间件会将未认证用户设置为 { id: 'anonymous' } 以保证下游安全访问。
+    // RBAC 必须显式将该占位身份视为访客，否则会导致匿名请求被误判为认证用户。
+    if (req.user && req.user.id && req.user.id !== 'anonymous') {
         return ROLES.USER;
     }
     return ROLES.GUEST;

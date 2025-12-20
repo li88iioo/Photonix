@@ -23,26 +23,10 @@ const requestId = require('./middleware/requestId');
 const { traceMiddleware } = require('./utils/trace');
 const mainRouter = require('./routes');
 const logger = require('./config/logger');
+const { getHealthSummary } = require('./services/health.service');
 const authMiddleware = require('./middleware/auth');
 const authRouter = require('./routes/auth.routes');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
-
-const HEALTH_CACHE_TTL_MS = Number(process.env.HEALTH_CACHE_TTL_MS || 30000);
-let healthCache = { snapshot: null, expiresAt: 0 };
-let pendingHealthCheckPromise = null;
-
-function parseWorkerList(value, fallback = []) {
-    if (typeof value === 'string' && value.trim().length > 0) {
-        return value.split(',').map((name) => name.trim()).filter(Boolean);
-    }
-    return fallback;
-}
-
-const REQUIRED_WORKERS = new Set(parseWorkerList(process.env.HEALTH_REQUIRED_WORKERS, ['indexing']));
-const OPTIONAL_WORKERS = new Set(
-    parseWorkerList(process.env.HEALTH_OPTIONAL_WORKERS, ['settings', 'video'])
-        .filter((name) => !REQUIRED_WORKERS.has(name))
-);
 
 /**
  * @constant {express.Application} app Express 应用实例
@@ -56,7 +40,23 @@ const app = express();
 /**
  * 配置代理信任，用于获取真实客户端 IP。
  */
-app.set('trust proxy', 1);
+// 默认不信任代理头（安全基线），通过 TRUST_PROXY 显式开启
+const TRUST_PROXY_RAW = process.env.TRUST_PROXY;
+if (typeof TRUST_PROXY_RAW === 'string' && TRUST_PROXY_RAW.trim().length > 0) {
+    const normalized = TRUST_PROXY_RAW.trim().toLowerCase();
+    if (normalized === 'true') {
+        app.set('trust proxy', 1);
+    } else if (normalized === 'false' || normalized === '0') {
+        app.set('trust proxy', false);
+    } else if (/^\d+$/.test(normalized)) {
+        app.set('trust proxy', Number(normalized));
+    } else {
+        // 允许使用 Express 支持的字符串配置（如 'loopback', 'uniquelocal' 等）
+        app.set('trust proxy', TRUST_PROXY_RAW.trim());
+    }
+} else {
+    app.set('trust proxy', false);
+}
 
 /**
  * 安全相关 HTTP 头设置。
@@ -234,173 +234,7 @@ app.use(express.static(frontendBuildPath));
  * 构建健康检查摘要信息
  * @returns {Promise<object>} 服务健康状态报告
  */
-async function computeHealthSummary() {
-    const timestamp = new Date().toISOString();
-    const summary = {
-        status: 'ok',
-        timestamp,
-        issues: [],
-        dependencies: {
-            database: {},
-            redis: {},
-            workers: {},
-        },
-    };
-
-    let healthy = true;
-
-    try {
-        const { dbAll, checkDatabaseHealth, dbHealthStatus } = require('./db/multi-db');
-        await checkDatabaseHealth();
-        const connections = {};
-        for (const [name, state] of dbHealthStatus.entries()) {
-            connections[name] = state;
-        }
-        summary.dependencies.database.connections = connections;
-        const connectionStates = Object.values(connections);
-        const connectionsHealthy =
-            connectionStates.length === 0 ||
-            connectionStates.every((state) => state === 'connected');
-        if (!connectionsHealthy) {
-            healthy = false;
-            summary.issues.push('database_connections');
-        }
-
-        const schema = {};
-        try {
-            await dbAll('main', 'SELECT 1 FROM items LIMIT 1');
-            schema.items = { status: 'ok' };
-        } catch (error) {
-            schema.items = { status: 'missing', error: error.message };
-            healthy = false;
-            summary.issues.push('items_table');
-        }
-
-        try {
-            await dbAll('main', 'SELECT 1 FROM items_fts LIMIT 1');
-            schema.itemsFts = { status: 'ok' };
-        } catch (error) {
-            schema.itemsFts = { status: 'missing', error: error.message };
-            healthy = false;
-            summary.issues.push('items_fts_table');
-        }
-
-        summary.dependencies.database.schema = schema;
-    } catch (error) {
-        healthy = false;
-        summary.issues.push('database_error');
-        summary.dependencies.database.error = error.message;
-    }
-
-    try {
-        const { getAvailability, redis } = require('./config/redis');
-        const availability = getAvailability();
-        summary.dependencies.redis.availability = availability;
-        const redisRequired =
-            (process.env.ENABLE_REDIS || 'false').toLowerCase() === 'true';
-
-        if (availability === 'ready') {
-            try {
-                summary.dependencies.redis.ping = await redis.ping();
-            } catch (error) {
-                healthy = false;
-                summary.issues.push('redis_ping');
-                summary.dependencies.redis.error = error.message;
-            }
-        } else if (redisRequired) {
-            healthy = false;
-            summary.issues.push('redis_unavailable');
-        }
-    } catch (error) {
-        healthy = false;
-        summary.issues.push('redis_error');
-        summary.dependencies.redis.error = error.message;
-    }
-
-    try {
-        const { performWorkerHealthCheck } = require('./services/worker.manager');
-        const workerStatus = performWorkerHealthCheck() || {};
-        const decoratedWorkers = {};
-        const requiredWorkers = REQUIRED_WORKERS.size > 0 ? REQUIRED_WORKERS : new Set(['indexing']);
-        const optionalWorkers = OPTIONAL_WORKERS;
-
-        Object.entries(workerStatus).forEach(([key, stateInfo]) => {
-            const normalizedInfo = typeof stateInfo === 'object' && stateInfo !== null
-                ? stateInfo
-                : { state: stateInfo };
-            const baseActive = typeof normalizedInfo.state === 'string'
-                ? normalizedInfo.state === 'active'
-                : Boolean(normalizedInfo.active);
-            const workerActive = Boolean(baseActive);
-            const isRequired = requiredWorkers.has(key);
-            const status = workerActive
-                ? 'active'
-                : (isRequired ? 'unavailable' : (optionalWorkers.has(key) ? 'inactive_optional' : 'inactive'));
-
-            decoratedWorkers[key] = {
-                ...normalizedInfo,
-                active: workerActive,
-                status
-            };
-
-            if (isRequired && !workerActive) {
-                healthy = false;
-                summary.issues.push(`worker_${key}`);
-            }
-        });
-
-        requiredWorkers.forEach((key) => {
-            if (!decoratedWorkers[key]) {
-                decoratedWorkers[key] = { active: false, status: 'missing' };
-                healthy = false;
-                summary.issues.push(`worker_${key}`);
-            }
-        });
-
-        summary.dependencies.workers = decoratedWorkers;
-    } catch (error) {
-        healthy = false;
-        summary.issues.push('worker_error');
-        summary.dependencies.workers = { error: error.message };
-    }
-
-    if (!healthy) {
-        summary.status = 'error';
-    }
-
-    return summary;
-}
-
-/**
- * 返回并缓存健康检查摘要
- * @returns {Promise<object>}
- */
-async function getHealthSummary() {
-    const now = Date.now();
-    if (healthCache.snapshot && now < healthCache.expiresAt) {
-        return healthCache.snapshot;
-    }
-
-    // Atomic check-and-set: only create Promise if none exists
-    if (!pendingHealthCheckPromise) {
-        pendingHealthCheckPromise = computeHealthSummary()
-            .then((summary) => {
-                const ttl =
-                    summary.status === 'ok'
-                        ? HEALTH_CACHE_TTL_MS
-                        : Math.min(HEALTH_CACHE_TTL_MS, 5000);
-                healthCache = {
-                    snapshot: summary,
-                    expiresAt: Date.now() + ttl,
-                };
-                return summary;
-            })
-            .finally(() => {
-                pendingHealthCheckPromise = null;
-            });
-    }
-    return pendingHealthCheckPromise;
-}
+// 健康检查逻辑已下沉至 services/health.service.js
 
 /**
  * GET /health

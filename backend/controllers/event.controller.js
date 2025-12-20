@@ -79,8 +79,9 @@ exports.streamEvents = (req, res) => {
 
     // 3. 定义事件监听器
     const onThumbnailGenerated = (data) => {
+        // 只在开发模式下记录详细日志，减少生产环境日志量
         if (isDevelopment) {
-            logger.debug(`[SSE] 监听到 thumbnail-generated 事件，将发送给 ${clientId}`);
+            logger.silly(`[SSE] 将 thumbnail-generated 事件发送给 ${clientId}: ${data.path || ''}`);
         }
         sendEvent('thumbnail-generated', data);
     };

@@ -4,6 +4,8 @@
  */
 
 const { v4: uuidv4 } = require('uuid');
+const logger = require('../../config/logger');
+const { LOG_PREFIXES } = logger;
 
 class TaskManager {
   constructor(dbOrGetter) {
@@ -49,10 +51,10 @@ class TaskManager {
         SELECT * FROM tasks ORDER BY created_at DESC
       `);
       const rows = stmt.all();
-      
+
       return rows.map(row => this.deserializeTask(row));
     } catch (error) {
-      console.error('加载任务失败', { error: error.message });
+      logger.error(`${LOG_PREFIXES.DOWNLOADER} 加载任务失败`, { error: error.message });
       return [];
     }
   }
@@ -87,11 +89,11 @@ class TaskManager {
           @stats_last_error_at, @stats_last_error
         )
       `);
-      
+
       const serialized = this.serializeTaskForDB(task);
       stmt.run(serialized);
     } catch (error) {
-      console.error('保存任务失败', { taskId: task.id, error: error.message });
+      logger.error(`${LOG_PREFIXES.DOWNLOADER} 保存任务失败`, { taskId: task.id, error: error.message });
     }
   }
 
@@ -139,7 +141,7 @@ class TaskManager {
     try {
       transaction(taskList);
     } catch (error) {
-      console.error('批量保存任务失败', { error: error.message });
+      logger.error(`${LOG_PREFIXES.DOWNLOADER} 批量保存任务失败`, { error: error.message });
     }
   }
 
@@ -155,7 +157,7 @@ class TaskManager {
       const stmt = db.prepare('DELETE FROM tasks WHERE id = ?');
       stmt.run(taskId);
     } catch (error) {
-      console.error('删除任务失败', { taskId, error: error.message });
+      logger.error(`${LOG_PREFIXES.DOWNLOADER} 删除任务失败`, { taskId, error: error.message });
     }
   }
 
@@ -180,7 +182,7 @@ class TaskManager {
         updated_at: new Date().toISOString()
       });
     } catch (error) {
-      console.error('更新任务状态失败', { taskId, status, error: error.message });
+      logger.error(`${LOG_PREFIXES.DOWNLOADER} 更新任务状态失败`, { taskId, status, error: error.message });
     }
   }
 
@@ -206,7 +208,7 @@ class TaskManager {
           updated_at = @updated_at
         WHERE id = @id
       `);
-      
+
       stmt.run({
         id: taskId,
         articles_downloaded: stats.articlesDownloaded || 0,
@@ -218,7 +220,7 @@ class TaskManager {
         updated_at: new Date().toISOString()
       });
     } catch (error) {
-      console.error('更新任务统计失败', { taskId, error: error.message });
+      logger.error(`${LOG_PREFIXES.DOWNLOADER} 更新任务统计失败`, { taskId, error: error.message });
     }
   }
 
@@ -234,30 +236,30 @@ class TaskManager {
     try {
       let sql = 'SELECT * FROM tasks WHERE 1=1';
       const params = {};
-      
+
       if (query.status) {
         sql += ' AND status = @status';
         params.status = query.status;
       }
-      
+
       if (query.search) {
         sql += ' AND (title LIKE @search OR feed_url LIKE @search)';
         params.search = `%${query.search}%`;
       }
-      
+
       sql += ' ORDER BY updated_at DESC';
-      
+
       if (query.limit) {
         sql += ' LIMIT @limit';
         params.limit = query.limit;
       }
-      
+
       const stmt = db.prepare(sql);
       const rows = stmt.all(params);
-      
+
       return rows.map(row => this.deserializeTask(row));
     } catch (error) {
-      console.error('查询任务失败', { error: error.message });
+      logger.error(`${LOG_PREFIXES.DOWNLOADER} 查询任务失败`, { error: error.message });
       return [];
     }
   }
@@ -277,7 +279,7 @@ class TaskManager {
         totalImages: 0
       };
     }
-    
+
     try {
       const countStmt = db.prepare(`
         SELECT 
@@ -288,9 +290,9 @@ class TaskManager {
           SUM(stats_images_downloaded) as total_images
         FROM tasks
       `);
-      
+
       const stats = countStmt.get();
-      
+
       return {
         total: stats.total || 0,
         running: stats.running || 0,
@@ -299,7 +301,7 @@ class TaskManager {
         totalImages: stats.total_images || 0
       };
     } catch (error) {
-      console.error('获取任务统计失败', { error: error.message });
+      logger.error(`${LOG_PREFIXES.DOWNLOADER} 获取任务统计失败`, { error: error.message });
       return {
         total: 0,
         running: 0,
@@ -398,7 +400,7 @@ class TaskManager {
     const db = this.resolveDb();
     if (!db || !tasks || tasks.length === 0) return;
 
-    console.info('开始迁移任务到数据库...', { count: tasks.length });
+    logger.info(`${LOG_PREFIXES.DOWNLOADER} 开始迁移任务到数据库...`, { count: tasks.length });
     const deleteStmt = db.prepare('DELETE FROM tasks');
     const insertStmt = db.prepare(`
       INSERT OR REPLACE INTO tasks (
@@ -431,10 +433,10 @@ class TaskManager {
 
     try {
       transaction(tasks);
-      console.info('任务迁移完成', { count: tasks.length });
+      logger.info(`${LOG_PREFIXES.DOWNLOADER} 任务迁移完成`, { count: tasks.length });
       return true;
     } catch (error) {
-      console.error('任务迁移失败', { error: error.message });
+      logger.error(`${LOG_PREFIXES.DOWNLOADER} 任务迁移失败`, { error: error.message });
       return false;
     }
   }

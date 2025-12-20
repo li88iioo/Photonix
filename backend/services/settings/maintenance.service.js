@@ -23,6 +23,33 @@ const { getMediaStats, getGroupStats, getCount } = require('../../repositories/s
 const { sanitizePath, isPathSafe } = require('../../utils/path.utils');
 const { redis } = require('../../config/redis');
 
+async function scanKeysByPattern(redisClient, pattern, { count = 500, maxKeys = 10000 } = {}) {
+  if (!redisClient || redisClient.isNoRedis || typeof redisClient.scan !== 'function') {
+    return [];
+  }
+
+  let cursor = '0';
+  const keys = [];
+  const batchSize = Math.max(10, Math.min(Number(count) || 500, 2000));
+  const limit = Math.max(1, Math.min(Number(maxKeys) || 10000, 200000));
+
+  do {
+    // ioredis: scan(cursor, 'MATCH', pattern, 'COUNT', count)
+    // shim: scan() returns ['0', []]
+    const result = await redisClient.scan(cursor, 'MATCH', pattern, 'COUNT', String(batchSize));
+    cursor = (result && result[0]) ? String(result[0]) : '0';
+    const batch = (result && Array.isArray(result[1])) ? result[1] : [];
+    for (const key of batch) {
+      keys.push(key);
+      if (keys.length >= limit) {
+        return keys;
+      }
+    }
+  } while (cursor !== '0');
+
+  return keys;
+}
+
 /**
  * 缩略图同步服务类
  * 
@@ -48,7 +75,6 @@ class ThumbnailSyncService {
     this.redis = clientRedis;
     this.queue = new PQueue({ concurrency: 1 });
     this._currentTrigger = null;
-    this._resyncPending = 0;
   }
 
   /**
@@ -230,12 +256,10 @@ class ThumbnailSyncService {
 
     const runTask = async () => {
       this._currentTrigger = trigger;
-      this._resyncPending += 1;
       try {
         return await taskFactory();
       } finally {
         this._currentTrigger = null;
-        this._resyncPending = Math.max(0, this._resyncPending - 1);
       }
     };
 
@@ -503,10 +527,8 @@ async function getHlsFileStats() {
     // 从Redis获取失败记录数量
     let failed = 0;
     try {
-      if (redis) {
-        const keys = await redis.keys('video_failed_permanently:*');
-        failed = keys.length;
-      }
+      const keys = await scanKeysByPattern(redis, 'video_failed_permanently:*', { maxKeys: 200000 });
+      failed = keys.length;
     } catch (redisErr) {
       logger.debug(`${LOG_PREFIXES.SYSTEM_MAINTENANCE} 统计 HLS 失败记录时读取 Redis 失败（忽略）:`, redisErr && redisErr.message);
     }
@@ -639,55 +661,75 @@ async function performHlsReconcileOnce(limit = 1000) {
   try {
     const ItemsRepository = require('../../repositories/items.repo');
     const itemsRepo = new ItemsRepository();
-    const videos = await itemsRepo.getVideos(limit);
-    if (!videos || videos.length === 0) {
-      logger.debug('HLS补全检查：没有发现需要处理的视频文件');
-      return { total: 0, success: 0, failed: 0, skipped: 0 };
-    }
+    const pageSize = Math.max(100, Number(limit) || 1000);
 
-    const toProcess = [];
-    let skip = 0;
+    let offset = 0;
+    let success = 0;
+    let failed = 0;
+    let skipped = 0;
+    let total = 0;
 
-    for (const v of videos) {
-      try {
-        const sanitizedRelative = sanitizePath(v.path || '');
-        if (!sanitizedRelative || !isPathSafe(sanitizedRelative)) {
-          skip++;
-          continue;
-        }
+    // 分页扫描，确保上千视频也能补全
+    while (true) {
+      const videos = await itemsRepo.getVideos(pageSize, offset);
+      if (!videos || videos.length === 0) break;
 
-        const master = path.join(THUMBS_DIR, 'hls', sanitizedRelative, 'master.m3u8');
+      total += videos.length;
+      const toProcess = [];
+      let pageSkip = 0;
+
+      for (const v of videos) {
         try {
-          await fs.access(master);
-          skip++;
-          continue;
-        } catch (missingHlsErr) {
-          logger.silly(`${LOG_PREFIXES.SYSTEM_MAINTENANCE} 视频 ${sanitizedRelative} 缺少 HLS master（继续补全）: ${missingHlsErr && missingHlsErr.message}`);
-        }
+          const sanitizedRelative = sanitizePath(v.path || '');
+          if (!sanitizedRelative || !isPathSafe(sanitizedRelative)) {
+            pageSkip++;
+            continue;
+          }
 
-        const sourceAbsPath = path.resolve(PHOTOS_DIR, sanitizedRelative);
-        await fs.access(sourceAbsPath);
-        toProcess.push({ absolute: sourceAbsPath, relative: sanitizedRelative });
-      } catch (e) {
-        logger.debug(`HLS补全检查视频失败: ${v.path}, ${e.message}`);
+          const master = path.join(THUMBS_DIR, 'hls', sanitizedRelative, 'master.m3u8');
+          try {
+            await fs.access(master);
+            pageSkip++;
+            continue;
+          } catch (missingHlsErr) {
+            logger.silly(`${LOG_PREFIXES.SYSTEM_MAINTENANCE} 视频 ${sanitizedRelative} 缺少 HLS master（继续补全）: ${missingHlsErr && missingHlsErr.message}`);
+          }
+
+          const sourceAbsPath = path.resolve(PHOTOS_DIR, sanitizedRelative);
+          await fs.access(sourceAbsPath);
+          toProcess.push({ absolute: sourceAbsPath, relative: sanitizedRelative });
+        } catch (e) {
+          logger.debug(`HLS补全检查视频失败: ${v.path}, ${e.message}`);
+          pageSkip++;
+        }
       }
+
+      try {
+        if (toProcess.length > 0) {
+          const absoluteList = toProcess.map((item) => item.absolute);
+          const batch = await runHlsBatch(absoluteList, { timeoutMs: process.env.HLS_BATCH_TIMEOUT_MS });
+          success += batch.success || 0;
+          failed += batch.failed || 0;
+          skipped += batch.skipped || 0;
+        }
+      } catch (e) {
+        logger.warn('HLS一次性批处理执行失败（忽略其余流程）:', e && e.message);
+        failed += toProcess.length;
+      }
+
+      skipped += pageSkip;
+      offset += pageSize;
     }
 
-    const absoluteList = toProcess.map((item) => item.absolute);
-    let batch = { total: absoluteList.length, success: 0, failed: 0, skipped: skip };
-    try {
-      if (absoluteList.length > 0) {
-        batch = await runHlsBatch(absoluteList, { timeoutMs: process.env.HLS_BATCH_TIMEOUT_MS });
-      }
-    } catch (e) {
-      logger.warn('HLS一次性批处理执行失败（忽略其余流程）:', e && e.message);
+    if (total === 0) {
+      logger.debug('HLS补全检查：没有发现需要处理的视频文件');
     }
 
     return {
-      total: batch.total ?? absoluteList.length,
-      success: batch.success || 0,
-      failed: batch.failed || 0,
-      skipped: (batch.skipped || 0) + skip
+      total,
+      success,
+      failed,
+      skipped
     };
   } catch (error) {
     logger.error('HLS补全检查失败:', error);
@@ -755,16 +797,12 @@ async function performThumbnailCleanup() {
           await safeRedisDel(redis, redisKey, '清理永久失败缩略图标记');
         }
 
+        // 【安全措施】不再删除源文件，只清理缓存记录
+        // 原设计会删除 permanent_failed 的源文件，但这太危险了
+        // 因为缩略图生成失败不代表源文件损坏（可能只是超时、内存不足等临时问题）
         if (shouldRemoveSource && sourceExists) {
-          try {
-            await fs.unlink(sourceAbsPath);
-            logger.info(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 删除永久失败源文件: ${sourceAbsPath}`);
-            result.permanentSourcesRemoved += 1;
-          } catch (unlinkErr) {
-            if (unlinkErr.code !== 'ENOENT') {
-              logger.warn(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 删除源文件失败: ${sourceAbsPath}`, unlinkErr);
-            }
-          }
+          logger.info(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 跳过源文件删除（安全模式）: ${sourceAbsPath}`);
+          // 不删除源文件，只记录日志
         }
 
         try {
@@ -852,9 +890,9 @@ async function performHlsCleanup() {
     }
 
     // 第二步：清理永久失败的视频源文件
-    if (redis) {
+    if (redis && !redis.isNoRedis) {
       try {
-        const failedKeys = await redis.keys('video_failed_permanently:*');
+        const failedKeys = await scanKeysByPattern(redis, 'video_failed_permanently:*', { maxKeys: 200000 });
         logger.debug(`${LOG_PREFIXES.HLS_CLEANUP} 发现 ${failedKeys.length} 个永久失败标记`);
 
         for (const key of failedKeys) {
@@ -897,16 +935,11 @@ async function performHlsCleanup() {
               logger.warn(`${LOG_PREFIXES.HLS_CLEANUP} 删除数据库记录失败: ${sanitizedPath}`, dbErr.message);
             }
 
-            // 删除源文件
-            try {
-              await fs.unlink(sourceAbsPath);
-              logger.info(`${LOG_PREFIXES.HLS_CLEANUP} 删除永久失败视频源文件: ${sourceAbsPath}`);
-              permanentFailedCount++;
-            } catch (unlinkErr) {
-              if (unlinkErr.code !== 'ENOENT') {
-                logger.warn(`${LOG_PREFIXES.HLS_CLEANUP} 删除源文件失败: ${sourceAbsPath}`, unlinkErr.message);
-                errorCount++;
-              }
+            // 【安全措施】不再删除视频源文件，只清理缓存记录
+            // 原设计会删除 permanent_failed 的源文件，但这太危险了
+            if (sourceExists) {
+              logger.info(`${LOG_PREFIXES.HLS_CLEANUP} 跳过视频源文件删除（安全模式）: ${sourceAbsPath}`);
+              // 不删除源文件，只清理 Redis 标记
             }
 
             // 删除 HLS 目录（如果存在）
@@ -1080,7 +1113,7 @@ async function triggerSyncOperation(type) {
     }
     default: {
       const { ValidationError } = require('../../utils/errors');
-      throw new ValidationError('未知的补全类型', { type, validTypes: ['indexing', 'hls', 'thumbnails'] });
+      throw new ValidationError('未知的补全类型', { type, validTypes: ['index', 'thumbnail', 'hls', 'all'] });
     }
   }
 }

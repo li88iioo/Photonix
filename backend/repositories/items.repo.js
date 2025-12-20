@@ -62,7 +62,7 @@ class ItemsRepository {
      */
     async getByPaths(paths) {
         if (!Array.isArray(paths) || paths.length === 0) return [];
-        
+
         try {
             const placeholders = paths.map(() => '?').join(',');
             const rows = await dbAll('main', `SELECT * FROM items WHERE path IN (${placeholders})`, paths);
@@ -136,17 +136,17 @@ class ItemsRepository {
 
                 // 1. 删除items表记录
                 await dbRun('main', 'DELETE FROM items WHERE path = ?', [cleanPath]);
-                
+
                 // 2. 删除thumb_status表记录
                 await dbRun('main', 'DELETE FROM thumb_status WHERE path = ?', [cleanPath]);
-                
+
                 // 3. 删除相关的album_covers（如果这个path是相册）
                 await dbRun('main', 'DELETE FROM album_covers WHERE album_path = ?', [cleanPath]);
-                
+
                 // 4. 删除子路径的album_covers（如果这个path包含子相册）
                 await dbRun('main', 'DELETE FROM album_covers WHERE album_path LIKE ?', [`${cleanPath}/%`]);
 
-                logger.debug(`[ItemsRepo] 删除item及关联数据成功: ${cleanPath}`);
+                // 单条删除成功，不需要debug日志（批量操作会有汇总统计）
                 return true;
             });
         } catch (error) {
@@ -248,12 +248,12 @@ class ItemsRepository {
      * @param {number} limit - 限制数量
      * @returns {Promise<Array>}
      */
-    async getVideos(limit = null) {
+    async getVideos(limit = null, offset = 0) {
         try {
-            const sql = limit 
-                ? 'SELECT * FROM items WHERE type = ? LIMIT ?' 
+            const sql = limit
+                ? 'SELECT * FROM items WHERE type = ? LIMIT ? OFFSET ?'
                 : 'SELECT * FROM items WHERE type = ?';
-            const params = limit ? ['video', limit] : ['video'];
+            const params = limit ? ['video', limit, Math.max(0, offset)] : ['video'];
             const rows = await dbAll('main', sql, params);
             return rows || [];
         } catch (error) {
@@ -298,20 +298,20 @@ class ItemsRepository {
                 // 导入其他Repository（延迟加载，避免循环依赖）
                 const ThumbStatusRepository = require('./thumbStatus.repo');
                 const AlbumCoversRepository = require('./albumCovers.repo');
-                
+
                 const thumbStatusRepo = new ThumbStatusRepository();
                 const albumCoversRepo = new AlbumCoversRepository();
 
                 // 1. 删除item
                 await this.deleteByPath(path);
-                
+
                 // 2. 删除缩略图状态
                 await thumbStatusRepo.deleteByPath(path);
-                
+
                 // 3. 删除相册封面（如果是目录）
                 await albumCoversRepo.deleteByAlbumPath(path);
             });
-            
+
             logger.debug(`[ItemsRepo] 已删除item及关联数据: ${path}`);
             return true;
         } catch (error) {
@@ -331,14 +331,14 @@ class ItemsRepository {
 
         try {
             let deletedCount = 0;
-            
+
             await withTransaction('main', async () => {
                 const ThumbStatusRepository = require('./thumbStatus.repo');
                 const thumbStatusRepo = new ThumbStatusRepository();
 
                 // 1. 删除items
                 deletedCount = await this.deleteBatch(paths, includeSubpaths);
-                
+
                 // 2. 删除对应的thumb_status记录
                 await thumbStatusRepo.deleteBatch(paths, false);
             });

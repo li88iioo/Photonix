@@ -117,11 +117,19 @@ async function checkThumbExists(thumbAbsPath) {
         } else {
             // 内存降级
             memoryFallbackCache.set(thumbAbsPath, { exists: true, time: now });
-            if (memoryFallbackCache.size > MEMORY_CACHE_MAX_SIZE) {
-                const keys = Array.from(memoryFallbackCache.keys()).slice(0, 500);
-                keys.forEach(k => memoryFallbackCache.delete(k));
+            // 更积极的清理：80% 阈值触发，按时间排序删除最旧的 50% 条目（真正的 LRU）
+            if (memoryFallbackCache.size > MEMORY_CACHE_MAX_SIZE * 0.8) {
+                const keysToDelete = Math.floor(memoryFallbackCache.size * 0.5);
+                // 按时间戳排序，最旧的在前
+                const sortedEntries = Array.from(memoryFallbackCache.entries())
+                    .sort((a, b) => a[1].time - b[1].time);
+                for (let i = 0; i < keysToDelete && i < sortedEntries.length; i++) {
+                    memoryFallbackCache.delete(sortedEntries[i][0]);
+                }
             }
         }
+
+
 
         return true;
     } catch {
@@ -184,22 +192,41 @@ async function getThumbnail(req, res) {
         const thumbAbsPath = path.join(THUMBS_DIR, thumbRelPath);
 
         // ✅ 优化：先检查缩略图缓存，避免重复的磁盘 I/O
-        const thumbExists = await checkThumbExists(thumbAbsPath);
+        let thumbExists = await checkThumbExists(thumbAbsPath);
+
+        if (thumbExists) {
+            // 缓存可能过期，先验证文件存在
+            try {
+                await fs.access(thumbAbsPath);
+            } catch (error) {
+                await invalidateThumbCache(thumbAbsPath);
+                logger.warn(`缩略图缓存失效，文件缺失: ${thumbAbsPath} -> ${error && error.message}`);
+                thumbExists = false;
+            }
+        }
 
         if (thumbExists) {
             // 缩略图存在，直接发送（跳过源文件检查和 ensureThumbnailExists）
-            try {
-                res.set({
-                    'Cache-Control': 'public, max-age=2592000', // 30天
-                    'Content-Type': isVideo ? 'image/jpeg' : 'image/webp'
-                });
-                return res.sendFile(thumbAbsPath);
-            } catch (error) {
-                // 发送失败，可能是文件被删除，清除缓存后重试
-                await invalidateThumbCache(thumbAbsPath);
-                logger.error(`发送缩略图文件失败: ${thumbAbsPath}`, error);
-                return res.status(500).json({ error: '缩略图文件读取失败' });
-            }
+            res.set({
+                'Cache-Control': 'public, max-age=2592000', // 30天
+                'Content-Type': isVideo ? 'image/jpeg' : 'image/webp'
+            });
+            return res.sendFile(thumbAbsPath, (err) => {
+                if (err) {
+                    logger.warn(`发送缩略图文件失败，清除缓存: ${thumbAbsPath} -> ${err && err.message}`);
+                    invalidateThumbCache(thumbAbsPath).catch(() => {});
+                    if (!res.headersSent) {
+                        const errorSvg = generateErrorSvg();
+                        res.set({
+                            'Content-Type': 'image/svg+xml',
+                            'Cache-Control': 'public, max-age=300',
+                            'X-Thumbnail-Status': 'failed',
+                            'X-Thumb-Status': 'failed'
+                        });
+                        res.status(404).send(errorSvg);
+                    }
+                }
+            });
         }
 
         // 缩略图不存在，需要验证源文件并可能生成
@@ -227,16 +254,26 @@ async function getThumbnail(req, res) {
                 memoryFallbackCache.set(thumbAbsPath, { exists: true, time: Date.now() });
             }
 
-            try {
-                res.set({
-                    'Cache-Control': 'public, max-age=2592000',
-                    'Content-Type': isVideo ? 'image/jpeg' : 'image/webp'
-                });
-                return res.sendFile(thumbAbsPath);
-            } catch (error) {
-                logger.error(`发送缩略图文件失败: ${thumbAbsPath}`, error);
-                return res.status(500).json({ error: '缩略图文件读取失败' });
-            }
+            res.set({
+                'Cache-Control': 'public, max-age=2592000',
+                'Content-Type': isVideo ? 'image/jpeg' : 'image/webp'
+            });
+            return res.sendFile(thumbAbsPath, (err) => {
+                if (err) {
+                    logger.error(`发送缩略图文件失败: ${thumbAbsPath}`, err);
+                    invalidateThumbCache(thumbAbsPath).catch(() => {});
+                    if (!res.headersSent) {
+                        const errorSvg = generateErrorSvg();
+                        res.set({
+                            'Content-Type': 'image/svg+xml',
+                            'Cache-Control': 'public, max-age=300',
+                            'X-Thumbnail-Status': 'failed',
+                            'X-Thumb-Status': 'failed'
+                        });
+                        res.status(404).send(errorSvg);
+                    }
+                }
+            });
         } else if (result.status === 'processing') {
             // 正在生成，返回加载中SVG
             const loadingSvg = generateLoadingSvg();
@@ -298,8 +335,8 @@ async function batchGenerateThumbnails(req, res) {
         // 更新限制时间
         batchThrottleMap.set(userKey, now);
 
-        // 清理过多的记录，防止泄漏
-        if (batchThrottleMap.size > 1000) {
+        // 清理过多的记录，防止内存泄漏
+        if (batchThrottleMap.size > 200) {
             const cutoff = now - 60000;
             for (const [key, timestamp] of batchThrottleMap.entries()) {
                 if (timestamp < cutoff) {

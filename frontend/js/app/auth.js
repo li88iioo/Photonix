@@ -16,6 +16,178 @@ import { resetPasswordViaAdminSecret } from '../api/settings.js';
 
 const authLogger = createModuleLogger('Auth');
 const PROMPT_CANCELLED = 'PROMPT_CANCELLED';
+const LEGACY_TOKEN_KEYS = ['photonix_auth_token'];
+const TOKEN_EXPIRY_KEY = 'photonix_auth_expiry';
+
+/**
+ * 验证 JWT Token 格式是否有效
+ * @param {string} token - 待验证的 Token
+ * @returns {boolean} 是否为有效的 JWT 格式
+ */
+function isValidJwtFormat(token) {
+    if (!token || typeof token !== 'string') return false;
+    // JWT 格式: header.payload.signature (三段 Base64URL)
+    const parts = token.split('.');
+    if (parts.length !== 3) return false;
+    // 检查每段是否为有效的 Base64URL 编码
+    const base64UrlPattern = /^[A-Za-z0-9_-]+$/;
+    return parts.every((part) => part.length > 0 && base64UrlPattern.test(part));
+}
+
+/**
+ * 解析 JWT Token 的 payload 部分
+ * @param {string} token - JWT Token
+ * @returns {Object|null} 解析后的 payload 对象，失败返回 null
+ */
+function parseJwtPayload(token) {
+    if (!isValidJwtFormat(token)) return null;
+    try {
+        const payloadPart = token.split('.')[1];
+        // Base64URL 转 Base64
+        const base64 = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(
+            atob(base64)
+                .split('')
+                .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+                .join('')
+        );
+        return JSON.parse(jsonPayload);
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 检查 Token 是否已过期
+ * @param {string} token - JWT Token
+ * @returns {boolean} 是否已过期
+ */
+function isTokenExpired(token) {
+    const payload = parseJwtPayload(token);
+    if (!payload) return true; // 解析失败视为过期
+
+    // 检查 exp 字段（JWT 标准过期时间，单位：秒）
+    if (payload.exp) {
+        const now = Math.floor(Date.now() / 1000);
+        // 提前 60 秒判定过期，避免边界问题
+        if (payload.exp - 60 < now) {
+            return true;
+        }
+    }
+
+    // 检查本地记录的过期时间（备用）
+    try {
+        const storedExpiry = localStorage.getItem(TOKEN_EXPIRY_KEY);
+        if (storedExpiry) {
+            const expiryTime = Number(storedExpiry);
+            if (Number.isFinite(expiryTime) && expiryTime < Date.now()) {
+                return true;
+            }
+        }
+    } catch { /* ignore */ }
+
+    return false;
+}
+
+/**
+ * 持久化 Token 到存储
+ * @param {string} token - JWT Token
+ * @param {number} [expiresInMs] - 过期时间（毫秒），可选
+ */
+function persistToken(token, expiresInMs) {
+    // 验证 Token 格式
+    if (!isValidJwtFormat(token)) {
+        authLogger.warn('尝试存储无效格式的 Token');
+        return;
+    }
+
+    try {
+        // 使用 localStorage 保持登录状态（关闭浏览器后仍有效）
+        localStorage.setItem(AUTH.TOKEN_KEY, token);
+
+        // 存储过期时间
+        if (expiresInMs && Number.isFinite(expiresInMs)) {
+            const expiryTime = Date.now() + expiresInMs;
+            localStorage.setItem(TOKEN_EXPIRY_KEY, String(expiryTime));
+        } else {
+            // 尝试从 JWT 解析过期时间
+            const payload = parseJwtPayload(token);
+            if (payload?.exp) {
+                const expiryTime = payload.exp * 1000; // 转换为毫秒
+                localStorage.setItem(TOKEN_EXPIRY_KEY, String(expiryTime));
+            }
+        }
+
+        // 清理遗留的旧 Key
+        LEGACY_TOKEN_KEYS.forEach((key) => {
+            if (key !== AUTH.TOKEN_KEY) {
+                try { localStorage.removeItem(key); } catch { /* ignore */ }
+            }
+        });
+
+        authLogger.debug('Token 已持久化');
+    } catch (error) {
+        authLogger.warn('无法写入令牌存储', { error: error && error.message });
+    }
+}
+
+/**
+ * 读取 Token，带格式验证和过期检查
+ * @returns {string|null} 有效的 Token，或 null
+ */
+function readToken() {
+    let token = null;
+
+    // 尝试从 localStorage 读取
+    try {
+        token = localStorage.getItem(AUTH.TOKEN_KEY);
+    } catch { /* ignore */ }
+
+    // 兼容读取遗留 Key
+    if (!token) {
+        try {
+            token = LEGACY_TOKEN_KEYS.map((k) => localStorage.getItem(k)).find(Boolean) || null;
+            if (token) {
+                // 迁移到标准 Key
+                persistToken(token);
+            }
+        } catch { /* ignore */ }
+    }
+
+    // 验证 Token
+    if (token) {
+        // 格式验证
+        if (!isValidJwtFormat(token)) {
+            authLogger.warn('存储的 Token 格式无效，已清除');
+            removeToken();
+            return null;
+        }
+
+        // 过期检查
+        if (isTokenExpired(token)) {
+            authLogger.info('Token 已过期，已清除');
+            removeToken();
+            return null;
+        }
+    }
+
+    return token;
+}
+
+/**
+ * 移除所有 Token 相关存储
+ */
+function removeToken() {
+    try {
+        localStorage.removeItem(AUTH.TOKEN_KEY);
+        localStorage.removeItem(TOKEN_EXPIRY_KEY);
+        LEGACY_TOKEN_KEYS.forEach((key) => localStorage.removeItem(key));
+    } catch { /* ignore */ }
+    // 同时清理可能存在的 sessionStorage
+    try {
+        sessionStorage.removeItem(AUTH.TOKEN_KEY);
+    } catch { /* ignore */ }
+}
 
 /**
  * 通知 Service Worker 执行相关操作
@@ -39,7 +211,7 @@ function notifyServiceWorker(message) {
  */
 export function clearAuthToken() {
     try {
-        localStorage.removeItem('photonix_auth_token');
+        removeToken();
         authLogger.debug('认证token已清除');
 
         // 通知 Service Worker 清除token
@@ -123,8 +295,8 @@ export async function checkAuthStatus() {
         const result = await response.json();
         // 确保返回的对象有 passwordEnabled 属性
         return {
-            passwordEnabled: result && typeof result.passwordEnabled === 'boolean' 
-                ? result.passwordEnabled 
+            passwordEnabled: result && typeof result.passwordEnabled === 'boolean'
+                ? result.passwordEnabled
                 : false
         };
     } catch (error) {
@@ -482,7 +654,7 @@ export function togglePasswordFields(isEnabled) {
  * @returns {void}
  */
 export function setAuthToken(token) {
-    localStorage.setItem(AUTH.TOKEN_KEY, token);
+    persistToken(token);
     clearAuthHeadersCache(); // 清除认证头缓存
     notifyServiceWorker({ type: SW_MESSAGE.CLEAR_API_CACHE, scope: 'all' });
 }
@@ -492,7 +664,7 @@ export function setAuthToken(token) {
  * @returns {string|null} 认证令牌
  */
 export function getAuthToken() {
-    return localStorage.getItem(AUTH.TOKEN_KEY);
+    return readToken();
 }
 
 /**
@@ -500,7 +672,7 @@ export function getAuthToken() {
  * @returns {void}
  */
 export function removeAuthToken() {
-    localStorage.removeItem(AUTH.TOKEN_KEY);
+    removeToken();
     clearAuthHeadersCache(); // 清除认证头缓存
     notifyServiceWorker({ type: SW_MESSAGE.CLEAR_API_CACHE, scope: 'all' });
 }

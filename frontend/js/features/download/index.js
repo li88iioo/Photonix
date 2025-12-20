@@ -76,10 +76,19 @@ import {
   hasValidAuth
 } from './auth-helper.js';
 
-const ADMIN_SECRET_STORAGE_KEY = 'photonix:download:adminSecret';
-const VERIFIED_AT_STORAGE_KEY = 'photonix:download:verifiedAt';
 const ADMIN_VERIFICATION_MAX_AGE = 12 * 60 * 60 * 1000;
 const AUTO_REFRESH_INTERVAL = 30 * 1000;
+const LEGACY_ADMIN_SECRET_STORAGE_KEY = 'photonix:download:adminSecret';
+const LEGACY_VERIFIED_AT_STORAGE_KEY = 'photonix:download:verifiedAt';
+
+// 清理由于历史实现存放在 localStorage 的敏感数据，避免残留风险
+function purgeLegacyPersistedSecrets() {
+  try {
+    localStorage.removeItem(LEGACY_ADMIN_SECRET_STORAGE_KEY);
+    localStorage.removeItem(LEGACY_VERIFIED_AT_STORAGE_KEY);
+  } catch { }
+}
+purgeLegacyPersistedSecrets();
 
 function showDownloadNotification(message, type = 'info', duration) {
   return showNotification(message, type, duration);
@@ -108,48 +117,13 @@ function isVerificationFresh(timestamp) {
   return Date.now() - Number(timestamp) <= ADMIN_VERIFICATION_MAX_AGE;
 }
 
-function persistAdminSecret(secret) {
-  try {
-    if (secret) {
-      localStorage.setItem(ADMIN_SECRET_STORAGE_KEY, secret);
-    } else {
-      localStorage.removeItem(ADMIN_SECRET_STORAGE_KEY);
-    }
-  } catch { }
-}
-
-function loadPersistedAdminSecret() {
-  try {
-    const stored = localStorage.getItem(ADMIN_SECRET_STORAGE_KEY);
-    return stored ? String(stored) : null;
-  } catch {
-    return null;
-  }
-}
-
-function loadPersistedVerifiedAt() {
-  try {
-    const raw = localStorage.getItem(VERIFIED_AT_STORAGE_KEY);
-    const parsed = Number(raw);
-    return Number.isFinite(parsed) ? parsed : 0;
-  } catch {
-    return 0;
-  }
-}
-
 function markAdminVerified() {
   const ts = Date.now();
   downloadState.lastVerifiedAt = ts;
-  try {
-    localStorage.setItem(VERIFIED_AT_STORAGE_KEY, String(ts));
-  } catch { }
 }
 
 function clearAdminVerificationMark() {
   downloadState.lastVerifiedAt = 0;
-  try {
-    localStorage.removeItem(VERIFIED_AT_STORAGE_KEY);
-  } catch { }
 }
 
 function matchesTaskId(task, identifier) {
@@ -360,65 +334,34 @@ function startAutoRefresh() {
 }
 
 async function ensureAdminSecret(forcePrompt = false) {
-  // 检查是否有存储的管理员密钥
+  // 优先使用当前会话状态（内存）且在有效期内
   if (!forcePrompt && downloadState.adminSecret && isVerificationFresh(downloadState.lastVerifiedAt)) {
-    // 如果是Token认证，尝试刷新
     if (downloadState.adminSecret === 'TOKEN_AUTH') {
       const refreshed = await refreshDownloadToken();
       if (refreshed) {
         return 'TOKEN_AUTH';
       }
+      // 刷新失败则继续走后续流程重新验证
+    } else {
+      // 密钥模式：验证时间戳仍在有效期内，直接复用
+      // 注：isVerificationFresh 已确保时间窗口有效，无需额外网络验证
+      return downloadState.adminSecret;
     }
-    return downloadState.adminSecret;
   }
 
-  if (window.__PHOTONIX_DOWNLOAD_ADMIN_SECRET__) {
-    const secret = String(window.__PHOTONIX_DOWNLOAD_ADMIN_SECRET__);
-    delete window.__PHOTONIX_DOWNLOAD_ADMIN_SECRET__;
-
-    // 暂时保存原始密钥
-    downloadState.originalSecret = secret;
-
-    // 用密钥交换Token
-    const tokenResult = await exchangeSecretForToken(secret);
-    if (tokenResult.success) {
-      setAdminSecret('TOKEN_AUTH');
-      persistAdminSecret('TOKEN_AUTH'); // 修复：持久化 token 模式，刷新后仍可复用 JWT
-      markAdminVerified();
-      showDownloadNotification('认证成功，已获取安全令牌', 'success');
-      return 'TOKEN_AUTH';
-    }
-
-    // Token获取失败，降级到密钥模式
-    setAdminSecret(secret);
-    persistAdminSecret(secret);
-    markAdminVerified();
-    return secret;
-  }
-
+  // 无需提示时，尝试复用现有 Token（sessionStorage）
   if (!forcePrompt) {
-    const storedSecret = loadPersistedAdminSecret();
-    if (storedSecret) {
-      const storedTimestamp = loadPersistedVerifiedAt();
-
-      // 检查 Token 模式下的有效性
-      let isValid = isVerificationFresh(storedTimestamp);
-      if (isValid && storedSecret === 'TOKEN_AUTH') {
-        // 如果标记为 Token 模式，必须确保本地有 Token
-        const token = getDownloadToken();
-        if (!token) {
-          downloadLogger.warn('存储状态为 TOKEN_AUTH 但本地无 Token，需重新验证');
-          isValid = false;
-        }
-      }
-
-      if (isValid) {
-        setAdminSecret(storedSecret);
+    const token = getDownloadToken();
+    if (token) {
+      const valid = await hasValidAuth().catch(() => false);
+      if (valid) {
+        setAdminSecret('TOKEN_AUTH');
         markAdminVerified();
-        return storedSecret;
+        return 'TOKEN_AUTH';
       }
+      // Token 无效时清理，避免残留
+      clearDownloadToken();
       clearAdminSecret();
-      persistAdminSecret(null);
       clearAdminVerificationMark();
     }
   }
@@ -438,17 +381,15 @@ async function ensureAdminSecret(forcePrompt = false) {
           const tokenResult = await exchangeSecretForToken(adminSecret);
           if (tokenResult.success) {
             setAdminSecret('TOKEN_AUTH');
-            persistAdminSecret('TOKEN_AUTH'); // 修复：持久化 Token 认证状态
             markAdminVerified();
             showDownloadNotification('认证成功，已获取安全令牌', 'success');
             resolve('TOKEN_AUTH');
             return true;
           }
 
-          // Token获取失败，降级到密钥模式
+          // Token获取失败，降级到密钥模式（仅存于内存）
           downloadLogger.warn('Token获取失败，使用密钥模式');
           setAdminSecret(adminSecret);
-          persistAdminSecret(adminSecret);
           markAdminVerified();
           resolve(adminSecret);
           return true;
@@ -1047,7 +988,6 @@ export function hideDownloadPage({ redirect = false } = {}) {
 export function resetDownloadAccess() {
   stopAutoRefresh();
   clearAdminSecret();
-  persistAdminSecret(null);
   clearAdminVerificationMark();
   clearDownloadToken(); // 清理Token
 }

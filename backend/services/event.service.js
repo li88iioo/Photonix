@@ -39,7 +39,9 @@ function setupRedisSubscriber() {
 			if (channel === 'thumbnail-generated') {
 				try {
 					const data = JSON.parse(message);
-					logger.debug(`[SSE] 收到跨进程事件: ${data.path}`);
+					if (isDevelopment) {
+						logger.silly(`[SSE] 收到跨进程事件: ${data.path || ''}`);
+					}
 					eventBus.emit('thumbnail-generated', data);
 				} catch (error) {
 					logger.error('[SSE] 解析跨进程消息失败:', error);

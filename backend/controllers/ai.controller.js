@@ -7,6 +7,9 @@
  */
 
 const logger = require('../config/logger');
+const path = require('path');
+const { promises: fs } = require('fs');
+const { PHOTOS_DIR } = require('../config');
 const { isPathSafe, sanitizePath } = require('../utils/path.utils');
 const aiMicroservice = require('../services/ai-microservice');
 
@@ -113,10 +116,37 @@ exports.generateCaption = async (req, res) => {
     // 步骤2: 路径清理与安全检测
     let cleanPath = image_path.startsWith('/static/') ? image_path.substring(7) : image_path;
     const sanitizedPath = sanitizePath(cleanPath);
+    if (!sanitizedPath) {
+        return res.status(400).json({
+            code: 'UNSAFE_IMAGE_PATH',
+            message: '不安全的图片路径',
+            requestId: req.requestId
+        });
+    }
+
     if (!isPathSafe(sanitizedPath)) {
         return res.status(403).json({
             code: 'UNSAFE_IMAGE_PATH',
             message: '不安全的图片路径',
+            requestId: req.requestId
+        });
+    }
+
+    const absPath = path.join(PHOTOS_DIR, sanitizedPath);
+    try {
+        const stat = await fs.stat(absPath);
+        if (!stat.isFile()) {
+            return res.status(404).json({
+                code: 'IMAGE_NOT_FOUND',
+                message: '图片不存在',
+                requestId: req.requestId
+            });
+        }
+    } catch (error) {
+        logger.debug(`[AI] 图片路径不可用: ${absPath} -> ${error && error.message}`);
+        return res.status(404).json({
+            code: 'IMAGE_NOT_FOUND',
+            message: '图片不存在',
             requestId: req.requestId
         });
     }

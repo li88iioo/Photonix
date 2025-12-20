@@ -97,7 +97,7 @@ async function performSearch(query, page, limit) {
                 let coverWidth = 1, coverHeight = 1;
 
                 if (coverInfo && coverInfo.path) {
-                    const relativeCoverPath = path.relative(PHOTOS_DIR, coverInfo.path);
+                    const relativeCoverPath = path.relative(PHOTOS_DIR, coverInfo.path).replace(/\\/g, '/');
                     const coverMtime = Math.floor(coverInfo.mtime || Date.now());
                     coverUrl = `${API_BASE}/api/thumbnail?path=${encodeURIComponent(relativeCoverPath)}&v=${coverMtime}`;
                     coverWidth = coverInfo.width;
@@ -116,11 +116,12 @@ async function performSearch(query, page, limit) {
             }
 
             const mtime = Math.floor(result.mtime || Date.now());
-            const originalUrl = `/static/${result.path.split(path.sep).map(encodeURIComponent).join('/')}`;
-            const thumbnailUrl = `${API_BASE}/api/thumbnail?path=${encodeURIComponent(result.path)}&v=${mtime}`;
+            const normalizedPath = String(result.path || '').replace(/\\/g, '/');
+            const originalUrl = `/static/${normalizedPath.split('/').map(encodeURIComponent).join('/')}`;
+            const thumbnailUrl = `${API_BASE}/api/thumbnail?path=${encodeURIComponent(normalizedPath)}&v=${mtime}`;
             return {
                 ...result,
-                path: result.path.replace(/\\/g, '/'),
+                path: normalizedPath,
                 originalUrl,
                 thumbnailUrl,
                 parentPath,

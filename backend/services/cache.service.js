@@ -15,7 +15,17 @@ function resolveRedisClient(scope = '缓存操作') {
     if (!redis || redis.isNoRedis) {
         if (!redisNoOpWarned) {
             redisNoOpWarned = true;
-            logger.info(`Redis 未连接或处于 No-Op 模式，已跳过${scope}。`);
+            const { getAvailability } = require('../config/redis');
+            const availability = typeof getAvailability === 'function' ? getAvailability() : 'unknown';
+            const pid = process.pid;
+            // 在多线程/多进程场景下便于溯源
+            const threadId = (() => {
+                try {
+                    const { threadId: tid } = require('worker_threads');
+                    return tid;
+                } catch { return undefined; }
+            })();
+            logger.debug(`Redis 未连接或处于 No-Op 模式，已跳过${scope}。availability=${availability}, pid=${pid}${threadId !== undefined ? `, threadId=${threadId}` : ''}`);
         }
         return null;
     }
@@ -28,8 +38,12 @@ function resolveRedisClient(scope = '缓存操作') {
  */
 async function invalidateTags(tags) {
     const client = resolveRedisClient('路由缓存失效操作');
-    if (!client) return;
     const tagsToInvalidate = Array.isArray(tags) ? tags : [tags];
+    if (!client) {
+        // Redis 不可用时标记后续读禁用路由缓存（减轻因陈旧缓存导致的空白卡片）
+        global.__PH_ROUTE_CACHE_BYPASS_UNTIL = Date.now() + Number(process.env.ROUTE_CACHE_BYPASS_MS || 3000);
+        return;
+    }
     if (tagsToInvalidate.length === 0) {
         return;
     }
@@ -117,7 +131,7 @@ async function cacheQueryResult(queryKey, data, tags = [], ttl = QUERY_CACHE_TTL
             await addTagsToKey(cacheKey, tags);
         }
 
-        logger.debug(`[Cache] 查询结果已缓存: ${queryKey}`);
+        // 缓存写入成功，不需要记录debug日志（避免刷屏）
     } catch (error) {
         logger.debug('缓存查询结果失败:', error);
     }

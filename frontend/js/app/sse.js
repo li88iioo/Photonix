@@ -19,6 +19,7 @@ const sseLogger = createModuleLogger('SSE');
 // 活动连接与重连相关变量
 let eventSource = null;
 let retryCount = 0;
+let reachedMaxRetries = false; // 达到最大重试后进入低频重试模式
 
 // 日志函数
 const sseLog = (message, ...args) => {
@@ -169,10 +170,15 @@ function scheduleReconnect() {
     // 防止无限重连 - 最多重试10次
     const MAX_RETRY_ATTEMPTS = 10;
     if (retryCount >= MAX_RETRY_ATTEMPTS) {
-        sseError(`SSE 重连次数达到上限 (${MAX_RETRY_ATTEMPTS})，停止重连。请检查网络或认证状态。`);
-        window.dispatchEvent(new CustomEvent('sse:max-retries-reached', {
-            detail: { retryCount, maxRetries: MAX_RETRY_ATTEMPTS }
-        }));
+        // 进入低频重试模式，避免长时间断线后完全停摆
+        if (!reachedMaxRetries) {
+            reachedMaxRetries = true;
+            sseError(`SSE 重连次数达到上限 (${MAX_RETRY_ATTEMPTS})，切换为低频重试。请检查网络或认证状态。`);
+            window.dispatchEvent(new CustomEvent('sse:max-retries-reached', {
+                detail: { retryCount, maxRetries: MAX_RETRY_ATTEMPTS }
+            }));
+        }
+        setManagedTimeout(connect, SSE.MAX_RETRY_DELAY, 'sse-reconnect');
         return;
     }
 
@@ -274,6 +280,7 @@ function startEventSource() {
 
     eventSource.onopen = () => {
         retryCount = 0;
+        reachedMaxRetries = false;
         sseLog('连接已建立');
     };
 

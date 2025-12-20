@@ -123,6 +123,45 @@ class AlbumCoversRepository {
     }
 
     /**
+     * 查询 cover_path 落在指定目录下的相册路径（用于删除引用时清理缓存）
+     * @param {string} dirPath
+     * @returns {Promise<Array<string>>}
+     */
+    async getAlbumPathsByCoverPrefix(dirPath) {
+        try {
+            const rows = await dbAll(
+                'main',
+                `SELECT album_path FROM album_covers WHERE cover_path = ? OR cover_path LIKE ? || '/%'`,
+                [dirPath, dirPath]
+            );
+            return (rows || []).map(r => r.album_path).filter(Boolean);
+        } catch (error) {
+            logger.warn(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 查询封面引用失败 (dirPath=${dirPath}):`, error.message);
+            return [];
+        }
+    }
+
+    /**
+     * 删除 cover_path 落在指定目录下的记录（用于移除封面引用）
+     * @param {string} dirPath
+     * @returns {Promise<boolean>}
+     */
+    async deleteByCoverPrefix(dirPath) {
+        try {
+            await dbRun(
+                'main',
+                `DELETE FROM album_covers WHERE cover_path = ? OR cover_path LIKE ? || '/%'`,
+                [dirPath, dirPath]
+            );
+            logger.debug(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 已删除封面引用（cover_path 前缀）: ${dirPath}`);
+            return true;
+        } catch (error) {
+            logger.warn(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 删除封面引用失败 (dirPath=${dirPath}):`, error.message);
+            return false;
+        }
+    }
+
+    /**
      * 删除目录及其子目录的封面记录（批量，支持多个目录）
      * @param {Array<string>} dirPaths - 目录路径数组
      * @returns {Promise<number>}

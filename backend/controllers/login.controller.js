@@ -95,13 +95,40 @@ async function pickRandomThumb() {
  * @param {import('express').Response} res - Express 响应对象
  */
 exports.serveLoginBackground = async (req, res) => {
-  const rel = await pickRandomThumb();
-  if (!rel) {
-    return res.status(404).json({ code: 'LOGIN_BG_NOT_FOUND', message: '暂无可用的背景图片', requestId: req.requestId });
+  async function respondWithRel(rel, allowRetry = true) {
+    if (!rel) {
+      return res.status(404).json({ code: 'LOGIN_BG_NOT_FOUND', message: '暂无可用的背景图片', requestId: req.requestId });
+    }
+
+    const abs = path.join(THUMBS_DIR, rel);
+    const type = mime.lookup(abs) || 'image/jpeg';
+
+    try {
+      await fs.access(abs);
+    } catch (error) {
+      // 缓存失效：目标文件不存在，清除缓存并可选重试
+      logger.warn(`[LoginBG] 缓存命中但文件缺失，刷新缓存: ${abs} -> ${error && error.message}`);
+      await redis.del(CACHE_KEY).catch(() => {});
+      if (allowRetry) {
+        const nextRel = await pickRandomThumb();
+        return respondWithRel(nextRel, false);
+      }
+      return res.status(404).json({ code: 'LOGIN_BG_NOT_FOUND', message: '暂无可用的背景图片', requestId: req.requestId });
+    }
+
+    res.setHeader('Content-Type', type);
+    res.setHeader('Cache-Control', `public, max-age=${CACHE_TTL_SECONDS}`);
+    return res.sendFile(abs, (err) => {
+      if (err) {
+        logger.warn(`[LoginBG] 发送背景图失败，清除缓存: ${abs} -> ${err && err.message}`);
+        redis.del(CACHE_KEY).catch(() => {});
+        if (!res.headersSent) {
+          res.status(404).json({ code: 'LOGIN_BG_NOT_FOUND', message: '暂无可用的背景图片', requestId: req.requestId });
+        }
+      }
+    });
   }
-  const abs = path.join(THUMBS_DIR, rel);
-  const type = mime.lookup(abs) || 'image/jpeg';
-  res.setHeader('Content-Type', type);
-  res.setHeader('Cache-Control', `public, max-age=${CACHE_TTL_SECONDS}`);
-  return res.sendFile(abs);
+
+  const rel = await pickRandomThumb();
+  return respondWithRel(rel, true);
 };

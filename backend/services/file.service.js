@@ -18,7 +18,8 @@ try {
     logger.silly(`[FileService] Sharp 缓存配置失败，使用默认值: ${error && error.message}`);
 }
 const { redis } = require('../config/redis');
-const { safeRedisSet, safeRedisDel } = require('../utils/helpers');
+const { safeRedisSet, safeRedisDel, safeRedisGet } = require('../utils/helpers');
+const { invalidateTags } = require('./cache.service');
 const { PHOTOS_DIR, API_BASE, COVER_INFO_LRU_SIZE } = require('../config');
 const { isPathSafe } = require('../utils/path.utils');
 const { dbAll, dbGet, runAsync } = require('../db/multi-db');
@@ -91,6 +92,157 @@ async function ensureBrowseIndexes() {
     }
 }
 
+// 轻量级存在性检查，集中封装，避免重复 try/catch
+async function pathExistsSafe(filePath) {
+    try {
+        await fs.access(filePath);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+// 统一规范相册相对路径，过滤不安全输入
+function normalizeAlbumRels(relativeDirs) {
+    const relToAbs = new Map();
+    const safeRels = [];
+    for (const rel of Array.isArray(relativeDirs) ? relativeDirs : []) {
+        const normalized = String(rel || '').replace(/\\/g, '/');
+        if (!isPathSafe(normalized)) continue;
+        relToAbs.set(normalized, path.join(PHOTOS_DIR, normalized));
+        safeRels.push(normalized);
+    }
+    return { safeRels, relToAbs };
+}
+
+function buildAlbumTagKeys(albumRels) {
+    const tagSet = new Set(['album:/']);
+    for (const rel of albumRels) {
+        const normalized = String(rel || '').replace(/^\/+/, '');
+        if (!normalized) continue;
+        tagSet.add(`album:/${normalized}`);
+        tagSet.add(`album:${normalized}`);
+        tagSet.add(`album:${normalized}/`);
+    }
+    return Array.from(tagSet);
+}
+
+async function hydrateCoversFromCache(safeRels, relToAbs, coversMap) {
+    if (safeRels.length === 0) {
+        return { missing: [], staleCacheRels: [] };
+    }
+
+    const cacheKeys = safeRels.map(rel => `cover_info:/${rel}`);
+    let cachedResults = [];
+    try {
+        cachedResults = await redis.mget(cacheKeys);
+    } catch (e) {
+        logger.debug('批量读取封面缓存失败:', e.message);
+        cachedResults = new Array(cacheKeys.length).fill(null);
+    }
+
+    const missing = [];
+    const staleCacheRels = [];
+    for (let idx = 0; idx < safeRels.length; idx++) {
+        const rel = safeRels[idx];
+        const absAlbumPath = relToAbs.get(rel);
+        const cached = cachedResults[idx];
+        if (cached) {
+            try {
+                const parsed = JSON.parse(cached);
+                if (parsed && parsed.path) {
+                    const exists = await pathExistsSafe(parsed.path);
+                    if (exists) {
+                        coversMap.set(absAlbumPath, parsed);
+                        continue;
+                    } else {
+                        staleCacheRels.push(rel);
+                    }
+                }
+            } catch (error) {
+                logger.debug(`[FileService] 尝试使用相册封面缓存失败，忽略: ${error && error.message}`);
+            }
+        }
+        missing.push(rel);
+    }
+
+    return { missing, staleCacheRels };
+}
+
+async function hydrateCoversFromAlbumTable(missing, relToAbs, coversMap) {
+    const BATCH = Number(process.env.FILE_BATCH_SIZE || 200);
+    const selectedFromTable = new Set();
+
+    for (let i = 0; i < missing.length; i += BATCH) {
+        const batch = missing.slice(i, i + BATCH);
+        const placeholders = batch.map(() => '?').join(',');
+        try {
+            const rows = await dbAll(
+                'main',
+                `SELECT album_path, cover_path, width, height, mtime
+                 FROM album_covers
+                 WHERE album_path IN (${placeholders})`,
+                batch
+            );
+            for (const row of rows || []) {
+                const absAlbumPath = relToAbs.get(row.album_path) || path.join(PHOTOS_DIR, row.album_path);
+                const absMedia = path.join(PHOTOS_DIR, row.cover_path);
+                const info = { path: absMedia, width: row.width || 1, height: row.height || 1, mtime: row.mtime || Date.now() };
+                coversMap.set(absAlbumPath, info);
+                selectedFromTable.add(row.album_path);
+                await safeRedisSet(redis, `cover_info:/${row.album_path}`, JSON.stringify(info), 'EX', CACHE_DURATION, '封面信息缓存');
+            }
+        } catch (e) {
+            if (/no such table/i.test(e && e.message)) {
+                logger.debug('album_covers 表尚未创建，回退到 items 表查询');
+            } else {
+                logger.debug('从 album_covers 表批量读取失败，将回退逐相册计算: ' + (e && e.message));
+            }
+        }
+    }
+
+    const invalidAlbumRels = [];
+    for (const rel of selectedFromTable) {
+        const absAlbumPath = relToAbs.get(rel) || path.join(PHOTOS_DIR, rel);
+        const coverInfo = coversMap.get(absAlbumPath);
+        if (!coverInfo?.path) continue;
+        const exists = await pathExistsSafe(coverInfo.path);
+        if (!exists) {
+            invalidAlbumRels.push(rel);
+            coversMap.delete(absAlbumPath);
+        }
+    }
+
+    const missingAfterTable = missing.filter(rel => !coversMap.has(relToAbs.get(rel)));
+    return { invalidAlbumRels, missingAfterTable };
+}
+
+async function recoverInvalidAlbumEntries(invalidAlbumRels, coversMap, recoveredAlbumRels) {
+    if (invalidAlbumRels.length === 0) return;
+    invalidAlbumRels.forEach(rel => recoveredAlbumRels.add(rel));
+    try {
+        const placeholders = invalidAlbumRels.map(() => '?').join(',');
+        await runAsync('main', `DELETE FROM album_covers WHERE album_path IN (${placeholders})`, invalidAlbumRels);
+    } catch (e) {
+        logger.debug(`[FileService] 删除失效 album_covers 记录失败（忽略）: ${e && e.message}`);
+    }
+    safeRedisDel(redis, invalidAlbumRels.map(rel => `cover_info:/${rel}`), '封面信息缓存清理').catch(() => { });
+    await fallbackComputeCovers(invalidAlbumRels, coversMap);
+    invalidateTags(buildAlbumTagKeys(invalidAlbumRels)).catch(() => { });
+}
+
+async function recoverStaleCacheAlbums(staleCacheRels, coversMap, recoveredAlbumRels) {
+    if (staleCacheRels.length === 0) return;
+    staleCacheRels.forEach(rel => recoveredAlbumRels.add(rel));
+    try {
+        await safeRedisDel(redis, staleCacheRels.map(rel => `cover_info:/${rel}`), '封面缓存清理');
+    } catch (e) {
+        logger.debug('[FileService] 清理失效封面缓存失败（忽略）: ' + (e && e.message));
+    }
+    await fallbackComputeCovers(staleCacheRels, coversMap);
+    invalidateTags(buildAlbumTagKeys(staleCacheRels)).catch(() => { });
+}
+
 /**
  * 批量查找相册封面图片 (已优化)
  * 此函数现在是 findCoverPhotosBatchDb 的一个包装器, 完全依赖数据库, 移除了文件系统扫描.
@@ -123,155 +275,104 @@ async function findCoverPhotosBatchSafe(directoryPaths) {
  * @returns {Promise<Map>} key 为相册绝对路径（PHOTOS_DIR 拼接），value 为封面信息
  */
 async function findCoverPhotosBatchDb(relativeDirs) {
+    const { coversMap } = await findCoverPhotosBatchDbWithMeta(relativeDirs);
+    return coversMap;
+}
+
+async function findCoverPhotosBatchDbWithMeta(relativeDirs) {
     await ensureBrowseIndexes();
     const coversMap = new Map();
-    if (!Array.isArray(relativeDirs) || relativeDirs.length === 0) return coversMap;
-
-    // 过滤并规范路径
-    const safeRels = relativeDirs
-        .map(rel => (rel || '').replace(/\\/g, '/'))
-        .filter(rel => isPathSafe(rel));
-    if (safeRels.length === 0) return coversMap;
-
-    const relToAbs = new Map();
-    const remainingForRedis = [];
-    for (const rel of safeRels) {
-        const absAlbumPath = path.join(PHOTOS_DIR, rel);
-        relToAbs.set(rel, absAlbumPath);
-        remainingForRedis.push(rel);
+    const recoveredAlbumRels = new Set();
+    if (!Array.isArray(relativeDirs) || relativeDirs.length === 0) {
+        return { coversMap, recoveredAlbumRels };
     }
 
-    // 对剩余项优先读取 Redis
-    const cacheKeys = remainingForRedis.map(rel => `cover_info:/${rel}`);
-    let cachedResults = [];
-    if (cacheKeys.length > 0) {
-        try {
-            cachedResults = await redis.mget(cacheKeys);
-        } catch (e) {
-            logger.debug('批量读取封面缓存失败:', e.message);
-            cachedResults = new Array(cacheKeys.length).fill(null);
-        }
+    const { safeRels, relToAbs } = normalizeAlbumRels(relativeDirs);
+    if (safeRels.length === 0) return { coversMap, recoveredAlbumRels };
+
+    const { missing, staleCacheRels } = await hydrateCoversFromCache(safeRels, relToAbs, coversMap);
+    const { invalidAlbumRels, missingAfterTable } = await hydrateCoversFromAlbumTable(missing, relToAbs, coversMap);
+
+    await recoverInvalidAlbumEntries(invalidAlbumRels, coversMap, recoveredAlbumRels);
+    await recoverStaleCacheAlbums(staleCacheRels, coversMap, recoveredAlbumRels);
+
+    const stillMissing = missingAfterTable.filter(rel => !coversMap.has(relToAbs.get(rel)));
+    if (stillMissing.length > 0) {
+        await fallbackComputeCovers(stillMissing, coversMap);
     }
 
-    const missing = [];
-    remainingForRedis.forEach((rel, idx) => {
-        const absAlbumPath = relToAbs.get(rel);
-        const cached = cachedResults[idx];
-        if (cached) {
-            try {
-                const parsed = JSON.parse(cached);
-                if (parsed && parsed.path) {
-                    coversMap.set(absAlbumPath, parsed);
-                    return;
-                }
-            } catch (error) {
-                logger.debug(`[FileService] 尝试使用相册封面缓存失败，忽略: ${error && error.message}`);
+    return { coversMap, recoveredAlbumRels };
+}
+
+/**
+ * 回退：直接基于 items 批量计算封面（带窗口函数），并缓存
+ * @param {string[]} albumRels 相册相对路径
+ * @param {Map} coversMap 结果写入的映射（key=相册绝对路径）
+ */
+async function fallbackComputeCovers(albumRels, coversMap) {
+    try {
+        const coverExcludePermanent = `NOT EXISTS (SELECT 1 FROM thumb_status ts WHERE ts.path = i.path AND ts.status = 'permanent_failed')`;
+        const BATCH_SIZE = 50;
+        for (let batchStart = 0; batchStart < albumRels.length; batchStart += BATCH_SIZE) {
+            const batchRels = albumRels.slice(batchStart, batchStart + BATCH_SIZE);
+            const sortedRels = [...batchRels].sort((a, b) => b.length - a.length);
+            const caseParts = sortedRels.map((rel) => {
+                const likeParam = rel ? `${rel}/%` : '%';
+                const escapedRel = rel.replace(/'/g, "''");
+                const escapedLike = likeParam.replace(/'/g, "''");
+                return `WHEN path LIKE '${escapedLike}' THEN '${escapedRel}'`;
+            }).join(' ');
+            const orConditions = batchRels.map(rel => {
+                if (!rel) return `path NOT LIKE '%/%'`; // 根目录下的文件
+                return `SUBSTR(path, 1, ${rel.length + 1}) = '${rel.replace(/'/g, "''")}/'`;
+            }).join(' OR ');
+            const batchSql = `
+                WITH ranked AS (
+                    SELECT 
+                        CASE ${caseParts} END AS album_rel,
+                        path, width, height, mtime,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY CASE ${caseParts} END 
+                            ORDER BY mtime DESC
+                        ) AS rn
+                    FROM items i
+                    WHERE type IN ('photo','video')
+                      AND (${orConditions})
+                      AND ${coverExcludePermanent}
+                )
+                SELECT album_rel, path, width, height, mtime
+                FROM ranked
+                WHERE rn BETWEEN 1 AND 5
+            `;
+            const rows = await dbAll('main', batchSql, []);
+            const grouped = new Map();
+            for (const r of rows || []) {
+                if (!r || !r.path || !r.album_rel) continue;
+                const bucket = grouped.get(r.album_rel) || [];
+                bucket.push(r);
+                grouped.set(r.album_rel, bucket);
             }
-        }
-        missing.push(rel);
-    });
 
-    if (missing.length > 0) {
-        // 优先从 album_covers 表按 IN 批量查找，分批避免超长 SQL
-        const BATCH = Number(process.env.FILE_BATCH_SIZE || 200);
-        try {
-            for (let i = 0; i < missing.length; i += BATCH) {
-                const batch = missing.slice(i, i + BATCH);
-                const placeholders = batch.map(() => '?').join(',');
-                const rows = await dbAll(
-                    'main',
-                    `SELECT album_path, cover_path, width, height, mtime
-                     FROM album_covers
-                     WHERE album_path IN (${placeholders})`,
-                    batch
-                );
-                for (const row of rows || []) {
-                    const absAlbumPath = path.join(PHOTOS_DIR, row.album_path);
-                    const absMedia = path.join(PHOTOS_DIR, row.cover_path);
-                    const info = { path: absMedia, width: row.width || 1, height: row.height || 1, mtime: row.mtime || Date.now() };
-                    coversMap.set(absAlbumPath, info);
-                    await safeRedisSet(redis, `cover_info:/${row.album_path}`, JSON.stringify(info), 'EX', CACHE_DURATION, '封面信息缓存');
-                }
-            }
-        } catch (e) {
-            // 容错：表不存在或查询失败时静默回退，不影响用户体验
-            if (/no such table/i.test(e && e.message)) {
-                logger.debug('album_covers 表尚未创建，回退到 items 表查询');
-            } else {
-                logger.debug('从 album_covers 表批量读取失败，将回退逐相册计算: ' + (e && e.message));
-            }
-        }
-
-        // 对仍未命中的相册，使用批量查询代替逐个 LIKE 查询（性能优化）
-        const stillMissing = missing.filter(rel => !coversMap.has(path.join(PHOTOS_DIR, rel)));
-
-        if (stillMissing.length > 0) {
-            try {
-                // 使用 CTE + ROW_NUMBER() 窗口函数获取每个相册的最新封面
-                // SQLite 3.25+ 支持窗口函数
-                const coverExcludePermanent = `NOT EXISTS (SELECT 1 FROM thumb_status ts WHERE ts.path = i.path AND ts.status = 'permanent_failed')`;
-
-                // 构建批量查询：为每个相册找到其下最新的媒体文件
-                const BATCH_SIZE = 50;
-                for (let batchStart = 0; batchStart < stillMissing.length; batchStart += BATCH_SIZE) {
-                    const batchRels = stillMissing.slice(batchStart, batchStart + BATCH_SIZE);
-
-                    // 构建 CASE 表达式来匹配相册路径
-                    // 重要：按路径长度降序排序，确保嵌套路径（如 'photos/2024'）在父路径（如 'photos'）之前匹配
-                    const sortedRels = [...batchRels].sort((a, b) => b.length - a.length);
-                    const caseParts = sortedRels.map((rel, idx) => {
-                        const likeParam = rel ? `${rel}/%` : '%';
-                        const escapedRel = rel.replace(/'/g, "''");
-                        const escapedLike = likeParam.replace(/'/g, "''");
-                        return `WHEN path LIKE '${escapedLike}' THEN '${escapedRel}'`;
-                    }).join(' ');
-
-                    // 构建 WHERE 条件来过滤路径
-                    const orConditions = batchRels.map(rel => {
-                        const likeParam = rel ? `${rel}/%` : '%';
-                        return `path LIKE '${likeParam.replace(/'/g, "''")}'`;
-                    }).join(' OR ');
-
-                    // 使用 CTE + ROW_NUMBER 获取每个相册的最新媒体
-                    const batchSql = `
-                        WITH ranked AS (
-                            SELECT 
-                                CASE ${caseParts} END AS album_rel,
-                                path, width, height, mtime,
-                                ROW_NUMBER() OVER (
-                                    PARTITION BY CASE ${caseParts} END 
-                                    ORDER BY mtime DESC
-                                ) AS rn
-                            FROM items i
-                            WHERE type IN ('photo','video')
-                              AND (${orConditions})
-                              AND ${coverExcludePermanent}
-                        )
-                        SELECT album_rel, path, width, height, mtime
-                        FROM ranked
-                        WHERE rn = 1
-                    `;
-                    const rows = await dbAll('main', batchSql, []);
-
-                    // 处理结果并缓存
-                    for (const r of rows || []) {
-                        if (!r || !r.path || !r.album_rel) continue;
-                        const rel = r.album_rel;
-                        const absAlbumPath = path.join(PHOTOS_DIR, rel);
-                        const abs = path.join(PHOTOS_DIR, r.path);
-                        const info = { path: abs, width: r.width || 1, height: r.height || 1, mtime: r.mtime || Date.now() };
-                        coversMap.set(absAlbumPath, info);
-                        // 异步缓存，不阻塞主流程
-                        safeRedisSet(redis, `cover_info:/${rel}`, JSON.stringify(info), 'EX', CACHE_DURATION, '封面信息缓存').catch(() => { });
+            for (const [rel, candidates] of grouped.entries()) {
+                // 按 mtime 已排序，取前 5，选择首个存在的文件
+                let chosen = null;
+                for (const r of candidates) {
+                    const abs = path.join(PHOTOS_DIR, r.path);
+                    const exists = await fs.access(abs).then(() => true).catch(() => false);
+                    if (exists) {
+                        chosen = { path: abs, width: r.width || 1, height: r.height || 1, mtime: r.mtime || Date.now() };
+                        break;
                     }
                 }
-            } catch (err) {
-                logger.debug('批量封面查询失败，跳过: ' + (err && err.message));
+                if (!chosen) continue;
+                const absAlbumPath = path.join(PHOTOS_DIR, rel);
+                coversMap.set(absAlbumPath, chosen);
+                safeRedisSet(redis, `cover_info:/${rel}`, JSON.stringify(chosen), 'EX', CACHE_DURATION, '封面信息缓存').catch(() => { });
             }
         }
+    } catch (err) {
+        logger.debug('批量封面查询失败，跳过: ' + (err && err.message));
     }
-
-    return coversMap;
 }
 
 /**
@@ -289,8 +390,8 @@ async function getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, 
 
     const whereClause = !prefix
         ? `instr(path, '/') = 0`
-        : `path LIKE ? || '/%' AND instr(substr(path, length(?) + 2), '/') = 0`;
-    const whereParams = !prefix ? [] : [prefix, prefix];
+        : `SUBSTR(path, 1, LENGTH(?) + 1) = ? || '/' AND instr(substr(path, length(?) + 2), '/') = 0`;
+    const whereParams = !prefix ? [] : [prefix, prefix, prefix];
     const mediaExclusionCondition = `NOT EXISTS (SELECT 1 FROM thumb_status ts WHERE ts.path = i.path AND ts.status = 'permanent_failed')`;
 
     // 构建排序表达式：目录遵循用户选择，媒体固定为时间倒序，确保相册内部照片顺序稳定
@@ -384,30 +485,18 @@ async function fallbackToDatabaseCheck(videoRows, hlsReadySet) {
     }
 }
 
-/**
- * 获取目录内容
- * 获取指定目录的分页内容，包括相册和媒体文件，支持封面图片和尺寸信息
- * @param {string} directory - 目录路径
- * @param {string} relativePathPrefix - 相对路径前缀
- * @param {number} page - 页码
- * @param {number} limit - 每页数量
- * @param {string} userId - 用户ID
- * @returns {Promise<Object>} 包含items、totalPages、totalResults的对象
- */
+// 目录内容获取：主流程保持在顶层，便于未来拆分子模块
 async function getDirectoryContents(relativePathPrefix, page, limit, userId, sort = 'smart') {
-    // 验证路径安全性
     if (!isPathSafe(relativePathPrefix)) {
         const { ValidationError } = require('../utils/errors');
         throw new ValidationError(`不安全的路径访问: ${relativePathPrefix}`, { path: relativePathPrefix });
     }
 
-    // 验证并获取目录信息
     const directoryInfo = await validateDirectory(relativePathPrefix);
     if (!directoryInfo.exists) {
         return { items: [], totalPages: 1, totalResults: 0 };
     }
 
-    // 获取数据库数据
     const offset = (page - 1) * limit;
     const { total: totalResults, rows } = await getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, offset);
 
@@ -415,20 +504,15 @@ async function getDirectoryContents(relativePathPrefix, page, limit, userId, sor
         return { items: [], totalPages: 1, totalResults: 0 };
     }
 
-    // 4. 构造返回结果
-    // 处理视频HLS状态
     const hlsReadySet = await processHlsStatus(rows);
-
-    // 处理相册封面
-    const coversMap = await processAlbumCovers(rows);
-
-    // 构建最终结果
+    const { coversMap, recoveredAlbumRels } = await processAlbumCovers(rows);
     const items = await buildItems(rows, hlsReadySet, coversMap);
 
     return {
         items,
         totalPages: Math.ceil(totalResults / limit) || 1,
-        totalResults
+        totalResults,
+        coverRecoveryCount: recoveredAlbumRels.size
     };
 }
 
@@ -512,7 +596,7 @@ async function processHlsStatus(rows) {
 async function processAlbumCovers(rows) {
     const albumRows = rows.filter(r => r.is_dir === 1);
     const albumPathsRel = albumRows.map(r => r.path);
-    return await findCoverPhotosBatchDb(albumPathsRel);
+    return await findCoverPhotosBatchDbWithMeta(albumPathsRel);
 }
 
 /**
@@ -664,7 +748,6 @@ class MediaDimensionsManager {
      * 从Redis缓存获取尺寸
      */
     async getDimensionsFromCache(cacheKey, entryRelativePath) {
-        const { safeRedisGet } = require('../utils/helpers');
         const cachedData = await safeRedisGet(this.redis, cacheKey, '尺寸缓存读取');
         if (!cachedData) return null;
 
@@ -698,7 +781,6 @@ class MediaDimensionsManager {
      * 缓存尺寸到Redis
      */
     async cacheDimensions(cacheKey, dimensions, entryRelativePath) {
-        const { safeRedisSet } = require('../utils/helpers');
         await safeRedisSet(this.redis, cacheKey, JSON.stringify(dimensions), 'EX', Number(process.env.DIMENSION_CACHE_TTL || 60 * 60 * 24 * 30), '尺寸缓存写入');
     }
 
@@ -735,7 +817,7 @@ class MediaDimensionsManager {
             this.logger.debug(`动态获取 ${entryRelativePath} 的尺寸: ${dimensions.width}x${dimensions.height}`);
             return dimensions;
         } catch (e) {
-            this.logger.error(`无法获取媒体文件尺寸: ${entryRelativePath}`, e);
+            this.logger.warn(`无法获取媒体文件尺寸 (使用默认值): ${entryRelativePath}`, e?.message);
             return this.getDefaultDimensions();
         }
     }
@@ -757,9 +839,22 @@ async function getMediaDimensions(entryRelativePath, fullAbsPath, isVideo, mtime
  */
 async function invalidateCoverCache(changedPath) {
     try {
+        const photosRoot = path.normalize(PHOTOS_DIR);
+        const normalizedPath = path.normalize(changedPath || '');
+        if (!normalizedPath || !normalizedPath.startsWith(photosRoot)) return;
+
         // 获取所有受影响的目录路径
-        const affectedPaths = getAllParentPaths(changedPath);
-        const cacheKeys = affectedPaths.map(p => `cover_info:${p.replace(PHOTOS_DIR, '').replace(/\\/g, '/')}`);
+        // 仅当变更发生在根目录本身或其直接子级时，才驱逐根缓存，避免深层变更引起根缓存过度抖动。
+        const relFromRoot = normalizedPath.replace(photosRoot, '').replace(/\\/g, '/').replace(/^\/+/, '');
+        const segments = relFromRoot ? relFromRoot.split('/').filter(Boolean) : [];
+        const shouldInvalidateRoot = segments.length <= 1; // 根目录或一级子目录
+
+        const affectedPaths = [
+            ...(shouldInvalidateRoot ? [photosRoot] : []),
+            normalizedPath,
+            ...getAllParentPaths(normalizedPath)
+        ];
+        const cacheKeys = Array.from(new Set(affectedPaths.map(p => `cover_info:/${p.replace(photosRoot, '').replace(/\\/g, '/').replace(/^\/+/, '')}`)));
 
         if (cacheKeys.length > 0) {
             await safeRedisDel(redis, cacheKeys, '封面缓存清理');

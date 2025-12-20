@@ -9,8 +9,6 @@ const logger = require('../config/logger');
 const { ENABLE_AUTH_DEBUG_LOGS } = require('../config');
 const { getUserRole } = require('./permissions');
 const state = require('../services/state.manager');
-const bcrypt = require('bcryptjs');
-const db = require('../db/multi-db');
 
 const shouldLogVerbose = () => ENABLE_AUTH_DEBUG_LOGS;
 
@@ -21,6 +19,13 @@ const RAW_CACHE_TTL = Number(process.env.AUTH_CACHE_TTL) || 30000;
 const MIN_CACHE_TTL = 5000;   // 最小 5 秒
 const MAX_CACHE_TTL = 3600000; // 最大 1 小时
 const AUTH_CACHE_TTL = Math.max(MIN_CACHE_TTL, Math.min(RAW_CACHE_TTL, MAX_CACHE_TTL));
+
+// 认证缓存上限，防止高并发下无限增长（默认 5000，范围 100-100000）
+const RAW_CACHE_MAX_SIZE = Number(process.env.AUTH_CACHE_MAX_SIZE) || 5000;
+const AUTH_CACHE_MAX_SIZE = Math.max(100, Math.min(RAW_CACHE_MAX_SIZE, 100000));
+if (AUTH_CACHE_MAX_SIZE !== RAW_CACHE_MAX_SIZE) {
+    logger.warn(`[Auth] AUTH_CACHE_MAX_SIZE (${RAW_CACHE_MAX_SIZE}) 超出范围，已限制为 ${AUTH_CACHE_MAX_SIZE} (范围: 100-100000)`);
+}
 
 // 如果配置值超出范围，记录警告
 if (AUTH_CACHE_TTL !== RAW_CACHE_TTL) {
@@ -68,7 +73,7 @@ module.exports = async function (req, res, next) {
 
         // 允许公开访问的资源接口 (仅在 ALLOW_PUBLIC_ACCESS 为 true 时放行)
         const isPublicResource =
-            (req.method === 'GET' && (req.path === '/browse' || req.path === '/browse/')) ||
+            (req.method === 'GET' && (req.path === '/browse' || req.path === '/browse/' || req.path.startsWith('/browse/'))) ||
             (req.method === 'GET' && req.path === '/thumbnail') ||
             (req.method === 'GET' && req.path === '/events');
 
@@ -134,6 +139,9 @@ module.exports = async function (req, res, next) {
             req.user = cachedAuth.user;
             req.userRole = cachedAuth.userRole;
             req.userPermissions = cachedAuth.userPermissions;
+            // 更新 LRU 顺序
+            authCache.delete(cacheKey);
+            authCache.set(cacheKey, { ...cachedAuth, timestamp: now });
             return next();
         }
 
@@ -147,6 +155,47 @@ module.exports = async function (req, res, next) {
         req.userPermissions = [];
 
         // 写入缓存
+        // 先清理过期或超限条目，确保缓存规模可控
+        if (authCache.size >= AUTH_CACHE_MAX_SIZE) {
+            // 批量清理策略：腾出约 10% 的空间，减少频繁清理的开销
+            const targetSize = Math.floor(AUTH_CACHE_MAX_SIZE * 0.9);
+            const toRemove = authCache.size - targetSize;
+            let removed = 0;
+
+            // 阶段1: 收集过期条目（避免迭代中修改）
+            const expiredKeys = [];
+            for (const [key, value] of authCache.entries()) {
+                if ((now - value.timestamp) > AUTH_CACHE_TTL) {
+                    expiredKeys.push(key);
+                    if (expiredKeys.length >= toRemove) break;  // 提前退出优化
+                }
+            }
+
+            // 阶段2: 删除过期条目
+            for (const key of expiredKeys) {
+                authCache.delete(key);
+                removed++;
+            }
+
+            // 阶段3: 如果还需要删除更多，按LRU删除
+            if (authCache.size > targetSize) {
+                const toDeleteCount = authCache.size - targetSize;
+                const keysToDelete = Array.from(authCache.keys()).slice(0, toDeleteCount);
+                for (const key of keysToDelete) {
+                    authCache.delete(key);
+                    removed++;
+                }
+            }
+
+            if (removed > 0) {
+                logger.debug(
+                    `[Auth] 缓存清理: 删除${removed}条 ` +
+                    `(过期:${expiredKeys.length}, LRU:${removed - expiredKeys.length}), ` +
+                    `当前:${authCache.size}/${AUTH_CACHE_MAX_SIZE}`
+                );
+            }
+        }
+
         authCache.set(cacheKey, {
             token,
             user: req.user,
@@ -171,7 +220,8 @@ module.exports = async function (req, res, next) {
     }
 };
 
-// 定期清理过期缓存,避免在请求处理路径上清理影响性能
+// 定期清理过期缓存，避免在请求路径上清理影响性能
+const AUTH_CACHE_CLEANUP_INTERVAL_MS = Math.min(AUTH_CACHE_TTL, 60000); // 至少按 TTL，至多每 60 秒
 const cleanupInterval = setInterval(() => {
     const now = Date.now();
     let cleaned = 0;
@@ -184,7 +234,7 @@ const cleanupInterval = setInterval(() => {
     if (cleaned > 0) {
         logger.debug(`[Auth] 清理了 ${cleaned} 个过期认证缓存`);
     }
-}, AUTH_CACHE_TTL); // 每30秒清理一次
+}, AUTH_CACHE_CLEANUP_INTERVAL_MS);
 
 // 允许进程退出
 if (typeof cleanupInterval.unref === 'function') {

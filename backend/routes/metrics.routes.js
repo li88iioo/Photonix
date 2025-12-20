@@ -53,6 +53,8 @@ function metricsGuard(req, res, next) {
   }
 }
 
+// 统一挂载保护：未设置 METRICS_TOKEN 时为 no-op；设置后对所有 metrics 路由生效
+router.use(metricsGuard);
 
 // 缓存命中率指标
 router.get('/cache', metricsLimiter, (req, res) => {
@@ -211,5 +213,4 @@ router.get('/summary', metricsLimiter, async (req, res) => {
 });
 
 module.exports = router;
-
 

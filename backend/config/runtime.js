@@ -97,13 +97,28 @@ function deriveRuntime() {
   );
 
   /**
-   * SHARP_CONCURRENCY: Sharp 并发数
-   * - 默认2，可用 SHARP_CONCURRENCY 环境变量调整
+   * SHARP_CONCURRENCY: Sharp 并发数（基于硬件的动态默认）
+   * - 低配 (≤2核 或 ≤4GB)：1
+   * - 中配 (≤8核 或 ≤8GB)：2
+   * - 高配：min(4, floor(cpu/2))
+   * 可通过 SHARP_CONCURRENCY 覆盖
    */
+  const sharpDefault = (() => {
+    // 单核或超低内存时强制 1，避免解码并发压垮内存
+    if (cpuCount <= 1 || totalMemoryGB <= 2) return 1;
+    // 低配（<=4核 或 <=6GB）给到 2，兼顾 2c4G 的吞吐
+    if (cpuCount <= 4 || totalMemoryGB <= 6) return 2;
+    // 中高配：按 CPU/2，最高 4
+    return Math.max(2, Math.min(4, Math.floor(cpuCount / 2)));
+  })();
   const SHARP_CONCURRENCY = Math.max(
     1,
-    parseInt(process.env.SHARP_CONCURRENCY || '2', 10)
+    parseInt(process.env.SHARP_CONCURRENCY || String(sharpDefault), 10)
   );
+  // 将动态默认写回环境，方便 worker 直接读取 env
+  if (!process.env.SHARP_CONCURRENCY) {
+    process.env.SHARP_CONCURRENCY = String(SHARP_CONCURRENCY);
+  }
 
   /**
    * INDEX_CONCURRENCY: 索引并发数（预留）

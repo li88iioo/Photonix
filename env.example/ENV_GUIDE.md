@@ -180,16 +180,15 @@
 
 4) SHARP_CONCURRENCY
 - 作用：Sharp图片处理库的并发线程数，影响图片缩略图生成速度
-- 默认值：2（生产环境）
+- 默认值：**硬件自适应**（单核或≤2GB=1；≤4核或≤6GB=2；更高=min(4,floor(cpu/2))），可用环境变量手动覆盖
 - 取值/格式：1-16的整数
-- 推荐配置方案：
-  - 1-2核CPU：1个（避免CPU过载）
-  - 4核CPU：2个（平衡处理，默认值）
-  - 8核CPU：4个（高性能处理）
-  - 16核CPU：8个（最大化利用）
+- 推荐配置方案（若需手动覆盖）：
+  - 低配（1-2核/≤4GB）：1
+  - 中配（4-8核/≤8GB）：2
+  - 高配（>8核）：3-4（视内存余量）
 - 风险：过高导致CPU饱和和内存激增；过低影响图片处理速度
-- 代码引用：backend/config/index.js、workers/thumbnail-worker.js、workers/indexing-worker.js
-- 示例：SHARP_CONCURRENCY=2
+- 代码引用：backend/config/runtime.js（动态默认）、backend/config/index.js、workers/thumbnail-worker.js、workers/indexing-worker.js
+- 示例：SHARP_CONCURRENCY=3
 
 5) SQLITE_BUSY_TIMEOUT
 - 作用：SQLite数据库锁等待超时时间，影响并发访问时的等待时间
@@ -215,7 +214,36 @@
 - 代码引用：backend/db/multi-db.js
 - 示例：SQLITE_QUERY_TIMEOUT=30000
 
-7) RATE_LIMIT_WINDOW_MINUTES
+7) TRUST_PROXY
+- 作用：是否信任反向代理头（如 `X-Forwarded-For`），影响客户端 IP 识别
+- 默认值：false（安全默认，不信任任何代理头）
+- 取值/格式：
+  - `false` / `0`：不信任任何代理头（默认）
+  - `true` / `1`：信任一层代理（如单层 Nginx/Traefik）
+  - 数字 N：信任 N 层代理（多层负载均衡时使用）
+  - `loopback`：仅信任回环地址 127.0.0.1 的代理
+- 推荐配置方案：
+  - 直接暴露：保持默认 `false`（避免伪造头）
+  - 单层反向代理（Nginx/Traefik/frp）：设置为 `1`
+  - 多层负载均衡：设为代理层数（如 `2`）
+  - Kubernetes Ingress：通常设为 `1` 或 `2`
+- 风险：
+  - 设为 `false` 但使用反向代理：限流/封禁将基于代理 IP（如 127.0.0.1），失去防护效果
+  - 设为 `true/1` 但无反向代理：攻击者可伪造 `X-Forwarded-For` 头绕过限流
+- 代码引用：backend/app.js（Express `trust proxy` 设置）
+- 示例：
+  ```bash
+  # 无反向代理（默认）
+  TRUST_PROXY=false
+  
+  # 单层反代（Nginx/Traefik/frp）
+  TRUST_PROXY=1
+  
+  # 两层代理（如 CDN + Nginx）
+  TRUST_PROXY=2
+  ```
+
+8) RATE_LIMIT_WINDOW_MINUTES
 - 作用：API请求限流的时间窗口长度，影响允许的请求频率
 - 默认值：1分钟
 - 取值/格式：1-60的整数（分钟）
@@ -227,7 +255,7 @@
 - 代码引用：backend/middleware/rateLimiter.js
 - 示例：RATE_LIMIT_WINDOW_MINUTES=15
 
-8) RATE_LIMIT_MAX_REQUESTS
+9) RATE_LIMIT_MAX_REQUESTS
 - 作用：限流时间窗口内允许的最大请求数量
 - 默认值：800（生产环境）
 - 取值/格式：10-10000的整数
@@ -240,7 +268,7 @@
 - 代码引用：backend/middleware/rateLimiter.js
 - 示例：RATE_LIMIT_MAX_REQUESTS=1000
 
-9) REFRESH_RATE_WINDOW_MS / REFRESH_RATE_MAX
+10) REFRESH_RATE_WINDOW_MS / REFRESH_RATE_MAX
 - 作用：刷新令牌限流（窗口毫秒/最大次数）
 - 默认值：60000 / 60
 - 取值/格式：整数
@@ -250,7 +278,7 @@
 - 示例：REFRESH_RATE_WINDOW_MS=60000
 - 示例：REFRESH_RATE_MAX=60
 
-10) AUTH_DEBUG_LOGS
+11) AUTH_DEBUG_LOGS
 - 作用：显式开启认证模块的详细调试日志（包括 Token/Secret 前缀，仅建议本地排障时短期使用）
 - 默认值：未设置（关闭）
 - 取值/格式：true | false
@@ -259,7 +287,7 @@
 - 代码引用：backend/middleware/auth.js
 - 示例：AUTH_DEBUG_LOGS=true
 
-11) BROWSE_CACHE_TTL / SEARCH_CACHE_TTL
+12) BROWSE_CACHE_TTL / SEARCH_CACHE_TTL
 - 作用：后端 Redis 路由缓存 TTL（秒），分别用于目录浏览与全文搜索接口
 - 默认值：180 / 180
 - 取值/格式：>=30 的整数秒
@@ -272,7 +300,7 @@
 - 示例：BROWSE_CACHE_TTL=180
 - 示例：SEARCH_CACHE_TTL=180
 
-12) CACHE_SINGLEFLIGHT_WAIT_TIMEOUT_MS / CACHE_SINGLEFLIGHT_STALE_MS / CACHE_SINGLEFLIGHT_CLEANUP_INTERVAL_MS
+13) CACHE_SINGLEFLIGHT_WAIT_TIMEOUT_MS / CACHE_SINGLEFLIGHT_STALE_MS / CACHE_SINGLEFLIGHT_CLEANUP_INTERVAL_MS
 - 作用：控制路由缓存 SingleFlight 的等待/失效/清理节奏，保障缓存 miss 时只有一个请求回源
 - 默认值：10000 / 30000 / 60000
 - 取值/格式：正整数毫秒
@@ -355,6 +383,12 @@
 - 代码引用：backend/services/adaptive.service.js
 - 示例：THUMB_POOL_MAX=8
 
+> 新增：THUMB_MAX_CONCURRENCY（缩略图实际执行的软上限）
+- 默认值：min(NUM_WORKERS, 6)，用于限制真正并发执行的缩略图任务数，保护大图场景内存
+- 取值/格式：1-32 的整数
+- 推荐：低配/大图密集场景保持默认或设置为 3-6；高配可按需调高
+- 代码引用：backend/services/thumbnail.service.js（resolveThumbConcurrencyLimit）
+
 6) THUMB_TARGET_WIDTH / THUMB_QUALITY_*
 - 作用：控制缩略图生成的尺寸与动态质量（基于像素量自动降质以平衡体积与画质）
 - 默认值：
@@ -384,6 +418,11 @@
 - 风险：检查过频繁带来 IO 压力；过慢影响就绪感知
 - 代码引用：backend/config/index.js
 - 示例：HLS_CACHE_TTL_MS=300000
+- 关联参数：
+  - HLS_CACHE_MAX_SIZE（默认10000）：HLS 状态内存缓存最大条目数，
+    超过限制时 LRU 淘汰最旧条目。大量视频场景（>10万）可适当调高（如50000），
+    每10000条约占用4MB内存。
+
 
 8) FFMPEG_PRESET
 - 作用：FFmpeg 编码预设（速度/质量权衡）
@@ -993,16 +1032,15 @@
 
 15) SHARP_CONCURRENCY
 - 作用：Sharp图片处理库的并发线程数，影响图片处理速度
-- 默认值：2
+- 默认值：**硬件自适应**（单核或≤2GB=1；≤4核或≤6GB=2；更高=min(4,floor(cpu/2))），可用环境变量手动覆盖
 - 取值/格式：1-16的整数
-- 推荐配置方案：
-  - 1-2核CPU：1个（避免CPU过载）
-  - 4核CPU：2个（平衡处理）
-  - 8核CPU：4个（高性能处理）
-  - 16核CPU：8个（最大化利用）
+- 推荐配置方案（若需手动覆盖）：
+  - 低配：1
+  - 中配：2
+  - 高配：3-4
 - 风险：过高CPU使用率过高；过低处理慢
-- 代码引用：backend/config/runtime.js、workers/indexing-worker.js、workers/thumbnail-worker.js
-- 示例：SHARP_CONCURRENCY=2
+- 代码引用：backend/config/runtime.js（动态默认）、workers/indexing-worker.js、workers/thumbnail-worker.js
+- 示例：SHARP_CONCURRENCY=3
 
 12) VIDEO_TASK_DELAY_MS / INDEX_STABILIZE_DELAY_MS
 - 作用：视频任务间延迟、索引稳定化延迟（ms）

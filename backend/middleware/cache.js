@@ -105,7 +105,13 @@ function generateTagsFromReq(req) {
         const browsePath = routePath.substring('/api/browse'.length).replace(/^\/|\/$/g, '');
         tags.add('album:/');
         if (browsePath) {
-            const segments = browsePath.split('/').filter(Boolean);
+            const segments = browsePath.split('/').filter(Boolean).map(segment => {
+                try {
+                    return decodeURIComponent(segment);
+                } catch (error) {
+                    return segment;
+                }
+            });
             let currentPath = '';
             for (const segment of segments) {
                 currentPath = `${currentPath}/${segment}`;
@@ -195,7 +201,12 @@ function attachWritersWithCache(res, key, ttlSeconds) {
             if (!streamingWritten && res.statusCode >= 200 && res.statusCode < 300 && res.req && res.req.method === 'GET') {
                 const env = buildEnvelope(res, body);
                 if (env) {
-                    safeRedisSet(redis, key, JSON.stringify(env), 'EX', ttlSeconds, '路由缓存')
+                    // 新增：支持响应头指定自定义 TTL（如空结果使用短 TTL）
+                    const customTtl = res.get('X-Cache-TTL');
+                    const effectiveTtl = customTtl ? parseInt(customTtl, 10) : ttlSeconds;
+                    const finalTtl = Number.isFinite(effectiveTtl) && effectiveTtl > 0 ? effectiveTtl : ttlSeconds;
+
+                    safeRedisSet(redis, key, JSON.stringify(env), 'EX', finalTtl, '路由缓存')
                         .then(() => {
                             const tags = generateTagsFromReq(res.req);
                             if (tags.length > 0) addTagsToKey(key, tags);
@@ -223,7 +234,11 @@ function attachWritersWithCache(res, key, ttlSeconds) {
 function cache(duration) {
     return async (req, res, next) => {
         if (req.method !== 'GET') return next();
-        if (redis && redis.isNoRedis) return next();
+        // Redis 不可用或近期标记绕过时直接走实时路径，避免陈旧缓存导致空白卡片
+        const bypassRouteCache = (global.__PH_ROUTE_CACHE_BYPASS_UNTIL && Date.now() < global.__PH_ROUTE_CACHE_BYPASS_UNTIL);
+        if ((redis && redis.isNoRedis) || bypassRouteCache) {
+            return next();
+        }
 
         // 仅信任通过认证的 req.user.id，未认证一律 anonymous，防止缓存键爆炸劫持
         const userId = (req.user && req.user.id) ? String(req.user.id) : 'anonymous';

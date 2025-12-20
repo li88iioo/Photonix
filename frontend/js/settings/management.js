@@ -8,7 +8,7 @@ import { settingsLogger } from './logger.js';
 import { state } from '../core/state.js';
 import { manualAlbumSync, toggleAlbumDeletion, updateManualSyncSchedule, verifyAdminSecret } from '../app/api.js';
 import { showNotification, resolveMessage } from '../shared/utils.js';
-import { safeSetInnerHTML} from '../shared/dom-utils.js';
+import { safeSetInnerHTML } from '../shared/dom-utils.js';
 import { showPasswordPrompt } from './password-prompt.js';
 import { loadStatusTables } from './status.js';
 import { closeSettingsModal } from './modal.js';
@@ -47,6 +47,7 @@ function isDownloadVerificationFresh(timestamp) {
  * @returns {void}
  */
 export function setupManagementTab() {
+
   const { card, initialSettings } = settingsContext;
   if (!card) return;
 
@@ -320,7 +321,7 @@ export function setupManagementTab() {
           try {
             localStorage.setItem(DOWNLOAD_SECRET_STORAGE_KEY, adminSecret);
             localStorage.setItem(DOWNLOAD_VERIFIED_AT_KEY, String(Date.now()));
-          } catch {}
+          } catch { }
           closeSettingsModal();
           window.location.hash = '#/download';
         };
@@ -336,7 +337,7 @@ export function setupManagementTab() {
             try {
               localStorage.removeItem(DOWNLOAD_SECRET_STORAGE_KEY);
               localStorage.removeItem(DOWNLOAD_VERIFIED_AT_KEY);
-            } catch {}
+            } catch { }
           }
         }
 

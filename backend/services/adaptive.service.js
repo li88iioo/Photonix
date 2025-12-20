@@ -6,7 +6,8 @@ const { safeRedisSet, safeRedisDel } = require('../utils/helpers');
 
 const MEMORY_BUDGET_RATIO = Math.min(0.95, Math.max(0.1, Number(process.env.ADAPTIVE_MEMORY_BUDGET_RATIO || 0.7)));
 const FORCED_MODE = (process.env.PERFORMANCE_MODE || 'auto').trim().toLowerCase();
-const LOG_THROTTLE_MS = Math.max(0, Number(process.env.ADAPTIVE_LOG_THROTTLE_MS || 5 * 60 * 1000));
+const LOG_THROTTLE_MS = Math.max(0, Number(process.env.ADAPTIVE_LOG_THROTTLE_MS || 10 * 60 * 1000)); // 默认10分钟
+let noRedisLogged = false;
 
 function detectCpuBudget() {
     const envCpus = Number(process.env.DETECTED_CPU_COUNT || process.env.CPU_COUNT || 0);
@@ -22,14 +23,10 @@ function detectMemoryBudget() {
     return { totalBytes, totalGb: totalBytes / (1024 * 1024 * 1024), source: fromEnv ? 'env' : 'system' };
 }
 
-function resolveMode() {
-    if (FORCED_MODE === 'high' || FORCED_MODE === 'medium' || FORCED_MODE === 'low') {
-        return FORCED_MODE;
+function resolveModeFromMetrics({ forcedMode, load, memUsage, cpus }) {
+    if (forcedMode === 'high' || forcedMode === 'medium' || forcedMode === 'low') {
+        return forcedMode;
     }
-    // 自动模式逻辑
-    const load = os.loadavg()[0]; // 1分钟平均负载
-    const cpus = cpuInfo.cpus;
-    const memUsage = process.memoryUsage().rss / os.totalmem();
 
     if (load > cpus * 0.8 || memUsage > 0.85) {
         return 'low';
@@ -69,7 +66,12 @@ function deriveProfile(mode, cpuCount) {
 }
 
 const cpuInfo = detectCpuBudget();
-let currentMode = resolveMode();
+let currentMode = resolveModeFromMetrics({
+    forcedMode: FORCED_MODE,
+    load: os.loadavg()[0],
+    memUsage: process.memoryUsage().rss / os.totalmem(),
+    cpus: cpuInfo.cpus
+});
 let currentProfile = deriveProfile(currentMode, cpuInfo.cpus);
 let lastLogSnapshot = '';
 let lastLogTime = 0;
@@ -86,15 +88,33 @@ function resourceSnapshot() {
     };
 }
 
+function computeAdaptivePlan(detectors = {}) {
+    const getLoad = detectors.getLoad || (() => os.loadavg()[0]);
+    const getMemUsage = detectors.getMemUsage || (() => process.memoryUsage().rss / os.totalmem());
+    const getCpus = detectors.getCpus || (() => cpuInfo.cpus);
+    const mode = resolveModeFromMetrics({
+        forcedMode: detectors.forcedMode || FORCED_MODE,
+        load: getLoad(),
+        memUsage: getMemUsage(),
+        cpus: getCpus()
+    });
+    const profile = deriveProfile(mode, getCpus());
+    const snap = resourceSnapshot();
+    const snapshotStr =
+        `mode=${mode} workers=${NUM_WORKERS} ffmpegThreads=${profile.ffmpegThreads} ` +
+        `disableHLS=${profile.disableHlsBackfill} cpu=${snap.cpus}(${snap.cpuSource}) mem=${snap.totalGb.toFixed(1)}GB(${snap.memSource})`;
+
+    return { mode, profile, snap, snapshotStr };
+}
+
 async function startAdaptiveScheduler() {
     // 初始运行
     const run = async () => {
-        currentMode = resolveMode();
-        currentProfile = deriveProfile(currentMode, cpuInfo.cpus);
-        const snap = resourceSnapshot();
-        const snapshotStr =
-            `mode=${currentMode} workers=${NUM_WORKERS} ffmpegThreads=${currentProfile.ffmpegThreads} ` +
-            `disableHLS=${currentProfile.disableHlsBackfill} cpu=${snap.cpus}(${snap.cpuSource}) mem=${snap.totalGb.toFixed(1)}GB(${snap.memSource})`;
+        const plan = computeAdaptivePlan();
+        currentMode = plan.mode;
+        currentProfile = plan.profile;
+        const snapshotStr = plan.snapshotStr;
+        const snap = plan.snap;
         const shouldLog = snapshotStr !== lastLogSnapshot || (Date.now() - lastLogTime) >= LOG_THROTTLE_MS;
 
         if (shouldLog) {
@@ -103,8 +123,9 @@ async function startAdaptiveScheduler() {
             lastLogTime = Date.now();
         }
 
-        // 发布配置到 Redis 供 Worker 读取
+        // 发布配置到 Redis 供 Worker 读取（无 Redis 时降级为仅本进程生效）
         if (redis && redis.status === 'ready') {
+            noRedisLogged = false;
             try {
                 await safeRedisSet(redis, 'adaptive:ffmpeg_threads', String(currentProfile.ffmpegThreads), 'EX', 300, '发布FFmpeg线程数');
                 await safeRedisSet(redis, 'adaptive:ffmpeg_preset', currentProfile.ffmpegPreset, 'EX', 300, '发布FFmpeg预设');
@@ -116,6 +137,9 @@ async function startAdaptiveScheduler() {
             } catch (e) {
                 logger.debug(`[Adaptive] 发布配置失败: ${e.message}`);
             }
+        } else if (!noRedisLogged) {
+            logger.debug('[Adaptive] Redis 不可用，使用本地模式（worker 侧无法读取自适应配置）');
+            noRedisLogged = true;
         }
     };
 
@@ -183,17 +207,26 @@ function hasForegroundTasks() {
  *   - 'initial': 首次索引
  *   - 'rebuild': 重建索引
  *   - 'incremental': 增量更新
+ * @param {object} [options]
+ * @param {() => boolean} [options.foregroundDetector] 自定义前台负载检测器（默认 hasForegroundTasks）
  * @returns {number} 并发数（2 ~ NUM_WORKERS * 2）
  *
  * **智能策略**：
  * 1. 无前台任务（用户未打开网页）→ 激进模式：全力加速索引
  * 2. 有前台任务（用户正在浏览）→ 保守模式：为前台让路
  */
-function getIndexConcurrency(scenario = 'initial') {
+function getIndexConcurrency(scenario = 'initial', options = {}) {
     const base = currentProfile.indexConcurrency || 8;
 
     // 检测前台负载
-    const hasForeground = hasForegroundTasks();
+    const foregroundDetector = typeof options.foregroundDetector === 'function' ? options.foregroundDetector : hasForegroundTasks;
+    let hasForeground = true;
+    try {
+        hasForeground = foregroundDetector();
+    } catch (e) {
+        // 保守默认：探测失败时认为有前台任务，避免过载
+        hasForeground = true;
+    }
 
     // 策略 1：无前台任务时全力加速
     if (!hasForeground) {

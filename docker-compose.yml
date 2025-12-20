@@ -55,7 +55,7 @@ volumes:
   redis_data:
     # Redis 数据卷
 
-    # 网络定义
+# 网络定义
 networks:
   photonix-network:
     driver: bridge # 桥接网络

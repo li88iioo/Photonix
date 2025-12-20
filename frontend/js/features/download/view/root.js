@@ -309,7 +309,7 @@ function ensureStyleHelpers() {
     .queue-percent { font-size: 14px; color: var(--text-secondary); font-weight: 600; }
     .queue-bar { width: 100%; height: 6px; border-radius: 999px; background: #e2e8f0; overflow: hidden; position: relative; }
     .queue-fill { height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, #4338ca, #4f46e5); transition: width 0.4s ease; }
-    .queue-list { margin-top: 16px; display: flex; flex-direction: column; gap: 14px; }
+    .queue-list { margin-top: 16px; display: flex; flex-direction: column; gap: 14px; flex: none; height: auto; }
     .queue-item {
       display: flex;
       align-items: center;
@@ -335,6 +335,8 @@ function ensureStyleHelpers() {
       margin: 18px -24px 0;
       padding: 16px 24px 0;
       border-top: 1px solid var(--border-color);
+      flex: none;
+      height: auto;
     }
     .recent-card {
       display: flex;
@@ -419,7 +421,18 @@ function ensureStyleHelpers() {
       word-break: break-word;
     }
     .recent-card .size { font-size: 12px; color: var(--text-secondary); }
-    .empty-state { font-size: 13px; color: var(--text-secondary); text-align: center; padding: 12px 0; }
+    .download-body .empty-state {
+      font-size: 13px;
+      color: var(--text-secondary);
+      text-align: center;
+      padding: 12px 0 !important;
+      width: 100%;
+      flex: none;
+      min-height: 0 !important;
+      margin: 0 !important;
+      background: transparent !important;
+      display: block !important;
+    }
     .table-empty { text-align: center; padding: 24px 0; }
     .task-table-wrapper { margin-top: 16px; overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
     .task-table-wrapper::-webkit-scrollbar { height: 8px; }

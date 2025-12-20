@@ -625,6 +625,7 @@ function handleImageLoad(event) {
     img.dataset.thumbStatus = '';
     // 重置重试计数器
     delete img.dataset.retryAttempt;
+    delete img.dataset.errorRetryAttempt; // 清理错误重试计数器
 
     // 清理父元素的生成状态类
     const parent = img.closest('.photo-item, .album-card');
@@ -706,14 +707,49 @@ function handleImageLoad(event) {
 
 /**
  * 图片加载失败处理函数
+ * 增加重试机制，避免导航过程中的临时错误误触发 BROKEN 占位符
  * @param {Event} event 图片错误事件
  */
 function handleImageError(event) {
     const img = event.target;
+
+    // 检查是否应该重试而不是立即标记为失败
+    const errorRetryAttempt = parseInt(img.dataset.errorRetryAttempt || '0', 10);
+    const maxErrorRetries = 2; // 最多重试 2 次
+
+    // 如果图片有有效的 data-src 且未达到最大重试次数，尝试重新加载
+    if (img.dataset.src && errorRetryAttempt < maxErrorRetries && img.isConnected) {
+        img.dataset.errorRetryAttempt = String(errorRetryAttempt + 1);
+
+        // 清理当前可能无效的 blob URL
+        blobUrlManager.cleanup(img);
+
+        // 短暂延迟后重试（让导航完成、blob URL 重新创建）
+        const retryDelay = 500 * (errorRetryAttempt + 1); // 500ms, 1000ms
+        const retryTimerId = setTimeout(() => {
+            if (img.isConnected && !img.classList.contains('loaded')) {
+                lazyloadLogger.debug(`图片加载错误，尝试重试 (${errorRetryAttempt + 1}/${maxErrorRetries})`, {
+                    src: img.dataset.src
+                });
+                // 重置状态并重新请求
+                img.classList.remove('error');
+                delete img._processingLazyLoad;
+                requestLazyImage(img, { force: true });
+            }
+        }, retryDelay);
+        trackManagedTimer(retryTimerId);
+
+        return; // 不立即显示 BROKEN
+    }
+
+    // 达到最大重试次数或无法重试，显示 BROKEN
     img.onerror = null; // 防止错误循环
 
     // 清理失败图片的 blob URL
     blobUrlManager.cleanup(img);
+
+    // 清理重试相关的数据属性
+    delete img.dataset.errorRetryAttempt;
 
     // 使用内联 SVG 作为兜底占位
     const brokenSvg = `

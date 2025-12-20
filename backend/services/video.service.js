@@ -85,6 +85,19 @@ async function runHlsBatch(paths, opts = {}) {
       reject(error);
     };
 
+    const armTimeout = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        try {
+          if (worker && typeof worker.terminate === 'function') {
+            worker.__expectedTermination = true;
+            worker.terminate().catch(() => {});
+          }
+        } catch (_) { /* 忽略终止异常 */ }
+        fail(new Error(`HLS 批处理超时或无进度 (${timeoutMs}ms)`));
+      }, timeoutMs);
+    };
+
     const onMessage = (rawMessage) => {
       if (settled) return;
       try {
@@ -126,6 +139,9 @@ async function runHlsBatch(paths, opts = {}) {
         if (pending.size === 0) {
           finish();
         }
+
+        // 只要收到进度/结果就重置超时，避免长批次被整体超时打断
+        armTimeout();
       } catch (err) {
         logger.warn('[VIDEO-SERVICE] 处理worker消息失败:', err && err.message ? err.message : err);
       }
@@ -144,9 +160,7 @@ async function runHlsBatch(paths, opts = {}) {
     worker.on('error', onError);
     worker.on('exit', onExit);
 
-    timer = setTimeout(() => {
-      fail(new Error(`HLS 批处理超时 (${timeoutMs}ms)`));
-    }, timeoutMs);
+    armTimeout();
 
     try {
       for (const { abs, rel } of uniqueTasks) {

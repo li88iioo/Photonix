@@ -4,6 +4,9 @@
 const { execFile } = require('child_process');
 const logger = require('../config/logger');
 
+const VIDEO_DIMENSIONS_TIMEOUT_MS = Math.max(1000, Number(process.env.VIDEO_DIMENSIONS_TIMEOUT_MS || 15000));
+const VIDEO_DIMENSIONS_MAX_BUFFER = 1024 * 1024;
+
 /**
  * 媒体类型常量定义
  */
@@ -65,7 +68,7 @@ function getVideoDimensions(videoPath) {
             '-of', 'json',
             videoPath
         ];
-        execFile('ffprobe', args, (error, stdout) => {
+        execFile('ffprobe', args, { timeout: VIDEO_DIMENSIONS_TIMEOUT_MS, maxBuffer: VIDEO_DIMENSIONS_MAX_BUFFER, windowsHide: true }, (error, stdout) => {
             if (error) {
                 logger.error(`ffprobe 失败: ${videoPath}`, error);
                 // 返回一个默认值，而不是让整个流程失败

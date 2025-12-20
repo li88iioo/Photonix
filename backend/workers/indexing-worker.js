@@ -32,55 +32,6 @@ const { createWorkerResult, createWorkerError, createWorkerLog } = require('../u
 const INDEX_PROGRESS_LOG_STEP = Math.max(1000, Number(process.env.INDEX_PROGRESS_LOG_STEP || 5000));
 const INDEX_CACHE_LOG_INTERVAL_MS = Math.max(1000, Number(process.env.INDEX_CACHE_LOG_INTERVAL_MS || 20000));
 
-/**
- * 数据库超时管理器
- * 统一管理数据库超时的调整逻辑
- */
-class DbTimeoutManager {
-    constructor() {
-        this.logger = winston.createLogger({
-            level: process.env.LOG_LEVEL || 'debug',
-            format: winston.format.combine(
-                winston.format.colorize(),
-                winston.format.timestamp(),
-                winston.format.printf(info => {
-                    const date = new Date(info.timestamp);
-                    const time = date.toTimeString().split(' ')[0];
-                    const normalized = normalizeMessagePrefix(info.message);
-                    return `[${time}] ${info.level}: ${LOG_PREFIXES.DB_TIMEOUT_MANAGER || '数据库超时'} ${normalized}`;
-                })
-            ),
-            transports: [new winston.transports.Console()],
-        });
-    }
-
-    /**
-     * 提升数据库超时（用于高负载操作）
-     */
-    boostTimeouts() {
-        // 简化版：不再动态调整超时，使用默认配置
-        return null;
-    }
-
-    /**
-     * 恢复数据库超时到默认值
-     */
-    restoreTimeouts() {
-        // 简化版：不再动态调整超时
-        return null;
-    }
-
-    /**
-     * 在操作前自动提升超时，结束后自动恢复
-     */
-    async withBoostedTimeouts(operation) {
-        return operation();
-    }
-}
-
-// 创建单例管理器
-const dbTimeoutManager = new DbTimeoutManager();
-
 (async () => {
     await initializeConnections();
     const logger = winston.createLogger({
@@ -133,8 +84,8 @@ const dbTimeoutManager = new DbTimeoutManager();
 
     // 内存优化：限制缓存大小，避免内存无限增长
     const MAX_CACHE_SIZE = 2000; // 最大缓存2000个条目
-    const DIMENSION_CACHE = new Map();
-    const CACHE_TTL = 1000 * 60 * 10;
+    const FFPROBE_TIMEOUT_MS = 30 * 1000;
+    const CHILD_PROCESS_MAX_BUFFER = 5 * 1024 * 1024; // 5MB
 
     // 缓存外部化：结合Redis和本地缓存
     class ExternalDimensionCache {
@@ -265,7 +216,9 @@ const dbTimeoutManager = new DbTimeoutManager();
             if (this.localCache.size >= this.LOCAL_CACHE_SIZE) {
                 // LRU: 删除最旧的条目
                 const firstKey = this.localCache.keys().next().value;
-                this.localCache.delete(firstKey);
+                if (firstKey !== undefined) {
+                    this.localCache.delete(firstKey);
+                }
             }
             this.localCache.set(key, value);
         }
@@ -364,6 +317,21 @@ const dbTimeoutManager = new DbTimeoutManager();
                 info.mtime
             ]);
 
+            // 删除已无媒体的相册的旧封面记录，避免残留指向已删除文件的封面
+            const staleAlbums = Array.from(albumSet).filter(albumPath => !coverMap.has(albumPath));
+            if (staleAlbums.length > 0) {
+                try {
+                    const CHUNK = 800;
+                    for (let i = 0; i < staleAlbums.length; i += CHUNK) {
+                        const slice = staleAlbums.slice(i, i + CHUNK);
+                        const placeholders = slice.map(() => '?').join(',');
+                        await dbRun('main', `DELETE FROM album_covers WHERE album_path IN (${placeholders})`, slice);
+                    }
+                } catch (e) {
+                    logger.error('[INDEXING-WORKER] 清理失效相册封面失败（忽略）:', e && e.message);
+                }
+            }
+
             let coversUpsertOk = false;
             if (rows.length > 0) {
                 try {
@@ -391,42 +359,70 @@ const dbTimeoutManager = new DbTimeoutManager();
     }
 
     /**
-     * 更新 is_leaf 标志：批量计算哪些相册是叶子相册（不包含子相册）
-     * 思路：
-     * 1. 先将所有 album 类型设为 is_leaf=1
-     * 2. 标记有直接子相册的父相册为 is_leaf=0
+     * 更新 is_leaf 标志
+     * 默认行为：全量刷新（所有 album 设置为叶子，再标记有子相册的为非叶子）
+     * 优化：当提供 affectedAlbums 时，仅对受影响相册及其父链做增量计算，避免全表写锁
      */
-    async function updateIsLeafFlags() {
+    async function updateIsLeafFlags(affectedAlbums = null) {
         const t0 = Date.now();
         try {
-            // 步骤1：将所有相册设为叶子（默认值）
-            await dbRun('main', `UPDATE items SET is_leaf = 1 WHERE type = 'album'`);
+            const candidatesInput = Array.isArray(affectedAlbums)
+                ? affectedAlbums
+                : (affectedAlbums instanceof Set ? Array.from(affectedAlbums) : null);
 
-            // 步骤2：找出有直接子相册的父相册，标记为非叶子
-            // 使用子查询：如果存在一个相册的 path 是当前相册 path 的直接子路径（只多一层）
-            await dbRun('main', `
-                UPDATE items SET is_leaf = 0
-                WHERE type = 'album' AND path IN (
-                    SELECT DISTINCT parent.path
-                    FROM items parent
-                    JOIN items child ON child.type = 'album'
-                        AND child.path LIKE parent.path || '/%'
-                        AND instr(substr(child.path, length(parent.path) + 2), '/') = 0
-                    WHERE parent.type = 'album'
-                )
-            `);
+            const candidates = (candidatesInput || [])
+                .map(rel => String(rel || '').replace(/^\/+/, ''))
+                .filter(rel => rel && rel !== '.' && rel !== '/');
+
+            // 如果未提供受影响范围或范围过大，退回全量刷新（兼容原行为）
+            const FULL_REFRESH_THRESHOLD = Number(process.env.IS_LEAF_FULL_THRESHOLD || 500);
+            if (!candidates || candidates.length === 0 || candidates.length >= FULL_REFRESH_THRESHOLD) {
+                await dbRun('main', `UPDATE items SET is_leaf = 1 WHERE type = 'album'`);
+                await dbRun('main', `
+                    UPDATE items SET is_leaf = 0
+                    WHERE type = 'album' AND path IN (
+                        SELECT DISTINCT parent.path
+                        FROM items parent
+                        JOIN items child ON child.type = 'album'
+                            AND SUBSTR(child.path, 1, LENGTH(parent.path) + 1) = parent.path || '/'
+                            AND instr(substr(child.path, length(parent.path) + 2), '/') = 0
+                        WHERE parent.type = 'album'
+                    )
+                `);
+
+                const dt = ((Date.now() - t0) / 1000).toFixed(2);
+                const leafCount = await dbGet('main', `SELECT COUNT(*) as count FROM items WHERE type='album' AND is_leaf=1`);
+                const parentCount = await dbGet('main', `SELECT COUNT(*) as count FROM items WHERE type='album' AND is_leaf=0`);
+                const total = (leafCount?.count || 0) + (parentCount?.count || 0);
+                if (total > 0) {
+                    logger.debug(`[INDEXING-WORKER] is_leaf 标志更新完成（全量），用时 ${dt}s，叶子相册: ${leafCount?.count || 0}，父相册: ${parentCount?.count || 0}`);
+                }
+                return;
+            }
+
+            // 增量模式：仅更新受影响相册的 is_leaf
+            const normalized = Array.from(new Set(candidates));
+            const updates = [];
+            for (const rel of normalized) {
+                const hasChild = await dbGet('main',
+                    `SELECT 1 as has_child
+                     FROM items
+                     WHERE type = 'album'
+                       AND SUBSTR(path, 1, LENGTH(?) + 1) = ? || '/'
+                       AND instr(substr(path, length(?) + 2), '/') = 0
+                     LIMIT 1`,
+                    [rel, rel, rel]
+                );
+                const isLeaf = hasChild ? 0 : 1;
+                updates.push([isLeaf, rel]);
+            }
+
+            if (updates.length > 0) {
+                await runPreparedBatch('main', 'UPDATE items SET is_leaf = ? WHERE path = ?', updates, { manageTransaction: true, chunkSize: 200 });
+            }
 
             const dt = ((Date.now() - t0) / 1000).toFixed(2);
-
-            // 统计结果
-            const leafCount = await dbGet('main', `SELECT COUNT(*) as count FROM items WHERE type='album' AND is_leaf=1`);
-            const parentCount = await dbGet('main', `SELECT COUNT(*) as count FROM items WHERE type='album' AND is_leaf=0`);
-
-            // 只在有相册时输出日志
-            const total = (leafCount?.count || 0) + (parentCount?.count || 0);
-            if (total > 0) {
-                logger.debug(`[INDEXING-WORKER] is_leaf 标志更新完成，用时 ${dt}s，叶子相册: ${leafCount?.count || 0}，父相册: ${parentCount?.count || 0}`);
-            }
+            logger.debug(`[INDEXING-WORKER] is_leaf 增量更新完成，用时 ${dt}s，范围=${updates.length}`);
         } catch (e) {
             logger.error('[INDEXING-WORKER] 更新 is_leaf 标志失败:', e);
         }
@@ -693,12 +689,6 @@ const dbTimeoutManager = new DbTimeoutManager();
                     await idxRepo.setProcessedFiles(count);
                 }
 
-                // better-sqlite3 doesn't require manual finalize, but we can call it if we want to be explicit.
-                // It does NOT take a callback.
-                try { itemsStmt.finalize(); } catch (e) { }
-                try { ftsStmt.finalize(); } catch (e) { }
-                try { thumbUpsertStmt.finalize(); } catch (e) { }
-
                 await idxRepo.deleteResumeKey('last_processed_path');
                 await idxRepo.setIndexStatus('complete');
                 await idxRepo.setProcessedFiles(count);
@@ -810,8 +800,7 @@ const dbTimeoutManager = new DbTimeoutManager();
             const videoAdds = [];
 
             try {
-                // 索引期间提升 DB 超时，并标记“索引进行中”，以便其它后台任务让路
-                dbTimeoutManager.boostTimeouts();
+                // 标记“索引进行中”，以便其它后台任务让路
                 await safeRedisSet(redis, 'indexing_in_progress', '1', 'EX', 60, '索引进行中标记');
 
                 await withTransaction('main', async () => {
@@ -837,9 +826,19 @@ const dbTimeoutManager = new DbTimeoutManager();
                             continue;
                         }
                         tagsToInvalidate.add(`item:${relativePath}`);
+                        // 自身目录（若为相册）也参与受影响集合，确保删除时清理 album_covers/缓存
+                        if (change.type === 'addDir' || change.type === 'unlinkDir') {
+                            affectedAlbums.add(relativePath);
+                            tagsToInvalidate.add(`album:/${relativePath}`);
+                            tagsToInvalidate.add(`album:${relativePath}`);
+                            tagsToInvalidate.add(`album:${relativePath}/`);
+                        }
+
                         let parentDir = path.dirname(relativePath);
                         while (parentDir !== '.') {
                             tagsToInvalidate.add(`album:/${parentDir}`);
+                            tagsToInvalidate.add(`album:${parentDir}`);
+                            tagsToInvalidate.add(`album:${parentDir}/`);
                             affectedAlbums.add(parentDir);
                             parentDir = path.dirname(parentDir);
                         }
@@ -915,10 +914,10 @@ const dbTimeoutManager = new DbTimeoutManager();
                         const row = await dbGet('main',
                             `SELECT path, width, height, mtime
                          FROM items
-                         WHERE type IN ('photo','video') AND path LIKE ? || '/%'
+                         WHERE type IN ('photo','video') AND SUBSTR(path, 1, LENGTH(?) + 1) = ? || '/'
                          ORDER BY mtime DESC
                          LIMIT 1`,
-                            [albumPath]
+                            [albumPath, albumPath]
                         );
                         if (row && row.path) {
                             upsertRows.push([albumPath, row.path, row.width || 1, row.height || 1, row.mtime || 0]);
@@ -976,9 +975,9 @@ const dbTimeoutManager = new DbTimeoutManager();
                     await invalidateTags(Array.from(tagsToInvalidate));
                 }
 
-                // 增量索引后更新 is_leaf 标志（确保父/子相册关系正确）
+                // 增量索引后更新 is_leaf 标志（仅针对受影响相册）
                 if (affectedAlbums.size > 0) {
-                    await updateIsLeafFlags();
+                    await updateIsLeafFlags(affectedAlbums);
                 }
 
                 logger.info('[INDEXING-WORKER] 索引增量更新完成。');
@@ -990,7 +989,6 @@ const dbTimeoutManager = new DbTimeoutManager();
 
                 parentPort.postMessage(createWorkerResult(response));
                 await safeRedisDel(redis, 'indexing_in_progress', '清理索引标记');
-                dbTimeoutManager.restoreTimeouts();
             } catch (error) {
                 logger.error('[INDEXING-WORKER] 处理索引变更失败:', error.message, error.stack);
                 parentPort.postMessage(createWorkerError({
@@ -998,7 +996,6 @@ const dbTimeoutManager = new DbTimeoutManager();
                     error,
                 }));
                 await safeRedisDel(redis, 'indexing_in_progress', '清理索引标记');
-                dbTimeoutManager.restoreTimeouts();
             }
         },
 
@@ -1202,4 +1199,3 @@ const dbTimeoutManager = new DbTimeoutManager();
         }
     })();
 })();
-

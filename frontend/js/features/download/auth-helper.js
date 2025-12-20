@@ -4,7 +4,7 @@
  */
 
 import { createModuleLogger } from '../../core/logger.js';
-import { getAuthToken, setAuthToken, removeAuthToken } from '../../app/auth.js';
+import { setAuthToken, removeAuthToken } from '../../app/auth.js';
 
 const authLogger = createModuleLogger('DownloadAuth');
 
@@ -38,7 +38,7 @@ export async function exchangeSecretForToken(adminSecret) {
 
     const data = await response.json();
     const token = data.token || data.data?.token;
-    
+
     if (!token) {
       return {
         success: false,
@@ -48,12 +48,12 @@ export async function exchangeSecretForToken(adminSecret) {
 
     // 保存Token（使用sessionStorage，更安全）
     sessionStorage.setItem(DOWNLOAD_TOKEN_KEY, token);
-    
+
     // 计算过期时间（默认12小时）
     const expiresIn = data.expiresIn || data.data?.expiresIn || 12 * 60 * 60 * 1000;
     const expiryTime = Date.now() + expiresIn;
     sessionStorage.setItem(DOWNLOAD_TOKEN_EXPIRY_KEY, String(expiryTime));
-    
+
     // 同时设置到全局auth系统
     setAuthToken(token);
 
@@ -74,6 +74,8 @@ export async function exchangeSecretForToken(adminSecret) {
 
 /**
  * 获取下载功能的Token
+ * 注意：仅返回下载专用 Token，不降级到全局 Token
+ * 下载功能需要管理员密钥验证，不应使用普通登录的 Token
  * @returns {string|null}
  */
 export function getDownloadToken() {
@@ -84,15 +86,10 @@ export function getDownloadToken() {
     clearDownloadToken();
     return null;
   }
-  
-  // 优先使用下载专用Token
-  const downloadToken = sessionStorage.getItem(DOWNLOAD_TOKEN_KEY);
-  if (downloadToken) {
-    return downloadToken;
-  }
-  
-  // 降级到全局Token
-  return getAuthToken();
+
+  // 仅使用下载专用Token（通过管理员密钥换取）
+  // 不降级到全局Token，因为全局Token可能是普通访问密码登录的
+  return sessionStorage.getItem(DOWNLOAD_TOKEN_KEY);
 }
 
 /**
@@ -130,11 +127,11 @@ export async function refreshDownloadToken() {
 
     const data = await response.json();
     const newToken = data.token || data.data?.token;
-    
+
     if (newToken && newToken !== token) {
       sessionStorage.setItem(DOWNLOAD_TOKEN_KEY, newToken);
       setAuthToken(newToken);
-      
+
       // 更新过期时间
       const expiresIn = data.expiresIn || data.data?.expiresIn || 12 * 60 * 60 * 1000;
       const expiryTime = Date.now() + expiresIn;
@@ -152,12 +149,19 @@ export async function refreshDownloadToken() {
 
 /**
  * 检查是否有有效的认证
+ * @param {Object} [options] - 选项
+ * @param {boolean} [options.skipNetworkCheck=false] - 跳过网络验证，仅检查本地过期时间
  * @returns {Promise<boolean>}
  */
-export async function hasValidAuth() {
+export async function hasValidAuth({ skipNetworkCheck = false } = {}) {
   const token = getDownloadToken();
   if (!token) {
     return false;
+  }
+
+  // 可选：仅本地检查（减少网络开销）
+  if (skipNetworkCheck) {
+    return true; // getDownloadToken 已检查过期时间
   }
 
   try {
@@ -167,7 +171,7 @@ export async function hasValidAuth() {
         'Authorization': `Bearer ${token}`
       }
     });
-    
+
     return response.ok;
   } catch {
     return false;

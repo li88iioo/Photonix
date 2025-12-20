@@ -8,6 +8,7 @@ const logger = require('../config/logger');
 const { TraceManager } = require('../utils/trace');
 const { PHOTOS_DIR } = require('../config');
 const { getDirectoryContents } = require('../services/file.service');
+const manualSyncScheduler = require('../services/manualSyncScheduler.service');
 
 /**
  * 浏览目录内容
@@ -30,7 +31,7 @@ exports.browseDirectory = async (req, res) => {
 
     try {
         // 获取目录内容，路径验证已由中间件完成
-        const { items, totalPages, totalResults } = await getDirectoryContents(sanitizedPath, page, limit, userId, sort);
+        const { items, totalPages, totalResults, coverRecoveryCount } = await getDirectoryContents(sanitizedPath, page, limit, userId, sort);
 
         // 检查是否有封面缺失的相册（未索引完成时会有占位符封面）
         const hasIncompleteCover = items.some(item =>
@@ -38,10 +39,29 @@ exports.browseDirectory = async (req, res) => {
             (!item.data?.coverUrl || item.data.coverUrl.startsWith('data:'))
         );
 
-        // 如果有封面缺失，设置响应头阻止缓存,避免索引完成前的响应被长期缓存
-        if (hasIncompleteCover) {
+        // 检查结果是否为空（可能索引正在进行中）
+        const isEmptyResult = !items || items.length === 0;
+
+        // 检查索引/同步是否正在进行中
+        let isSyncRunning = false;
+        try {
+            const syncStatus = manualSyncScheduler.getStatus();
+            isSyncRunning = syncStatus && syncStatus.running === true;
+        } catch (e) {
+            // 如果获取状态失败，保守地不阻止缓存
+            logger.debug('获取同步状态失败，忽略同步检查', e && e.message);
+        }
+
+        // 如果满足以下任一条件，使用短缓存时间（10秒）：
+        // 1. 有封面缺失（未索引完成时会有占位符封面）
+        // 2. 结果为空（可能索引正在进行中）
+        // 3. 同步/索引正在进行中（避免缓存部分结果）
+        if (hasIncompleteCover || isEmptyResult || isSyncRunning || (coverRecoveryCount || 0) > 0) {
+            res.setHeader('X-Cache-TTL', '10'); // 通知缓存中间件使用短 TTL
+            res.setHeader('Cache-Control', 'public, max-age=10');
+        }
+        if ((coverRecoveryCount || 0) > 0) {
             res.setHeader('X-No-Cache', 'true');
-            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
         }
 
         // 构建响应数据

@@ -1,5 +1,5 @@
 const { parentPort } = require('worker_threads');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const path = require('path');
 const { promises: fs, constants: FS_CONST } = require('fs');
 const { TraceManager } = require('../utils/trace');
@@ -10,7 +10,7 @@ const { safeRedisGet, safeRedisSet } = require('../utils/helpers');
 const winston = require('winston');
 const baseLogger = require('../config/logger');
 const { LOG_PREFIXES, formatLog, normalizeMessagePrefix } = baseLogger;
-const { initializeConnections, dbAll } = require('../db/multi-db');
+const { initializeConnections, dbAll, runAsync } = require('../db/multi-db');
 const { THUMBS_DIR, PHOTOS_DIR, VIDEO_MAX_CONCURRENCY, VIDEO_TASK_DELAY_MS } = require('../config');
 const { tempFileManager } = require('../utils/tempFileManager');
 const { createWorkerResult, createWorkerError } = require('../utils/workerMessage');
@@ -35,7 +35,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
     });
 
     /** 使用统一的 Redis 客户端（来自 config/redis） **/
-    const execPromise = util.promisify(exec);
+    const execFilePromise = util.promisify(execFile);
 
     // --- 失败重试配置 ---
     const failureCounts = new Map();
@@ -50,6 +50,8 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
     const MAX_CONCURRENT_TASKS = Math.max(1, Math.min(VIDEO_MAX_CONCURRENCY, 4)); // 视频处理最大并发，默认受限于硬件
     const TASK_TIMEOUT_MS = 30 * 60 * 1000; // 单个任务超时时间：30分钟
     const QUEUE_HEALTH_CHECK_INTERVAL = 30 * 1000; // 队列健康检查间隔：30秒（更频繁以便监控内存）
+    const FFPROBE_TIMEOUT_MS = 30 * 1000;
+    const CHILD_PROCESS_MAX_BUFFER = 1024 * 1024;
 
     // --- 空闲超时管理 ---
     const IDLE_TIMEOUT_MS = Math.max(5000, Number(process.env.VIDEO_WORKER_IDLE_TIMEOUT_MS || 10000)); // 默认10秒空闲超时
@@ -59,23 +61,10 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
     let idleNotified = false;
     let lastMemoryWarningTime = 0;
 
-    // 任务超时包装器
-    async function executeTaskWithTimeout(task, timeoutMs = TASK_TIMEOUT_MS) {
-        return new Promise(async (resolve, reject) => {
-            const timeoutId = setTimeout(() => {
-                reject(new Error(`任务执行超时 (${timeoutMs}ms): ${JSON.stringify(task)}`));
-            }, timeoutMs);
+    // 注意：不要用 Promise.race “伪超时”提前释放并发。
+    // 若 handleTask 内部仍在执行 ffmpeg/ffprobe，这会造成后台进程继续运行、并发统计失真与重复消息。
+    // 超时应下沉到 child_process 层（execFile timeout），确保进程可被终止。
 
-            try {
-                const result = await handleTask(task);
-                clearTimeout(timeoutId);
-                resolve(result);
-            } catch (error) {
-                clearTimeout(timeoutId);
-                reject(error);
-            }
-        });
-    }
 
 
     // 内存和队列健康检查
@@ -149,7 +138,6 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
     function updateActivity() {
         if (!isShuttingDown) {
             lastActivityTime = Date.now();
-            logger.debug(`${LOG_PREFIXES.VIDEO_PROCESSOR} 活动时间已更新`);
             idleNotified = false;
         }
     }
@@ -331,7 +319,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
         isProcessingQueue = true;
         updateActivity();
 
-        executeTaskWithTimeout(task)
+        handleTask(task)
             .catch((error) => {
                 logger.error(`${LOG_PREFIXES.VIDEO_PROCESSOR} 队列任务处理失败:`, error);
             })
@@ -381,7 +369,18 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
      */
     async function detectVideoRotation(filePath) {
         try {
-            const { stdout } = await execPromise(`ffprobe -v error -select_streams v:0 -show_entries stream_tags=rotate:stream_side_data=displaymatrix -of json "${filePath}"`);
+            const ffprobeArgs = [
+                '-v', 'error',
+                '-select_streams', 'v:0',
+                '-show_entries', 'stream_tags=rotate:stream_side_data=displaymatrix',
+                '-of', 'json',
+                filePath
+            ];
+            const { stdout } = await execFilePromise('ffprobe', ffprobeArgs, {
+                timeout: FFPROBE_TIMEOUT_MS,
+                maxBuffer: CHILD_PROCESS_MAX_BUFFER,
+                windowsHide: true
+            });
             const data = JSON.parse(stdout || '{}');
             let angle = 0;
 
@@ -458,9 +457,37 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
                 const baseScaleCrop = `scale=${res.width}:${res.height}:force_original_aspect_ratio=increase:eval=frame,crop=${res.width}:${res.height}`;
                 const vfChain = [rotateFilter, baseScaleCrop, 'setsar=1'].filter(Boolean).join(',');
                 const segmentPattern = path.join(resDir, 'segment_%05d.ts');
-                const hlsCommand = `ffmpeg -v error -y -threads ${ffCfg.threads} -i "${filePath}" -vf "${vfChain}" -c:v libx264 -pix_fmt yuv420p -profile:v baseline -level 3.0 -preset ${ffCfg.preset} -crf 23 -c:a aac -ar 48000 -ac 2 -b:a 128k -metadata:s:v:0 rotate=0 -start_number 0 -hls_time 10 -hls_flags independent_segments -hls_segment_filename "${segmentPattern}" -hls_list_size 0 -f hls "${path.join(resDir, 'stream.m3u8')}"`;
+                const ffmpegArgs = [
+                    '-v', 'error',
+                    '-y',
+                    '-threads', String(ffCfg.threads),
+                    '-i', filePath,
+                    '-vf', vfChain,
+                    '-c:v', 'libx264',
+                    '-pix_fmt', 'yuv420p',
+                    '-profile:v', 'baseline',
+                    '-level', '3.0',
+                    '-preset', ffCfg.preset,
+                    '-crf', '23',
+                    '-c:a', 'aac',
+                    '-ar', '48000',
+                    '-ac', '2',
+                    '-b:a', '128k',
+                    '-metadata:s:v:0', 'rotate=0',
+                    '-start_number', '0',
+                    '-hls_time', '10',
+                    '-hls_flags', 'independent_segments',
+                    '-hls_segment_filename', segmentPattern,
+                    '-hls_list_size', '0',
+                    '-f', 'hls',
+                    path.join(resDir, 'stream.m3u8')
+                ];
 
-                await execPromise(hlsCommand);
+                await execFilePromise('ffmpeg', ffmpegArgs, {
+                    timeout: TASK_TIMEOUT_MS,
+                    maxBuffer: CHILD_PROCESS_MAX_BUFFER,
+                    windowsHide: true
+                });
                 logger.debug(`  - ${res.name} HLS 流生成成功`);
                 successfulResolutions.push(res);
             } catch (error) {
@@ -835,7 +862,6 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
             } else {
                 // 将任务添加到队列而不是直接处理
                 taskQueue.push(task);
-                logger.debug(`${LOG_PREFIXES.VIDEO_PROCESSOR} 任务已添加到队列，当前队列长度: ${taskQueue.length}`);
                 // 异步启动队列处理
                 setImmediate(() => processTaskQueue());
             }

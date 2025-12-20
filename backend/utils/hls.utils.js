@@ -28,10 +28,53 @@ const hlsCache = new Map();
 const { HLS_CACHE_TTL_MS, HLS_CHECK_BATCH_SIZE } = require('../config');
 const CACHE_TTL = HLS_CACHE_TTL_MS; // 从配置读取缓存TTL
 
+// 缓存大小限制（防止内存无限增长）
+const HLS_CACHE_MAX_SIZE = Number(process.env.HLS_CACHE_MAX_SIZE || 10000);
+
+/**
+ * 安全设置 hlsCache，带 LRU 淘汰
+ * @param {string} key 
+ * @param {object} value 
+ */
+function setHlsCache(key, value) {
+    // 触碰已存在 key 以更新访问顺序（Map 的插入顺序即 LRU 顺序）
+    if (hlsCache.has(key)) {
+        hlsCache.delete(key);
+    }
+    if (hlsCache.size >= HLS_CACHE_MAX_SIZE) {
+        // LRU: 删除最旧的条目
+        const firstKey = hlsCache.keys().next().value;
+        if (firstKey !== undefined) {
+            hlsCache.delete(firstKey);
+        }
+    }
+    hlsCache.set(key, value);
+}
+
 // 硬盘保护：限制文件系统检查频率
 const lastCheckTimes = new Map();
 const { HLS_MIN_CHECK_INTERVAL_MS, HLS_BATCH_DELAY_MS } = require('../config');
 const MIN_CHECK_INTERVAL = HLS_MIN_CHECK_INTERVAL_MS; // 从配置读取最小检查间隔
+
+/**
+ * 安全设置 lastCheckTimes，带 LRU 淘汰
+ * @param {string} key 
+ * @param {number} timestamp 
+ */
+function setLastCheckTime(key, timestamp) {
+    // 触碰已存在 key 以更新访问顺序
+    if (lastCheckTimes.has(key)) {
+        lastCheckTimes.delete(key);
+    }
+    if (lastCheckTimes.size >= HLS_CACHE_MAX_SIZE) {
+        // LRU: 删除最旧的条目
+        const firstKey = lastCheckTimes.keys().next().value;
+        if (firstKey !== undefined) {
+            lastCheckTimes.delete(firstKey);
+        }
+    }
+    lastCheckTimes.set(key, timestamp);
+}
 
 // Redis缓存键前缀
 const HLS_CACHE_PREFIX = 'hls_cache:';
@@ -151,6 +194,8 @@ async function checkHlsExists(videoPath) {
     // 1. 检查内存缓存
     const memoryCached = hlsCache.get(videoPath);
     if (memoryCached && (now - memoryCached.timestamp) < CACHE_TTL) {
+        // 命中时触碰以更新 LRU 顺序
+        setHlsCache(videoPath, memoryCached);
         return memoryCached.exists;
     }
 
@@ -161,7 +206,7 @@ async function checkHlsExists(videoPath) {
             redisCached = await redisCache.get(redisCache.getHlsCacheKey(videoPath));
             if (redisCached && (now - redisCached.timestamp) < CACHE_TTL) {
                 // 同步到内存缓存
-                hlsCache.set(videoPath, redisCached);
+                setHlsCache(videoPath, redisCached);
                 return redisCached.exists;
             }
         } catch (e) {
@@ -178,7 +223,7 @@ async function checkHlsExists(videoPath) {
             const redisLastCheck = await redisCache.get(redisCache.getLastCheckKey(videoPath));
             if (redisLastCheck) {
                 lastCheckTime = redisLastCheck.timestamp;
-                lastCheckTimes.set(videoPath, lastCheckTime); // 同步到内存
+                setLastCheckTime(videoPath, lastCheckTime); // 同步到内存，并应用 LRU 上限
             }
         } catch (e) {
             logger.debug(`Redis最后检查时间读取失败: ${videoPath}`, e.message);
@@ -186,12 +231,17 @@ async function checkHlsExists(videoPath) {
     }
 
     if (lastCheckTime && (now - lastCheckTime) < MIN_CHECK_INTERVAL) {
+        // 触碰该 key，避免热点条目在 LRU 中被提前淘汰
+        setLastCheckTime(videoPath, lastCheckTime);
         // 如果距离上次检查时间太短，返回缓存结果或false
+        if (memoryCached) {
+            setHlsCache(videoPath, memoryCached);
+        }
         return memoryCached ? memoryCached.exists : false;
     }
 
     // 更新最后检查时间
-    lastCheckTimes.set(videoPath, now);
+    setLastCheckTime(videoPath, now);
     if (redisCache.enabled) {
         try {
             await redisCache.set(redisCache.getLastCheckKey(videoPath), { timestamp: now }, CACHE_TTL);
@@ -210,7 +260,7 @@ async function checkHlsExists(videoPath) {
 
         if (!masterExists) {
             const result = { exists: false, timestamp: now };
-            hlsCache.set(videoPath, result);
+            setHlsCache(videoPath, result);
             if (redisCache.enabled) {
                 redisCache.set(redisCache.getHlsCacheKey(videoPath), result, CACHE_TTL);
             }
@@ -231,7 +281,7 @@ async function checkHlsExists(videoPath) {
                     const hasSegments = files.some(file => file.endsWith('.ts'));
                     if (hasSegments) {
                         const result = { exists: true, timestamp: now };
-                        hlsCache.set(videoPath, result);
+                        setHlsCache(videoPath, result);
                         if (redisCache.enabled) {
                             redisCache.set(redisCache.getHlsCacheKey(videoPath), result, CACHE_TTL);
                         }
@@ -245,7 +295,7 @@ async function checkHlsExists(videoPath) {
         }
 
         const result = { exists: false, timestamp: now };
-        hlsCache.set(videoPath, result);
+        setHlsCache(videoPath, result);
         if (redisCache.enabled) {
             redisCache.set(redisCache.getHlsCacheKey(videoPath), result, CACHE_TTL);
         }
@@ -254,7 +304,7 @@ async function checkHlsExists(videoPath) {
         logger.debug(`检查HLS状态失败: ${videoPath}`, error.message);
         // 缓存失败结果，但使用较短的TTL
         const result = { exists: false, timestamp: now - CACHE_TTL + 30000 };
-        hlsCache.set(videoPath, result);
+        setHlsCache(videoPath, result);
         if (redisCache.enabled) {
             redisCache.set(redisCache.getHlsCacheKey(videoPath), result, 30000); // 30秒TTL
         }
@@ -316,7 +366,7 @@ async function createHlsRecord(videoPath, metadata = {}) {
 
         // 更新缓存
         const cacheResult = { exists: true, timestamp: Date.now() };
-        hlsCache.set(videoPath, cacheResult);
+        setHlsCache(videoPath, cacheResult);
 
         // 同步到Redis缓存
         if (redisCache.enabled) {

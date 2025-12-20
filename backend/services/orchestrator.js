@@ -80,8 +80,30 @@ class LocalLockManager {
 }
 
 const localLockManager = new LocalLockManager();
-const jobStates = new Map(); // jobName -> { promise }
+const jobStates = new Map(); // jobName -> { promise, createdAt, settled, warned, stale }
 let serializedJobs = Promise.resolve();
+
+// 定期清理超长时间未完成的 jobStates 条目（防止内存泄漏）
+const JOB_STATE_MAX_AGE_MS = Number(process.env.JOB_STATE_MAX_AGE_MS || 2 * 60 * 60 * 1000); // 2小时
+const jobStateCleanupTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [jobName, state] of jobStates.entries()) {
+        if (!state || !state.promise) continue;
+        const age = now - (state.createdAt || now);
+        if (state.settled || state.stale) {
+            jobStates.delete(jobName);
+            logger.debug(`[Orchestrator] 清理已完成/过期的任务状态: ${jobName}`);
+            continue;
+        }
+        if (age > JOB_STATE_MAX_AGE_MS && !state.warned) {
+            logger.warn(`[Orchestrator] 任务状态运行超时，标记为 stale 以允许重排: ${jobName}（> ${Math.round(JOB_STATE_MAX_AGE_MS / 60000)} 分钟）`);
+            state.warned = true;
+            state.stale = true;
+        }
+    }
+}, 10 * 60 * 1000); // 每10分钟检查一次
+if (typeof jobStateCleanupTimer.unref === 'function') jobStateCleanupTimer.unref();
+
 
 /**
  * 柔性日志忽略（用于抑制冗余日志）
@@ -157,10 +179,12 @@ async function runWhenIdle(jobName, fn, opts = {}) {
     }
 
     const existing = jobStates.get(jobName);
-    if (existing) {
+    // 如果任务已存在且未完成/未过期，则跳过重复安排
+    if (existing && !existing.settled && !existing.stale) {
         logger.debug(`[Orchestrator] 任务 "${jobName}" 已在队列中或正在执行，跳过重复安排`);
         return existing.promise;
     }
+
 
     const jobOptions = {
         startDelayMs: Number(opts.startDelayMs || 8000),
@@ -181,11 +205,13 @@ async function runWhenIdle(jobName, fn, opts = {}) {
     trackedPromise = scheduled.finally(() => {
         const state = jobStates.get(jobName);
         if (state && state.promise === trackedPromise) {
+            state.settled = true;
             jobStates.delete(jobName);
+            logger.debug(`[Orchestrator] 任务完成，已清理状态: ${jobName}`);
         }
     });
 
-    jobStates.set(jobName, { promise: trackedPromise });
+    jobStates.set(jobName, { promise: trackedPromise, createdAt: Date.now(), settled: false, warned: false, stale: false });
     return trackedPromise;
 }
 
@@ -413,10 +439,11 @@ function start() {
 
         let gcLogCount = 0; // GC 日志计数器，用于采样
 
-        const gcInterval = setInterval(() => {
+        const gcInterval = setInterval(async () => {
             try {
                 // 只在空闲时触发 GC
-                if (!isHeavy()) {
+                const heavy = await isHeavy();
+                if (!heavy) {
                     gcLogCount++;
                     // 采样：每10次GC记录一次详细指标，减少 memoryUsage() 开销
                     const shouldLogDetails = (gcLogCount % 10 === 0);

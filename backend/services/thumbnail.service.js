@@ -110,7 +110,9 @@ refreshThumbMetrics();
 
 function resolveThumbConcurrencyLimit() {
     // 直接使用 NUM_WORKERS（已在 runtime.js 中智能计算，考虑了 I/O 超配）
-    return Math.max(1, Math.floor(Number(NUM_WORKERS) || 1));
+    const hardLimit = Math.max(1, Math.floor(Number(NUM_WORKERS) || 1));
+    const softCap = Math.max(1, Number(process.env.THUMB_MAX_CONCURRENCY || Math.min(hardLimit, 6)));
+    return Math.min(hardLimit, softCap);
 }
 
 function synchronizeQueueCapacity() {
@@ -154,7 +156,7 @@ const ACTIVE_TASK_TTL_MS = 60 * 60 * 1000; // 活动任务记录保留1小时
 const taskTimestamps = new Map();
 
 // 定期清理过期记录
-setInterval(() => {
+const cleanupTimer = setInterval(() => {
     const now = Date.now();
     let cleanedFailures = 0;
     let cleanedTasks = 0;
@@ -195,6 +197,9 @@ setInterval(() => {
         logger.debug(`[THUMBNAIL CLEANUP] 清理了 ${cleanedFailures} 个失败记录和 ${cleanedTasks} 个过期任务`);
     }
 }, CLEANUP_INTERVAL_MS);
+// 允许进程退出（定时器不阻止进程退出）
+if (typeof cleanupTimer.unref === 'function') cleanupTimer.unref();
+
 
 // 更新任务时间戳的辅助函数
 function updateTaskTimestamp(path) {
@@ -441,7 +446,7 @@ async function startThumbnailTask(task, context, traceData) {
         trace: traceData || (traceContext ? traceContext.toObject() : null),
     };
 
-    logger.debug(`${logPrefix} 缩略图任务已派发: ${task.relativePath}`);
+    // 缩略图任务派发成功，详细日志已在队列入队时输出，此处不再重复
     try {
         noteThumbnailUse();
     } catch (error) {
@@ -488,16 +493,21 @@ async function processWorkerSuccess(task, skipped) {
         thumbMetrics.skipped += 1;
         await safeRedisIncr(redis, 'metrics:thumb:skip', '缩略图跳过指标');
     } else {
-        logger.debug(`[THUMB] 生成完成: ${relativePath}`);
+        // 更新统计指标（不输出单条日志避免刷屏）
         thumbMetrics.generated += 1;
         thumbMetrics.lastGeneratedAt = Date.now();
 
-        await redis.publish('thumbnail-generated', JSON.stringify({ path: relativePath }));
-        if (isDevelopment) {
-            logger.debug(`[THUMB] 已发布缩略图生成事件: ${relativePath}`);
+        // 通过 Redis pub/sub 发布事件，若 Redis 未启用/不可用则回落到本地事件
+        let publishedToRedis = false;
+        try {
+            await redis.publish('thumbnail-generated', JSON.stringify({ path: relativePath }));
+            publishedToRedis = !redis.isNoRedis;
+        } catch (pubErr) {
+            logger.debug(`[THUMB] 发布缩略图事件失败（回退本地事件）：${pubErr && pubErr.message}`);
         }
-
-        eventBus.emit('thumbnail-generated', { path: relativePath });
+        if (!publishedToRedis) {
+            eventBus.emit('thumbnail-generated', { path: relativePath });
+        }
         await safeRedisDel(redis, failureKey, '清理永久失败标记');
         await safeRedisIncr(redis, 'metrics:thumb:success', '缩略图成功指标');
 
@@ -511,9 +521,6 @@ async function processWorkerSuccess(task, skipped) {
             ];
 
             await invalidateTags(tags);
-            if (isDevelopment) {
-                logger.debug(`[THUMB] 缓存失效完成，标签: ${tags.join(', ')}`);
-            }
         } catch (cacheError) {
             logger.debug(`[CACHE] 失效缩略图缓存失败（已忽略）: ${cacheError.message}`);
         }
@@ -614,6 +621,15 @@ async function processWorkerFailure(task, errorPayload) {
     } catch (dbErr) {
         logger.debug(`写入缩略图状态队列失败（失败分支，已忽略）：${dbErr && dbErr.message}`);
     }
+
+    // 永久失败时同步清理封面缓存/引用，避免相册封面卡在坏缩略图上
+    if (statusForDb === 'permanent_failed') {
+        try {
+            await clearCoverCacheForPath(relativePath);
+        } catch (clearErr) {
+            logThumbIgnore('清理封面缓存', clearErr);
+        }
+    }
 }
 
 function finalizeWorkerCycle(relativePath) {
@@ -641,6 +657,43 @@ function ensureThumbnailPoolCapacity(limit) {
         scaleThumbnailWorkerPool(desiredSize);
     } catch (error) {
         logThumbIgnore('调整缩略图线程池大小', error);
+    }
+}
+
+/**
+ * 清理引用指定媒体的相册封面缓存/表记录，避免封面卡在永久失败缩略图上
+ */
+async function clearCoverCacheForPath(relativePath) {
+    const sanitized = sanitizePath(relativePath);
+    if (!sanitized || !isPathSafe(sanitized)) return;
+
+    try {
+        const AlbumCoversRepository = require('../repositories/albumCovers.repo');
+        const coversRepo = new AlbumCoversRepository();
+        const affectedAlbums = await coversRepo.getAlbumPathsByCoverPrefix(sanitized);
+
+        if (affectedAlbums.length > 0) {
+            await coversRepo.deleteByCoverPrefix(sanitized).catch(err => logThumbIgnore('删除封面引用', err));
+            try {
+                const { invalidateCoverCache } = require('./file.service');
+                await Promise.all(affectedAlbums.map(async (albumRel) => {
+                    try {
+                        await invalidateCoverCache(path.join(PHOTOS_DIR_SAFE_ROOT, albumRel));
+                    } catch (e) {
+                        logThumbIgnore('失效单个封面缓存', e);
+                    }
+                    try {
+                        await safeRedisDel(redis, `cover_info:/${albumRel}`, '封面缓存清理');
+                    } catch (e) {
+                        logThumbIgnore('清理封面缓存键', e);
+                    }
+                }));
+            } catch (cacheErr) {
+                logThumbIgnore('封面缓存失效总控', cacheErr);
+            }
+        }
+    } catch (err) {
+        logThumbIgnore('清理封面缓存入口', err);
     }
 }
 
