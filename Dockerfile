@@ -7,7 +7,7 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 # 国内 npm 镜像（可加速国内构建）
 RUN npm config set registry https://registry.npmmirror.com
-RUN npm install
+RUN npm ci
 
 # 复制前端源码并构建
 COPY frontend/ .
@@ -47,6 +47,9 @@ RUN npm config set registry https://registry.npmmirror.com && \
 # 拷贝后端依赖
 COPY --from=backend-builder /app/backend/node_modules ./backend/node_modules
 
+# 生产运行时环境
+ENV NODE_ENV=production
+
 # 拷贝后端源码
 COPY backend/ ./backend/
 
@@ -67,5 +70,4 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 # 暴露应用端口
 EXPOSE 13001
-
 

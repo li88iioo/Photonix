@@ -63,7 +63,7 @@ if (typeof TRUST_PROXY_RAW === 'string' && TRUST_PROXY_RAW.trim().length > 0) {
  * - CSP 依据 ENV 动态启用；
  * - COOP, O-AC 另由自定义中间件动态设置（下方）。
  */
-const ENABLE_APP_CSP = (process.env.ENABLE_APP_CSP || 'false').toLowerCase() === 'true';
+const ENABLE_APP_CSP = (process.env.ENABLE_APP_CSP || 'true').toLowerCase() === 'true';
 app.use(helmet({
     contentSecurityPolicy: ENABLE_APP_CSP ? {
         useDefaults: true,
@@ -71,7 +71,7 @@ app.use(helmet({
             defaultSrc: ["'self'"],
             imgSrc: ["'self'", 'data:', 'blob:'],
             mediaSrc: ["'self'", 'blob:'],
-            scriptSrc: ["'self'", "'unsafe-inline'"],
+            scriptSrc: ["'self'"],
             styleSrc: ["'self'", "'unsafe-inline'"],
             connectSrc: ["'self'"],
             objectSrc: ["'none'"],

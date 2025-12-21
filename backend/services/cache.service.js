@@ -5,11 +5,22 @@
 const { redis } = require('../config/redis');
 const logger = require('../config/logger');
 const { safeRedisGet, safeRedisDel, safeRedisSet } = require('../utils/helpers');
+const { CACHE_TAG_LIMIT_BASE } = require('../config');
 
 const TAG_PREFIX = 'tag:';
 const QUERY_CACHE_PREFIX = 'query:';
 const QUERY_CACHE_TTL = 300; // 5分钟缓存时间
 let redisNoOpWarned = false;
+const EFFECTIVE_TAG_LIMIT = Math.max(500, Number(CACHE_TAG_LIMIT_BASE) || 2000);
+
+function trimTags(tags = [], scope) {
+    const normalized = Array.isArray(tags) ? tags.filter(Boolean) : [];
+    if (normalized.length <= EFFECTIVE_TAG_LIMIT) {
+        return normalized;
+    }
+    logger.debug(`[Cache] ${scope} 超过标签上限 ${EFFECTIVE_TAG_LIMIT}，已截断（原始 ${normalized.length}）`);
+    return normalized.slice(0, EFFECTIVE_TAG_LIMIT);
+}
 
 function resolveRedisClient(scope = '缓存操作') {
     if (!redis || redis.isNoRedis) {
@@ -38,7 +49,7 @@ function resolveRedisClient(scope = '缓存操作') {
  */
 async function invalidateTags(tags) {
     const client = resolveRedisClient('路由缓存失效操作');
-    const tagsToInvalidate = Array.isArray(tags) ? tags : [tags];
+    const tagsToInvalidate = trimTags(Array.isArray(tags) ? tags : [tags], '失效标签');
     if (!client) {
         // Redis 不可用时标记后续读禁用路由缓存（减轻因陈旧缓存导致的空白卡片）
         global.__PH_ROUTE_CACHE_BYPASS_UNTIL = Date.now() + Number(process.env.ROUTE_CACHE_BYPASS_MS || 3000);
@@ -93,7 +104,7 @@ async function invalidateTags(tags) {
 async function addTagsToKey(key, tags) {
     const client = resolveRedisClient('缓存标签添加');
     if (!client) return;
-    const tagsToAdd = Array.isArray(tags) ? tags : [tags];
+    const tagsToAdd = trimTags(Array.isArray(tags) ? tags : [tags], '添加标签');
     if (tagsToAdd.length === 0) {
         return;
     }

@@ -37,6 +37,9 @@ RUN npm install -g pm2 && \
 # Copy backend dependencies
 COPY --from=backend-builder /app/backend/node_modules ./backend/node_modules
 
+# 生产运行时环境
+ENV NODE_ENV=production
+
 # Copy backend source
 COPY backend/ ./backend/
 

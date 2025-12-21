@@ -437,11 +437,12 @@ async function getDirectChildrenFromDb(relativePathPrefix, userId, sort, limit, 
                          FROM items i
                          WHERE i.type IN ('photo','video') AND (${whereClause}) AND ${mediaExclusionCondition}`;
 
-    const totalSql = `SELECT COUNT(1) AS count FROM (
-                          ${albumsSelect}
-                          UNION ALL
-                          ${mediaSelect}
-                      ) aggregated_entries`;
+    const totalSql = `
+        SELECT
+            (SELECT COUNT(1) FROM items i WHERE i.type = 'album' AND (${whereClause})) +
+            (SELECT COUNT(1) FROM items i WHERE i.type IN ('photo','video') AND (${whereClause}) AND ${mediaExclusionCondition})
+            AS count
+    `;
     const totalRow = await dbGet('main', totalSql, [...whereParams, ...whereParams]);
     const total = Number(totalRow?.count || 0);
 

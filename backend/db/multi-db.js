@@ -13,6 +13,8 @@ const DEFAULT_QUERY_TIMEOUT_MS = Number(process.env.SQLITE_QUERY_TIMEOUT || 3000
 const JOURNAL_MODE = process.env.SQLITE_JOURNAL_MODE || 'WAL';
 const SYNCHRONOUS = process.env.SQLITE_SYNCHRONOUS || 'NORMAL';
 const TEMP_STORE = process.env.SQLITE_TEMP_STORE || 'MEMORY';
+const SLOW_QUERY_MS = Number(process.env.SQLITE_SLOW_QUERY_MS || 2000);
+const SQLITE_INTERRUPT_MS = Number(process.env.SQLITE_INTERRUPT_MS || 0);
 
 function deriveCacheSize() {
     if (process.env.SQLITE_CACHE_SIZE) {
@@ -39,6 +41,33 @@ function deriveMmapSize() {
 const CACHE_SIZE = deriveCacheSize();
 const MMAP_SIZE = deriveMmapSize();
 const connections = {};
+
+function logIfSlow(sql, startedAt, label) {
+    if (!sql || !Number.isFinite(SLOW_QUERY_MS) || SLOW_QUERY_MS <= 0) return;
+    const elapsed = Date.now() - startedAt;
+    if (elapsed > SLOW_QUERY_MS) {
+        const sqlUpper = String(sql).toUpperCase().trim();
+        // 维护命令（ANALYZE, PRAGMA optimize 等）预期耗时较长，使用 info 级别
+        const isMaintenance = sqlUpper.startsWith('ANALYZE') || sqlUpper.includes('PRAGMA OPTIMIZE');
+        const logFn = isMaintenance ? logger.debug.bind(logger) : logger.warn.bind(logger);
+        logFn(`[SQLite] ${label} 慢查询 ${elapsed}ms | SQL: ${String(sql).slice(0, 200)}`);
+    }
+}
+
+
+function scheduleInterrupt(db, sql, label) {
+    if (!db || !Number.isFinite(SQLITE_INTERRUPT_MS) || SQLITE_INTERRUPT_MS <= 0) return null;
+    const timer = setTimeout(() => {
+        try {
+            db.interrupt();
+            logger.error(`[SQLite] ${label} 强制中断超时查询 (${SQLITE_INTERRUPT_MS}ms): ${String(sql).slice(0, 200)}`);
+        } catch (err) {
+            logger.debug(`[SQLite] 尝试中断查询失败（忽略）: ${err && err.message}`);
+        }
+    }, SQLITE_INTERRUPT_MS);
+    if (typeof timer.unref === 'function') timer.unref();
+    return timer;
+}
 
 function applyPragmas(db, label) {
     try {
@@ -107,6 +136,9 @@ async function closeAllConnections() {
 }
 
 function withTimeout(promise, ms = DEFAULT_QUERY_TIMEOUT_MS, info = {}) {
+    // 注意：better-sqlite3 是同步驱动，withTimeout 只会拒绝 Promise。
+    // 若设置 SQLITE_INTERRUPT_MS，会额外调用 db.interrupt() 试图打断阻塞查询；
+    // 重型/长时间任务仍应迁移到 Worker 或拆分分页，避免主线程饥饿。
     let timerId;
     return new Promise((resolve, reject) => {
         timerId = setTimeout(() => {
@@ -126,9 +158,11 @@ function withTimeout(promise, ms = DEFAULT_QUERY_TIMEOUT_MS, info = {}) {
 }
 
 function runAsync(dbType, sql, params = [], successMessage = '') {
+    const startedAt = Date.now();
+    const db = getDB(dbType);
+    const interruptTimer = scheduleInterrupt(db, sql, dbType);
     const promise = new Promise((resolve, reject) => {
         try {
-            const db = getDB(dbType);
             const stmt = db.prepare(sql);
             const info = stmt.run(...params);
             if (successMessage) logger.info(`[${dbType}] ${successMessage}`);
@@ -141,13 +175,18 @@ function runAsync(dbType, sql, params = [], successMessage = '') {
             reject(error);
         }
     });
-    return withTimeout(promise, DEFAULT_QUERY_TIMEOUT_MS, { sql });
+    return withTimeout(promise, DEFAULT_QUERY_TIMEOUT_MS, { sql }).finally(() => {
+        if (interruptTimer) clearTimeout(interruptTimer);
+        logIfSlow(sql, startedAt, dbType);
+    });
 }
 
 function dbRun(dbType, sql, params = []) {
+    const startedAt = Date.now();
+    const db = getDB(dbType);
+    const interruptTimer = scheduleInterrupt(db, sql, dbType);
     const promise = new Promise((resolve, reject) => {
         try {
-            const db = getDB(dbType);
             const stmt = db.prepare(sql);
             const info = stmt.run(...params);
             resolve({
@@ -158,33 +197,46 @@ function dbRun(dbType, sql, params = []) {
             reject(error);
         }
     });
-    return withTimeout(promise, DEFAULT_QUERY_TIMEOUT_MS, { sql });
+    return withTimeout(promise, DEFAULT_QUERY_TIMEOUT_MS, { sql }).finally(() => {
+        if (interruptTimer) clearTimeout(interruptTimer);
+        logIfSlow(sql, startedAt, dbType);
+    });
 }
 
 function dbAll(dbType, sql, params = []) {
+    const startedAt = Date.now();
+    const db = getDB(dbType);
+    const interruptTimer = scheduleInterrupt(db, sql, dbType);
     const promise = new Promise((resolve, reject) => {
         try {
-            const db = getDB(dbType);
             const stmt = db.prepare(sql);
             resolve(stmt.all(...params));
         } catch (error) {
             reject(error);
         }
     });
-    return withTimeout(promise, DEFAULT_QUERY_TIMEOUT_MS, { sql });
+    return withTimeout(promise, DEFAULT_QUERY_TIMEOUT_MS, { sql }).finally(() => {
+        if (interruptTimer) clearTimeout(interruptTimer);
+        logIfSlow(sql, startedAt, dbType);
+    });
 }
 
 function dbGet(dbType, sql, params = []) {
+    const startedAt = Date.now();
+    const db = getDB(dbType);
+    const interruptTimer = scheduleInterrupt(db, sql, dbType);
     const promise = new Promise((resolve, reject) => {
         try {
-            const db = getDB(dbType);
             const stmt = db.prepare(sql);
             resolve(stmt.get(...params));
         } catch (error) {
             reject(error);
         }
     });
-    return withTimeout(promise, DEFAULT_QUERY_TIMEOUT_MS, { sql });
+    return withTimeout(promise, DEFAULT_QUERY_TIMEOUT_MS, { sql }).finally(() => {
+        if (interruptTimer) clearTimeout(interruptTimer);
+        logIfSlow(sql, startedAt, dbType);
+    });
 }
 
 function hasColumn(dbType, table, column) {

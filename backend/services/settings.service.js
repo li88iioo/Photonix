@@ -16,10 +16,13 @@ const ENABLE_REDIS = (process.env.ENABLE_REDIS || 'false') === 'true';
 const SETTINGS_REDIS_CACHE = ENABLE_REDIS;  // 自动跟随 ENABLE_REDIS（有Redis就用，没有就不用）
 const REDIS_CACHE_KEY = 'settings_cache_v1';
 const DEFAULT_SYNC_SCHEDULE = 'off';
+let lastSettingsLoadError = null;
+let lastSettingsLoadAt = 0;
 
 function applyDefaultSettings(settings = {}) {
     if (typeof settings.ALLOW_PUBLIC_ACCESS === 'undefined') {
-        settings.ALLOW_PUBLIC_ACCESS = 'true';
+        // 安全基线：默认不公开访问，除非显式开启
+        settings.ALLOW_PUBLIC_ACCESS = 'false';
     }
     if (typeof settings.ALBUM_DELETE_ENABLED === 'undefined') {
         settings.ALBUM_DELETE_ENABLED = 'false';
@@ -93,9 +96,13 @@ async function getAllSettings(options = {}) {
         if (SETTINGS_REDIS_CACHE) {
             await safeRedisSet(redis, REDIS_CACHE_KEY, JSON.stringify(settingsCache), 'EX', Math.floor(CACHE_TTL / 1000), 'Settings缓存写入');
         }
+        lastSettingsLoadError = null;
+        lastSettingsLoadAt = Date.now();
         return settingsCache;
     } catch (error) {
         logger.error('从数据库获取设置失败:', error);
+        lastSettingsLoadError = error && error.message ? error.message : String(error);
+        lastSettingsLoadAt = Date.now();
         // 回退策略：优先使用进程内过期缓存；再尝试 Redis；最后给出保守默认
         try {
             if (settingsCache) {
@@ -113,8 +120,14 @@ async function getAllSettings(options = {}) {
         } catch (fallbackError) {
             logger.debug('设置服务回退缓存读取失败，继续使用默认值:', fallbackError && fallbackError.message);
         }
-        // 最终兜底：最关键的公共开关默认放开，避免首页完全不可用
-        return { ALLOW_PUBLIC_ACCESS: 'true', PASSWORD_ENABLED: 'false', ALBUM_DELETE_ENABLED: 'false', MANUAL_SYNC_SCHEDULE: DEFAULT_SYNC_SCHEDULE };
+        // 最终兜底：采用最安全的关闭式配置，避免无配置时绕过认证
+        const lockedDown = applyDefaultSettings({
+            ALLOW_PUBLIC_ACCESS: 'false',
+            PASSWORD_ENABLED: 'true',
+            ALBUM_DELETE_ENABLED: 'false',
+            MANUAL_SYNC_SCHEDULE: DEFAULT_SYNC_SCHEDULE
+        });
+        return lockedDown;
     }
 }
 
@@ -167,5 +180,7 @@ async function updateSettings(settingsToUpdate) {
 module.exports = {
     getAllSettings,    // 获取所有设置（支持 { preferFreshSensitive: true }）
     updateSettings,    // 批量更新设置
-    clearCache         // 清除缓存方法，供外部调用
+    clearCache,        // 清除缓存方法，供外部调用
+    lastSettingsLoadError: () => lastSettingsLoadError,
+    lastSettingsLoadAt: () => lastSettingsLoadAt
 };
