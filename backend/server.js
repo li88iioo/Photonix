@@ -15,9 +15,7 @@
  */
 
 const app = require('./app');
-const baseLogger = require('./config/logger');
-const { formatLog, LOG_PREFIXES } = baseLogger;
-const logger = baseLogger;
+const logger = require('./config/logger');
 const { validateCriticalConfig } = require('./config/validator');
 const { handleUncaughtException, handleUnhandledRejection } = require('./middleware/errorHandler');
 // 延后加载 Redis，避免无 Redis 环境下启动即触发连接

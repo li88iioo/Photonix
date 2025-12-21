@@ -51,7 +51,7 @@ function deriveProfile(mode, cpuCount) {
             return {
                 indexConcurrency: Math.max(2, Math.floor(cpuBudget / 2)),  // 索引并发：中等负载
                 disableHlsBackfill: false,
-                ffmpegThreads: Math.max(1, Math.min(1, cpuBudget)),
+                ffmpegThreads: Math.max(1, Math.min(2, cpuBudget)),  // 中负载允许最多2线程
                 ffmpegPreset: process.env.FFMPEG_PRESET || 'veryfast'
             };
         case 'high':
@@ -186,13 +186,13 @@ function hasForegroundTasks() {
         const thumbQueued = state.thumbnail.getQueueLen() || 0;
         const thumbPending = thumbActive + thumbQueued;
 
-        // 阈值：超过 5 个待处理任务即视为有前台负载
-        if (thumbPending > 5) {
+        // 检查视频处理任务（HLS 转码等）
+        const videoActive = state.video.getActiveCount() || 0;
+
+        // 阈值：超过 5 个待处理缩略图任务或有活动视频任务即视为有前台负载
+        if (thumbPending > 5 || videoActive > 0) {
             return true;
         }
-
-        // 可扩展：检查其他前台任务（HLS、视频转码等）
-        // TODO: 可添加 HLS 队列检测
 
         return false;
     } catch (error) {

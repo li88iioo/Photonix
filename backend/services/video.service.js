@@ -8,6 +8,7 @@ const { TraceManager } = require('../utils/trace');
 const { normalizeWorkerMessage } = require('../utils/workerMessage');
 const { PHOTOS_DIR, THUMBS_DIR, HLS_BATCH_TIMEOUT_MS } = require('../config');
 const { startVideoWorker } = require('./worker.manager');
+const state = require('./state.manager');
 
 /**
  * 规范化输入路径为 { abs, rel }
@@ -69,6 +70,8 @@ async function runHlsBatch(paths, opts = {}) {
       removeListener('message', onMessage);
       worker.removeListener('error', onError);
       worker.removeListener('exit', onExit);
+      // 清理视频处理状态计数（确保所有退出路径都能正确减少）
+      state.video.decrementActiveCount();
     };
 
     const finish = () => {
@@ -91,7 +94,7 @@ async function runHlsBatch(paths, opts = {}) {
         try {
           if (worker && typeof worker.terminate === 'function') {
             worker.__expectedTermination = true;
-            worker.terminate().catch(() => {});
+            worker.terminate().catch(() => { });
           }
         } catch (_) { /* 忽略终止异常 */ }
         fail(new Error(`HLS 批处理超时或无进度 (${timeoutMs}ms)`));
@@ -160,6 +163,8 @@ async function runHlsBatch(paths, opts = {}) {
     worker.on('error', onError);
     worker.on('exit', onExit);
 
+    // 标记视频处理任务开始（与 cleanup 中的 decrementActiveCount 配对）
+    state.video.incrementActiveCount();
     armTimeout();
 
     try {

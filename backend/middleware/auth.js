@@ -231,7 +231,8 @@ const cleanupInterval = setInterval(() => {
             cleaned++;
         }
     }
-    if (cleaned > 0) {
+    // 小量清理静默处理，避免日志刷屏（每分钟清理 1-2 个是正常现象）
+    if (cleaned >= 5) {
         logger.debug(`[Auth] 清理了 ${cleaned} 个过期认证缓存`);
     }
 }, AUTH_CACHE_CLEANUP_INTERVAL_MS);

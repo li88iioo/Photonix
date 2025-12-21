@@ -253,12 +253,17 @@ class ThumbStatusManager {
             await this.orchestrator.withAdmission('thumb-status-upsert', async () => {
                 await this.repo.upsertBatch(rows, { manageTransaction: true, chunkSize: 400 }, redis);
             });
-            logger.debug(`[THUMB] 批量写入缩略图状态成功: ${rows.length} 条记录`);
+            // 小批次静默处理，避免日志刷屏（仓库层已有相同阈值）
+            if (rows.length >= 10) {
+                logger.debug(`[THUMB] 批量写入缩略图状态成功: ${rows.length} 条记录`);
+            }
             return { success: true, rowsAffected: rows.length };
         } catch (e) {
             // 兜底：即便闸门封装异常也直接写一次，确保最终可达
             await this.repo.upsertBatch(rows, { manageTransaction: true, chunkSize: 400 }, redis);
-            logger.debug(`[THUMB] 兜底批量写入成功: ${rows.length} 条记录`);
+            if (rows.length >= 10) {
+                logger.debug(`[THUMB] 兜底批量写入成功: ${rows.length} 条记录`);
+            }
             return { success: true, rowsAffected: rows.length };
         }
     }

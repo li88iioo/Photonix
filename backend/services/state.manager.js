@@ -84,6 +84,39 @@ class ThumbnailState {
 }
 
 /**
+ * 视频处理服务状态（HLS转码等）
+ */
+class VideoState {
+    constructor() {
+        this.activeCount = 0;          // 活动中的视频处理任务数
+    }
+
+    getActiveCount() {
+        return this.activeCount;
+    }
+
+    setActiveCount(count) {
+        this.activeCount = Math.max(0, Number(count) || 0);
+    }
+
+    incrementActiveCount() {
+        this.activeCount++;
+        return this.activeCount;
+    }
+
+    decrementActiveCount() {
+        this.activeCount = Math.max(0, this.activeCount - 1);
+        return this.activeCount;
+    }
+
+    getSnapshot() {
+        return {
+            activeCount: this.activeCount
+        };
+    }
+}
+
+/**
  * Worker服务状态
  */
 class WorkerState {
@@ -207,6 +240,7 @@ class WatcherState {
 class StateManager {
     constructor() {
         this.thumbnail = new ThumbnailState();
+        this.video = new VideoState();
         this.worker = new WorkerState();
         this.auth = new AuthState();
         this.logThrottle = new LogThrottleState();
@@ -219,6 +253,7 @@ class StateManager {
     getGlobalSnapshot() {
         return {
             thumbnail: this.thumbnail.getSnapshot(),
+            video: this.video.getSnapshot(),
             auth: {
                 firstAuthLogged: this.auth.isFirstAuthLogged()
             },
@@ -237,6 +272,7 @@ class StateManager {
      */
     reset() {
         this.thumbnail = new ThumbnailState();
+        this.video = new VideoState();
         this.worker = new WorkerState();
         this.auth = new AuthState();
         this.logThrottle = new LogThrottleState();

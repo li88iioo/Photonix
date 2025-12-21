@@ -113,7 +113,10 @@ class ThumbStatusRepository {
         try {
             // Native DB handling (busy_timeout) replaces application-layer retry
             await runPreparedBatch('main', UPSERT_SQL, rows, opts);
-            logger.debug(`${LOG_LABEL} 批量写入${TABLE_LABEL}完成: ${rows.length}条`);
+            // 小批次静默处理，避免日志刷屏
+            if (rows.length >= 10) {
+                logger.debug(`${LOG_LABEL} 批量写入${TABLE_LABEL}完成: ${rows.length}条`);
+            }
         } catch (error) {
             logger.error(`${LOG_LABEL} 批量写入${TABLE_LABEL}失败:`, error.message);
             throw error;
