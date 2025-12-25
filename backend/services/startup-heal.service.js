@@ -193,13 +193,59 @@ async function initializeDatabase() {
 
 async function startServices() {
     logger.info('正在启动后台服务...');
-    await Promise.allSettled([
-        (async () => { try { startAdaptiveScheduler(); } catch (e) { logger.debug('启动自适应调度器失败（忽略）:', e && e.message); } })(),
-        (async () => { try { require('./orchestrator').start(); } catch (e) { logger.debug('启动编排器失败（忽略）:', e && e.message); } })(),
-        (async () => { try { logger.info(`Redis 可用性: ${require('../config/redis').getAvailability()}`); } catch (e) { logger.warn('Redis 可用性检查失败，已使用降级配置继续启动。', e && e.message ? { error: e.message } : undefined); } })(),
-        (async () => { try { await require('./manualSyncScheduler.service').initialize(); } catch (e) { logger.debug('启动手动同步调度器失败（忽略）:', e && e.message); } })(),
-    ]);
-    try { setupWorkerListeners(); } catch (error) { logger.debug('初始化索引/视频工作线程监听失败（忽略）：', error && error.message); }
+    const failures = [];
+    const tasks = [
+        {
+            name: 'adaptive-scheduler',
+            run: async () => {
+                startAdaptiveScheduler();
+            }
+        },
+        {
+            name: 'orchestrator',
+            run: async () => {
+                require('./orchestrator').start();
+            }
+        },
+        {
+            name: 'redis-availability-log',
+            run: async () => {
+                logger.info(`Redis 可用性: ${require('../config/redis').getAvailability()}`);
+            }
+        },
+        {
+            name: 'manual-sync-scheduler',
+            run: async () => {
+                await require('./manualSyncScheduler.service').initialize();
+            }
+        }
+    ];
+
+    for (const task of tasks) {
+        try {
+            await task.run();
+        } catch (error) {
+            failures.push({ name: task.name, error: error && error.message ? error.message : String(error) });
+            logger.warn(`[Startup] 后台服务启动失败: ${task.name}`, { error: error && error.message });
+        }
+    }
+
+    try {
+        setupWorkerListeners();
+    } catch (error) {
+        failures.push({ name: 'worker-listeners', error: error && error.message ? error.message : String(error) });
+        logger.warn('初始化索引/视频工作线程监听失败:', { error: error && error.message });
+    }
+
+    const criticalFailures = failures.filter(({ name }) => name === 'orchestrator' || name === 'manual-sync-scheduler');
+    if (criticalFailures.length > 0) {
+        const reason = criticalFailures.map(f => `${f.name}: ${f.error || 'unknown'}`).join('; ');
+        throw new Error(`后台关键服务启动失败: ${reason}`);
+    }
+
+    if (failures.length > 0) {
+        logger.warn(`[Startup] 非关键后台服务存在失败: ${failures.map(f => f.name).join(', ')}`);
+    }
 }
 
 async function setupIndexingAndMonitoring() {

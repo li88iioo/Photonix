@@ -391,9 +391,7 @@ function setupConsoleControl() {
             console[method] = noop;
         });
 
-        // 保留error和trace用于错误报告
-        console.error = console.error || noop;
-        console.trace = console.trace || noop;
+        // 保留 error 和 trace 用于错误报告（不可覆盖，否则会丢失关键错误信息）
     }
 }
 

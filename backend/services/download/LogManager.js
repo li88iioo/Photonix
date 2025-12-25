@@ -7,6 +7,7 @@ const path = require('path');
 const fsp = require('fs/promises');
 const { v4: uuidv4 } = require('uuid');
 const LRUCache = require('./LRUCache');
+const logger = require('../../config/logger');
 
 class LogManager {
   constructor(paths, maxEntries = 500) {
@@ -52,7 +53,7 @@ class LogManager {
       // 启动信息已加载，不需要输出日志
     } catch (error) {
       // 静默失败 - 不阻塞服务启动
-      console.warn('[LogManager] 加载历史日志失败:', error.message);
+      logger.warn('[LogManager] 加载历史日志失败:', error.message);
     }
   }
 
@@ -261,7 +262,7 @@ class LogManager {
       await fsp.mkdir(path.dirname(this.paths.activityLogPath), { recursive: true });
       await fsp.appendFile(this.paths.activityLogPath, `${entry.line}\n`, 'utf-8');
     } catch (error) {
-      console.warn('[LogManager] 写入活动日志失败', error.message);
+      logger.warn('[LogManager] 写入活动日志失败', error.message);
     }
   }
 
@@ -281,7 +282,7 @@ class LogManager {
       );
       await fsp.appendFile(this.paths.errorLogPath, `${line}\n`, 'utf-8');
     } catch (error) {
-      console.warn('[LogManager] 写入错误日志失败', error.message);
+      logger.warn('[LogManager] 写入错误日志失败', error.message);
     }
   }
 
@@ -330,7 +331,7 @@ class LogManager {
         await fsp.mkdir(path.dirname(this.paths.activityLogPath), { recursive: true });
         await fsp.writeFile(this.paths.activityLogPath, '', 'utf-8');
       } catch (error) {
-        console.warn('[LogManager] 清空活动日志文件失败', error.message);
+        logger.warn('[LogManager] 清空活动日志文件失败', error.message);
       }
     }
 
@@ -362,7 +363,7 @@ class LogManager {
       }
     } catch (error) {
       if (error.code !== 'ENOENT') {
-        console.warn('[LogManager] 日志轮转失败', error.message);
+        logger.warn('[LogManager] 日志轮转失败', error.message);
       }
     }
   }

@@ -17,6 +17,7 @@ const INITIAL_THUMB_WORKERS = (() => {
 let desiredThumbnailSize = INITIAL_THUMB_WORKERS;
 let lastThumbnailUseAt = 0;
 let thumbnailPool = null;
+let thumbnailPoolDisabled = false;
 
 class CoreWorkerRegistry {
     constructor() {
@@ -144,6 +145,9 @@ function createPiscinaPool(size) {
 }
 
 function ensureThumbnailWorkerPool(size = desiredThumbnailSize) {
+    if (thumbnailPoolDisabled) {
+        return null;
+    }
     const target = Math.max(1, Math.floor(size || desiredThumbnailSize));
     desiredThumbnailSize = target;
     if (!thumbnailPool) {
@@ -158,11 +162,16 @@ function ensureThumbnailWorkerPool(size = desiredThumbnailSize) {
 }
 
 function createThumbnailWorkerPool(size = INITIAL_THUMB_WORKERS) {
+    thumbnailPoolDisabled = false;
     desiredThumbnailSize = Math.max(1, Math.floor(size));
     ensureThumbnailWorkerPool(desiredThumbnailSize);
 }
 
-function destroyThumbnailWorkerPool() {
+function destroyThumbnailWorkerPool(options = {}) {
+    const { disable = false } = options;
+    if (disable) {
+        thumbnailPoolDisabled = true;
+    }
     desiredThumbnailSize = 0;
     if (thumbnailPool) {
         const pool = thumbnailPool;
@@ -177,6 +186,9 @@ function noteThumbnailUse() {
 }
 
 function runThumbnailTask(payload) {
+    if (thumbnailPoolDisabled) {
+        throw new Error('Thumbnail worker pool disabled');
+    }
     const pool = ensureThumbnailWorkerPool(desiredThumbnailSize);
     return pool.run(payload);
 }
@@ -184,9 +196,10 @@ function runThumbnailTask(payload) {
 function scaleThumbnailWorkerPool(targetSize) {
     const normalized = Math.floor(targetSize);
     if (!Number.isFinite(normalized) || normalized <= 0) {
-        destroyThumbnailWorkerPool();
+        destroyThumbnailWorkerPool({ disable: true });
         return 0;
     }
+    thumbnailPoolDisabled = false;
     desiredThumbnailSize = Math.max(1, normalized);
     ensureThumbnailWorkerPool(desiredThumbnailSize);
     return desiredThumbnailSize;

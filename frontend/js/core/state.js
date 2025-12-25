@@ -4,6 +4,7 @@
 
 import { map } from 'nanostores';
 import { createModuleLogger } from './logger.js';
+import { LRUCache } from './lru-cache.js';
 
 const stateLogger = createModuleLogger('State');
 
@@ -98,7 +99,7 @@ const appStateStore = map({
     preSearchHash: '#/',
     fromSearchHash: null,
 
-    // 滚动位置缓存
+    // 滚动位置缓存（使用 Map 以兼容 new Map()/Object.fromEntries 等操作）
     scrollPositions: new Map(),
 
     // 缩略图请求管理
@@ -119,7 +120,7 @@ const appStateStore = map({
     entrySort: 'smart',
     currentColumnCount: 0,
     currentLayoutWidth: 0,
-    pageCache: new Map(),
+    pageCache: new LRUCache(20), // LRU 限制最多 20 页缓存，避免内存泄漏
 
     // 排序缓存
 

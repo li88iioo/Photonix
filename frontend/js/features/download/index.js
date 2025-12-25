@@ -349,6 +349,32 @@ async function ensureAdminSecret(forcePrompt = false) {
     }
   }
 
+  // 检查来自设置页面传递的密钥（避免重复输入）
+  if (!forcePrompt && window.__PHOTONIX_DOWNLOAD_ADMIN_SECRET__) {
+    const passedSecret = window.__PHOTONIX_DOWNLOAD_ADMIN_SECRET__;
+    // 立即清除全局变量，避免残留风险
+    delete window.__PHOTONIX_DOWNLOAD_ADMIN_SECRET__;
+    downloadLogger.info('检测到来自设置页面的密钥，尝试复用');
+    try {
+      // 尝试用密钥交换Token
+      const tokenResult = await exchangeSecretForToken(passedSecret);
+      if (tokenResult.success) {
+        setAdminSecret('TOKEN_AUTH');
+        markAdminVerified();
+        downloadLogger.info('设置页面传递的密钥验证成功');
+        return 'TOKEN_AUTH';
+      }
+      // Token获取失败，降级到密钥模式
+      downloadLogger.warn('Token获取失败，使用密钥模式');
+      setAdminSecret(passedSecret);
+      markAdminVerified();
+      return passedSecret;
+    } catch (error) {
+      downloadLogger.warn('设置页面传递的密钥验证失败，将提示重新输入', error);
+      // 验证失败，继续走后续提示流程
+    }
+  }
+
   // 无需提示时，尝试复用现有 Token（sessionStorage）
   if (!forcePrompt) {
     const token = getDownloadToken();

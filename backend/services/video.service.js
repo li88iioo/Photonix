@@ -9,6 +9,18 @@ const { normalizeWorkerMessage } = require('../utils/workerMessage');
 const { PHOTOS_DIR, THUMBS_DIR, HLS_BATCH_TIMEOUT_MS } = require('../config');
 const { startVideoWorker } = require('./worker.manager');
 const state = require('./state.manager');
+const HLS_INFLIGHT_TTL_MS = Math.max(60000, Number(process.env.HLS_INFLIGHT_TTL_MS || 30 * 60 * 1000));
+
+// 防止重复排队的 HLS 任务（relative path -> timestamp）
+const inFlightHls = new Map();
+
+function pruneInFlight(now = Date.now()) {
+  for (const [rel, ts] of inFlightHls.entries()) {
+    if ((now - ts) > HLS_INFLIGHT_TTL_MS) {
+      inFlightHls.delete(rel);
+    }
+  }
+}
 
 /**
  * 规范化输入路径为 { abs, rel }
@@ -42,26 +54,64 @@ async function runHlsBatch(paths, opts = {}) {
     }
   }
 
+  const now = Date.now();
+  pruneInFlight(now);
+
+  const scheduledTasks = [];
+  let skippedInflight = 0;
+  for (const task of uniqueTasks) {
+    if (inFlightHls.has(task.rel)) {
+      skippedInflight += 1;
+      continue;
+    }
+    inFlightHls.set(task.rel, now);
+    scheduledTasks.push(task);
+  }
+
   const total = uniqueTasks.length;
   if (total === 0) {
     return { total: 0, success: 0, failed: 0, skipped: 0 };
   }
 
-  const worker = startVideoWorker();
+  if (scheduledTasks.length === 0) {
+    return { total, success: 0, failed: 0, skipped: skippedInflight };
+  }
+
+  const releaseScheduled = () => {
+    for (const task of scheduledTasks) {
+      inFlightHls.delete(task.rel);
+    }
+  };
+
+  let worker;
+  try {
+    worker = startVideoWorker();
+  } catch (err) {
+    releaseScheduled();
+    throw err;
+  }
   if (!worker) {
+    releaseScheduled();
     throw new Error('无法启动视频处理线程');
   }
 
   const timeoutMs = Math.max(10000, Number(opts.timeoutMs || HLS_BATCH_TIMEOUT_MS));
-  const pending = new Set(uniqueTasks.map(task => task.rel));
+  const pending = new Set(scheduledTasks.map(task => task.rel));
   let success = 0;
   let failed = 0;
-  let skipped = 0;
+  let skipped = skippedInflight;
   let timer = null;
 
   return new Promise((resolve, reject) => {
     let settled = false;
     const removeListener = typeof worker.off === 'function' ? worker.off.bind(worker) : worker.removeListener.bind(worker);
+
+    const releaseInFlight = () => {
+      // scheduledTasks 涵盖了所有本次排队的任务，pending 是其子集，无需重复遍历
+      for (const task of scheduledTasks) {
+        inFlightHls.delete(task.rel);
+      }
+    };
 
     const cleanup = () => {
       if (cleanup.__done) return;
@@ -72,6 +122,7 @@ async function runHlsBatch(paths, opts = {}) {
       worker.removeListener('exit', onExit);
       // 清理视频处理状态计数（确保所有退出路径都能正确减少）
       state.video.decrementActiveCount();
+      releaseInFlight();
     };
 
     const finish = () => {
@@ -168,7 +219,7 @@ async function runHlsBatch(paths, opts = {}) {
     armTimeout();
 
     try {
-      for (const { abs, rel } of uniqueTasks) {
+      for (const { abs, rel } of scheduledTasks) {
         const message = TraceManager.injectToWorkerMessage({
           filePath: abs,
           relativePath: rel,

@@ -6,6 +6,7 @@
 const path = require('path');
 const fsp = require('fs/promises');
 const YAML = require('yaml');
+const logger = require('../../config/logger');
 
 class ConfigManager {
   constructor(dataRoot) {
@@ -21,13 +22,13 @@ class ConfigManager {
   async loadConfig() {
     const defaults = this.buildDefaultConfig();
     let raw = {};
-    
+
     try {
       const content = await fsp.readFile(this.configFile, 'utf-8');
       raw = YAML.parse(content) || {};
     } catch (error) {
       if (error.code !== 'ENOENT') {
-        console.warn('读取下载配置失败，使用默认配置', { error: error.message });
+        logger.warn('读取下载配置失败，使用默认配置', { error: error.message });
       }
     }
 
@@ -161,17 +162,17 @@ class ConfigManager {
     config.requestTimeout = this.normalizeNumber(raw.request_timeout ?? raw.requestTimeout, defaults.requestTimeout, { min: 5 });
     config.connectTimeout = this.normalizeNumber(raw.connect_timeout ?? raw.connectTimeout, defaults.connectTimeout, { min: 1 });
     config.readTimeout = this.normalizeNumber(raw.read_timeout ?? raw.readTimeout, defaults.readTimeout, { min: 1 });
-    
+
     // 图片过滤参数
     config.minImageBytes = this.normalizeNumber(raw.min_image_bytes ?? raw.minImageBytes, defaults.minImageBytes, { min: 0, integer: true });
     config.minImageWidth = this.normalizeNumber(raw.min_image_width ?? raw.minImageWidth, defaults.minImageWidth, { min: 0, integer: true });
     config.minImageHeight = this.normalizeNumber(raw.min_image_height ?? raw.minImageHeight, defaults.minImageHeight, { min: 0, integer: true });
-    
+
     // 重试和延迟
     config.retryDelay = this.normalizeNumber(raw.retry_delay ?? raw.retryDelay, defaults.retryDelay, { min: 1 });
     config.maxRetries = this.normalizeNumber(raw.max_retries ?? raw.maxRetries, defaults.maxRetries, { min: 1, max: 20, integer: true });
     config.paginationDelay = this.normalizePaginationDelay(raw.pagination_delay ?? raw.paginationDelay, defaults.paginationDelay);
-    
+
     // 去重策略
     config.dedupScope = (raw.dedup_scope || raw.dedupScope || defaults.dedupScope).toLowerCase();
     if (!['global', 'per_feed', 'by_link'].includes(config.dedupScope)) {
@@ -219,7 +220,7 @@ class ConfigManager {
   resolvePaths(config) {
     const baseFolder = path.resolve(config.baseFolder);
     const logsDir = path.join(this.dataRoot, 'logs');
-    
+
     return {
       baseFolder,
       databasePath: path.isAbsolute(config.dbFile)

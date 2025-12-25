@@ -4,6 +4,7 @@
  */
 
 import { state, addAlbumTombstone } from '../../core/state.js';
+import { LRUCache } from '../../core/lru-cache.js';
 import { elements } from '../../shared/dom-elements.js';
 import { applyMasonryLayout, getMasonryColumns, applyMasonryLayoutIncremental, triggerMasonryUpdate } from './masonry.js';
 import { closeModal, navigateModal, _handleThumbnailClick, _navigateToAlbum, startFastNavigate, stopFastNavigate } from '../../app/modal.js';
@@ -201,7 +202,7 @@ async function confirmAlbumDeletion(overlay, confirmBtn, cancelBtn) {
             albumLink.remove();
             triggerMasonryUpdate();
         }
-        state.update('pageCache', new Map());
+        state.update('pageCache', new LRUCache(20)); // 替换为新实例以触发 nanostore 订阅者
     } catch (error) {
         overlay.dataset.state = 'confirm';
         if (confirmBtn) confirmBtn.disabled = false;

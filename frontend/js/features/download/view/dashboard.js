@@ -1,7 +1,7 @@
 import { createModuleLogger } from '../../../core/logger.js';
 const dashboardLogger = createModuleLogger('DownloadDashboard');
 
-import { safeSetInnerHTML} from '../../../shared/dom-utils.js';
+import { safeSetInnerHTML } from '../../../shared/dom-utils.js';
 import {
   iconEdit,
   iconEye,
@@ -261,13 +261,14 @@ export function renderRecentDownloads(entries) {
     const time = formatRelativeTime(entry?.completedAt || entry?.finishedAt || entry?.timestamp);
     const images = Array.isArray(entry?.images) ? entry.images : [];
     const primaryImage = images.find((image) => image && (image.url || image.path)) || null;
+    // 优先使用本地路径（已下载的图片），避免CSP阻止外部URL
     const preview = entry?.cover
       || entry?.thumbnail
       || entry?.preview
       || entry?.image
       || entry?.primaryImage
-      || primaryImage?.url
-      || buildLocalUrl(primaryImage?.path);
+      || buildLocalUrl(primaryImage?.path)
+      || primaryImage?.url;
     const thumb = preview
       ? `<img src="${sanitize(preview)}" alt="${title}" referrerpolicy="no-referrer">`
       : '<div class="w-[54px] h-[54px] rounded-xl bg-slate-800 flex items-center justify-center text-slate-400">🖼️</div>';
@@ -392,7 +393,7 @@ export function renderTaskTable(tasks) {
   } else if (taskCount > 150) {
     dashboardLogger.warn(`当前有 ${taskCount} 个任务，建议减少任务数量以获得最佳性能`);
   }
-  
+
   // 渲染任务表格
   enhancedTaskTable.render(tbody, tasks, createRowElement, applyInteractiveEffects);
 }

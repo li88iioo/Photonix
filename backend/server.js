@@ -55,20 +55,20 @@ async function startServer() {
         // 4. 校验关键参数配置
         await validateCriticalConfig();
 
-        // 5. 缩略图一致性自愈检查与后台服务并发启动
-        await Promise.allSettled([
-            resetStuckProcessingTasks().catch((err) => {
-                logger.debug('重置卡死任务失败（降噪）:', err && err.message);
-            }),
-            healThumbnailsIfInconsistent().catch((err) => {
-                logger.debug('缩略图自愈检查异步失败（降噪）:', err && err.message);
-            }),
-            startServices().catch((err) => {
-                logger.debug('后台服务启动流程捕获异常（忽略）:', err && err.message);
-            })
-        ])
+        // 5. 缩略图一致性自愈检查与后台服务启动
+        try {
+            await resetStuckProcessingTasks();
+        } catch (err) {
+            logger.error('重置卡死任务失败（阻断启动）:', err && err.message ? err.message : err);
+            throw err;
+        }
 
-            ;
+        // 自愈失败仅记录告警，允许继续启动
+        healThumbnailsIfInconsistent().catch((err) => {
+            logger.warn('缩略图自愈检查失败（已忽略，启动继续）:', err && err.message ? err.message : err);
+        });
+
+        await startServices();
 
         // 6. 启动 HTTP 服务监听
         app.listen(PORT, () => {

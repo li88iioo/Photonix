@@ -1303,12 +1303,14 @@ export function clearLazyloadQueue(clearCache = true) {
  */
 export function getLazyloadStatus() {
     const status = requestQueueManager.getStatus();
-    console.log('📊 懒加载队列状态:');
-    console.log(`  ⚡ 当前并发数: ${status.activeRequests}/${status.maxConcurrent}`);
-    console.log(`  📋 队列长度: ${status.queueLength}`);
-    console.log(`  ⏱️  平均响应时间: ${status.avgResponseTime}ms`);
-    console.log(`  🔄 滚动方向: ${status.scrollDirection} (速度: ${status.scrollVelocity}px/s)`);
-    console.log(`  ✅ 已加载数量: ${status.loadedCount}`);
+    // 使用结构化日志替代 console.log，避免生产环境污染
+    lazyloadLogger.debug('懒加载队列状态', {
+        并发数: `${status.activeRequests}/${status.maxConcurrent}`,
+        队列长度: status.queueLength,
+        平均响应时间: `${status.avgResponseTime}ms`,
+        滚动方向: `${status.scrollDirection} (速度: ${status.scrollVelocity}px/s)`,
+        已加载数量: status.loadedCount
+    });
     return status;
 }
 

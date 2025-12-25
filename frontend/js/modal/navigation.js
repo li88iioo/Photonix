@@ -8,11 +8,14 @@ const navigationProgress = { showTimer: null };
 const navigationBlur = { overlay: null, hideTimer: null, showTimer: null, resizeHandler: null };
 
 /**
- * 设置导航进度（占位，预留未来扩展）。
- * @function
+ * 设置导航进度（预留接口，当前由 setNavigationBlurProgress 替代）。
+ * @stub 保留此空实现以兼容现有调用点，未来可扩展为独立进度指示器
+ * @param {number} [_value] - 进度值 0-1（当前未使用）
  * @returns {void}
  */
-export function setNavigationProgress() {}
+export function setNavigationProgress(_value) {
+  // 空实现：功能已由 setNavigationBlurProgress 承担
+}
 
 /**
  * 获取媒体面板的度量信息。
@@ -30,7 +33,7 @@ function getMediaPanelMetrics() {
   try {
     const computed = window.getComputedStyle(elements.modalImg);
     borderRadius = computed && computed.borderRadius ? computed.borderRadius : '';
-  } catch {}
+  } catch { }
   return {
     width: imgRect.width,
     height: imgRect.height,
@@ -82,7 +85,7 @@ function positionNavigationBlurOverlay() {
           blur.overlay.style.borderRadius = '';
           blur.overlay.style.clipPath = '';
         }
-      } catch {}
+      } catch { }
     } else {
       blur.overlay.style.borderRadius = '';
       blur.overlay.style.clipPath = '';
@@ -197,7 +200,7 @@ function hideNavigationBlurOverlay(immediate = false) {
   if (blur.resizeHandler) {
     try {
       window.removeEventListener('resize', blur.resizeHandler);
-    } catch {}
+    } catch { }
     blur.resizeHandler = null;
   }
   if (immediate) {
