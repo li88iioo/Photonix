@@ -2,7 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 定义本地 ZCOOL KuaiLe 字体 (TTF格式) */
+/**
+ * 字体定义 - ZCOOL KuaiLe (快乐体)
+ * 使用位置: 全局标题、品牌标识等页面主要文本
+ */
 @font-face {
     font-family: 'ZCOOL KuaiLe';
     src: url('/assets/fonts/ZCOOLKuaiLe-Regular.ttf') format('truetype');
@@ -11,7 +14,567 @@
     font-display: swap;
 }
 
-/* 处理状态栏沉浸安全区域 */
+/**
+ * 主页语义化布局样式
+ */
+.page-body {
+    background-color: #f9fafb;
+    color: #1f2937;
+}
+
+.page-body::selection {
+    background-color: #a855f7;
+    color: #ffffff;
+}
+
+.app-shell {
+    opacity: 0;
+    transition: opacity 500ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.page-inner-shell {
+    margin-left: auto;
+    margin-right: auto;
+    max-width: min(96vw, 1760px);
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+}
+
+@media (min-width: 640px) {
+    .page-inner-shell {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+}
+
+@media (min-width: 768px) {
+    .page-inner-shell {
+        padding-left: 2rem;
+        padding-right: 2rem;
+    }
+}
+
+.topbar-sticky {
+    position: sticky;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 50;
+    transition: transform 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.topbar-bar {
+    margin-left: auto;
+    margin-right: auto;
+    height: 4rem;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background-color: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(229, 231, 235, 0.6);
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+
+.breadcrumb-shell {
+    flex: 1 1 0%;
+    min-width: 0;
+    margin-right: 1rem;
+    overflow: hidden;
+    transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.breadcrumb-nav-ui {
+    display: flex;
+    align-items: center;
+    column-gap: 0.5rem;
+    font-size: 0.875rem;
+    color: #6b7280;
+    white-space: nowrap;
+    overflow-x: auto;
+    font-weight: 500;
+    padding-right: 1.5rem;
+}
+
+.topbar-actions {
+    display: flex;
+    align-items: center;
+    column-gap: 0.25rem;
+    flex-shrink: 0;
+}
+
+@media (min-width: 768px) {
+    .topbar-actions {
+        column-gap: 0.75rem;
+    }
+}
+
+.search-area {
+    position: relative;
+    display: flex;
+    align-items: center;
+    transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 50;
+}
+
+.search-icon {
+    position: absolute;
+    left: 0.75rem;
+    pointer-events: none;
+    color: #9ca3af;
+}
+
+.search-input-field {
+    width: 2.5rem;
+    height: 2.25rem;
+    padding-left: 2.25rem;
+    padding-right: 0.75rem;
+    border-radius: 9999px;
+    background-color: rgba(243, 244, 246, 0.8);
+    border: 1px solid transparent;
+    font-size: 0.875rem;
+    outline: none;
+    transition: all 300ms cubic-bezier(0.4, 0, 0.2, 1);
+    color: inherit;
+    cursor: pointer;
+}
+
+.search-input-field::placeholder {
+    color: transparent;
+}
+
+.search-input-field:hover {
+    background-color: #f3f4f6;
+}
+
+.search-input-field:focus {
+    width: 10rem;
+    background-color: #ffffff;
+    border-color: #d1d5db;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+    cursor: text;
+}
+
+.search-input-field:focus::placeholder {
+    color: #d1d5db;
+}
+
+@media (min-width: 768px) {
+    .search-input-field {
+        width: 10rem;
+    }
+
+    .search-input-field:focus {
+        width: 16rem;
+    }
+
+    .search-input-field::placeholder {
+        color: #9ca3af;
+    }
+}
+
+.search-history-panel {
+    position: fixed;
+    top: 4rem;
+    left: 0;
+    right: 0;
+    margin-left: auto;
+    margin-right: auto;
+    width: 95%;
+    background-color: #ffffff;
+    border: 1px solid #f3f4f6;
+    border-radius: 0.75rem;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+    transform-origin: top;
+    transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 60;
+}
+
+@media (min-width: 768px) {
+    .search-history-panel {
+        position: absolute;
+        top: calc(100% + 0.5rem);
+        left: auto;
+        right: 0;
+        margin: 0;
+        width: 16rem;
+    }
+}
+
+.search-history-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 1rem;
+    font-size: 0.75rem;
+    color: #9ca3af;
+    border-bottom: 1px solid #f9fafb;
+    margin-bottom: 0.25rem;
+}
+
+.search-history-title {
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.search-history-clear {
+    color: inherit;
+    transition: color 150ms ease;
+}
+
+.search-history-clear:hover {
+    color: #ef4444;
+}
+
+.search-history-list {
+    max-height: 15rem;
+    overflow-y: auto;
+}
+
+.search-history-item {
+    padding: 0.5rem 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    transition: background-color 150ms ease;
+}
+
+.search-history-item:hover {
+    background-color: #f9fafb;
+}
+
+.search-history-text {
+    display: flex;
+    align-items: center;
+    column-gap: 0.5rem;
+    font-size: 0.875rem;
+    color: #4b5563;
+    transition: color 150ms ease;
+}
+
+.search-history-item:hover .search-history-text {
+    color: #000000;
+}
+
+.search-history-icon {
+    width: 14px;
+    height: 14px;
+    color: #9ca3af;
+    flex-shrink: 0;
+}
+
+.search-history-remove {
+    background: none;
+    border: none;
+    padding: 0 0.25rem;
+    color: #d1d5db;
+    opacity: 0;
+    transition: color 150ms ease, opacity 150ms ease;
+    cursor: pointer;
+}
+
+.search-history-item:hover .search-history-remove {
+    opacity: 1;
+}
+
+.search-history-remove:hover {
+    color: #ef4444;
+}
+
+.topbar-divider {
+    height: 1rem;
+    width: 1px;
+    background-color: #d1d5db;
+    display: none;
+    margin-left: 0.5rem;
+    margin-right: 0.5rem;
+}
+
+@media (min-width: 768px) {
+    .topbar-divider {
+        display: block;
+    }
+}
+
+.layout-slot {
+    position: relative;
+}
+
+.settings-trigger {
+    padding: 0.5rem;
+    border-radius: 0.5rem;
+    color: #4b5563;
+    background-color: transparent;
+    transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.settings-trigger:hover {
+    color: #000000;
+    background-color: #f3f4f6;
+}
+
+.settings-trigger-icon {
+    transition: transform 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.settings-trigger:hover .settings-trigger-icon {
+    transform: scale(1.1);
+}
+
+.settings-trigger:active .settings-trigger-icon {
+    transform: scale(0.9);
+}
+
+.loader-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.loader-text {
+    margin-left: 1rem;
+    color: #9ca3af;
+}
+
+.auth-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background-color: #111827;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.auth-background {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center;
+    transition: opacity 1000ms cubic-bezier(0.4, 0, 0.2, 1);
+    opacity: 0;
+}
+
+.auth-container {
+    position: relative;
+    z-index: 10;
+}
+
+.modal-root {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+}
+
+.modal-content-shell {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-image,
+.modal-video {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 0.5rem;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+}
+
+.modal-nav-hint {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.modal-toolbar-shell {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+@media (min-width: 640px) {
+    .modal-toolbar-shell {
+        padding: 1rem;
+    }
+}
+
+.toolbar-inner,
+.modal-toolbar-inner {
+    display: flex;
+    align-items: center;
+    column-gap: 0.5rem;
+    padding: 0.5rem;
+    border-radius: 9999px;
+}
+
+@media (min-width: 640px) {
+    .modal-toolbar-inner {
+        column-gap: 1rem;
+    }
+}
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.hidden {
+    display: none !important;
+}
+
+.opacity-0 {
+    opacity: 0 !important;
+}
+
+.opacity-50 {
+    opacity: 0.5 !important;
+}
+
+.opacity-100 {
+    opacity: 1 !important;
+}
+
+.pointer-events-none {
+    pointer-events: none;
+}
+
+.pointer-events-auto {
+    pointer-events: auto;
+}
+
+.absolute {
+    position: absolute;
+}
+
+.relative {
+    position: relative;
+}
+
+.inset-0 {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+}
+
+.right-0 {
+    right: 0;
+}
+
+.flex {
+    display: flex;
+}
+
+.items-center {
+    align-items: center;
+}
+
+.justify-center {
+    justify-content: center;
+}
+
+.bg-black {
+    background-color: #000000;
+}
+
+.bg-white {
+    background-color: #ffffff;
+}
+
+.bg-opacity-30 {
+    --tw-bg-opacity: 0.3;
+}
+
+.bg-black\/30 {
+    background-color: rgba(0, 0, 0, 0.3);
+}
+
+.z-10 {
+    z-index: 10;
+}
+
+.z-50 {
+    z-index: 50;
+}
+
+.mt-2 {
+    margin-top: 0.5rem;
+}
+
+.w-48 {
+    width: 12rem;
+}
+
+.py-2 {
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+}
+
+.origin-top-right {
+    transform-origin: top right;
+}
+
+.scale-95 {
+    transform: scale(0.95);
+}
+
+.scale-100 {
+    transform: scale(1);
+}
+
+.transition-all {
+    transition: all 200ms ease;
+}
+
+.border {
+    border: 1px solid #e5e7eb;
+}
+
+.border-gray-100 {
+    border-color: #f3f4f6;
+}
+
+.rounded-xl {
+    border-radius: 0.75rem;
+}
+
+.shadow-soft-lg {
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+}
+
+/**
+ * 移动端沉浸式适配 - 安全区域
+ * 使用位置: body (全局布局)
+ */
 body {
     padding-top: env(safe-area-inset-top);
     padding-left: env(safe-area-inset-left);
@@ -19,15 +582,23 @@ body {
     padding-bottom: env(safe-area-inset-bottom);
 }
 
-/* 修复抖动 */
+
+/**
+ * 页面溢出与滚动条抖动修复
+ * 使用位置: html (核心布局)
+ */
 html {
     overflow-y: scroll;
     scrollbar-gutter: stable;
-    /* ✅ 移除全局平滑滚动 - 路由切换时造成回弹 */
-    /* scroll-behavior: smooth; */
+
+
 }
 
-/* 确保 SVG 图标和图标按钮不使用 ZCOOL KuaiLe 字体 */
+
+/**
+ * 图标字体重置 - 强制使用系统无衬线字体
+ * 使用位置: 导航栏、搜索框、模态框等所有包含图标的按钮和容器
+ */
 svg,
 svg *,
 .sg-icon-btn--light,
@@ -47,7 +618,11 @@ button svg *,
     font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', 'Noto Sans CJK SC', system-ui, sans-serif !important;
 }
 
-/* 移动端需要原生下拉刷新：默认允许 overscroll；仅桌面端抑制回弹 */
+
+/**
+ * overscroll-behavior 滚动策略
+ * 使用位置: 全局 (桌面端抑制回弹，移动端启用下拉刷新)
+ */
 html,
 body {
     overscroll-behavior-y: auto;
@@ -61,7 +636,11 @@ body {
     }
 }
 
-/* 内容区域避免滚动链式传递 */
+
+/**
+ * 网格容器滚动优化
+ * 使用位置: #content-grid (主照片/视频网格)
+ */
 #content-grid {
     overscroll-behavior: contain;
     overflow-anchor: none;
@@ -82,7 +661,11 @@ body {
     }
 }
 
-/* 在移动端禁用平滑滚动，降低滚动与布局计算叠加引起的抖动 */
+
+/**
+ * 移动端平滑滚动停用 (优化性能与手感)
+ * 使用位置: 移动端 html 元素
+ */
 @media (max-width: 767.98px) {
     html {
         scroll-behavior: auto;
@@ -90,7 +673,12 @@ body {
 }
 
 
-/* 智能加载指示器 */
+
+/**
+ * 智能加载指示器
+ * 使用位置: 动态添加到页面顶部
+ * 相关JS: js/app/router.js (路由加载时显示)
+ */
 .smart-loading {
     position: fixed;
     top: 0;
@@ -134,7 +722,11 @@ body {
 
 
 
-/* 图片加载动画 */
+
+/**
+ * 图片加载时的闪烁覆盖动画
+ * 使用位置: 具有 .image-loading-animation 类的图片容器
+ */
 .image-loading-animation {
     position: relative;
     overflow: hidden;
@@ -148,47 +740,17 @@ body {
     width: 100%;
     height: 100%;
     background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-    animation: image-shimmer 1.5s infinite;
+    animation: shimmer 1.5s infinite;
 }
 
-@keyframes image-shimmer {
-    0% {
-        left: -100%;
-    }
 
-    100% {
-        left: 100%;
-    }
-}
 
-/* 按钮加载状态 */
-.btn-loading {
-    position: relative;
-    overflow: hidden;
-}
 
-.btn-loading::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-    animation: button-shimmer 1s infinite;
-}
-
-@keyframes button-shimmer {
-    0% {
-        left: -100%;
-    }
-
-    100% {
-        left: 100%;
-    }
-}
-
-/* 增强的旋转动画 */
+/**
+ * 增强版双层旋转动画
+ * 使用位置: 动态添加（CSS 定义但前端未直接引用，可能通过服务端渲染）
+ * 特点: 双层反向旋转，紫色+粉色渐变
+ */
 .spinner-enhanced {
     border: 3px solid rgba(255, 255, 255, 0.1);
     border-radius: 50%;
@@ -218,77 +780,20 @@ body {
     }
 }
 
-/* 脉冲加载动画 */
-.pulse-loading {
-    display: inline-block;
-    width: 1rem;
-    height: 1rem;
-    border-radius: 50%;
-    background-color: #6b7280;
-    animation: pulse-loading 1.2s ease-in-out infinite;
-}
-
-@keyframes pulse-loading {
-
-    0%,
-    100% {
-        transform: scale(1);
-        opacity: 1;
-    }
-
-    50% {
-        transform: scale(1.2);
-        opacity: 0.7;
-    }
-}
-
-/* 波浪加载动画 */
-.wave-loading {
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-}
-
-.wave-loading span {
-    width: 0.25rem;
-    height: 1rem;
-    background-color: #6b7280;
-    border-radius: 0.125rem;
-    animation: wave-loading 1.2s ease-in-out infinite;
-}
-
-.wave-loading span:nth-child(2) {
-    animation-delay: 0.1s;
-}
-
-.wave-loading span:nth-child(3) {
-    animation-delay: 0.2s;
-}
-
-.wave-loading span:nth-child(4) {
-    animation-delay: 0.3s;
-}
-
-@keyframes wave-loading {
-
-    0%,
-    100% {
-        transform: scaleY(1);
-    }
-
-    50% {
-        transform: scaleY(2);
-    }
-}
 
 
-/* 平滑滚动容器 */
+
+
+/**
+ * 平滑滚动容器
+ * 使用位置: 具有 .smooth-scroll-container 类的容器
+ */
 .smooth-scroll-container {
     scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;
 }
 
-/* 滚动条美化 */
+
 .smooth-scroll-container::-webkit-scrollbar {
     width: 8px;
 }
@@ -308,7 +813,11 @@ body {
     background: linear-gradient(180deg, #7C3AED, #DB2777);
 }
 
-/* 滚动指示器 */
+
+/**
+ * 页面进度滚动指示器
+ * 使用位置: .scroll-indicator (通常由 JS 动态添加)
+ */
 .scroll-indicator {
     position: fixed;
     top: 0;
@@ -326,7 +835,11 @@ body {
     transition: width 0.1s ease;
 }
 
-/* 页面滚动动画 */
+
+/**
+ * 页面滚动时的微调动画 (如视差或偏移)
+ * 使用位置: .page-scroll-animation (通常由 JS 控制类名切换)
+ */
 .page-scroll-animation {
     transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -336,7 +849,11 @@ body {
     opacity: 0.8;
 }
 
-/* 内容淡入动画 */
+
+/**
+ * 内容淡入动画
+ * 使用位置: 任何需要加载时滑入淡出的组件 (.content-fade-in)
+ */
 .content-fade-in {
     opacity: 0;
     transform: translateY(20px);
@@ -350,7 +867,11 @@ body {
     }
 }
 
-/* 交错动画 */
+
+/**
+ * 子元素交错淡入动画
+ * 使用位置: .stagger-animation (容器类，作用于直接子元素)
+ */
 .stagger-animation>* {
     opacity: 0;
     transform: translateY(20px);
@@ -384,9 +905,13 @@ body {
     }
 }
 
-/* === 额外的动画效果 === */
 
-/* 弹跳动画 */
+
+
+/**
+ * 弹跳进入动画
+ * 使用位置: 交互反馈或增强弹窗显现 (.bounce-in)
+ */
 .bounce-in {
     animation: bounce-in 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55);
 }
@@ -412,7 +937,11 @@ body {
     }
 }
 
-/* 滑动动画 */
+
+/**
+ * 滑动进入动画 (左/右/上)
+ * 使用位置: 页面切换或元素显现 (.slide-in-left, .slide-in-right, .slide-in-up)
+ */
 .slide-in-left {
     animation: slide-in-left 0.5s ease-out;
 }
@@ -461,7 +990,11 @@ body {
     }
 }
 
-/* 缩放动画 */
+
+/**
+ * 缩放进入动画
+ * 使用位置: 按钮或小部件显现 (.scale-in)
+ */
 .scale-in {
     animation: scale-in 0.3s ease-out;
 }
@@ -478,7 +1011,11 @@ body {
     }
 }
 
-/* 旋转动画 */
+
+/**
+ * 旋转进入动画
+ * 使用位置: 图标或指示器显现 (.rotate-in)
+ */
 .rotate-in {
     animation: rotate-in 0.6s ease-out;
 }
@@ -495,7 +1032,11 @@ body {
     }
 }
 
-/* 闪烁动画 */
+
+/**
+ * 闪烁提示动画
+ * 使用位置: 状态提醒或高亮项 (.blink)
+ */
 .blink {
     animation: blink 1s infinite;
 }
@@ -513,7 +1054,11 @@ body {
     }
 }
 
-/* 呼吸动画 */
+
+/**
+ * 呼吸感微动动画
+ * 使用位置: 特别强调的按钮或徽章 (.breathing)
+ */
 .breathing {
     animation: breathing 2s ease-in-out infinite;
 }
@@ -530,7 +1075,11 @@ body {
     }
 }
 
-/* 渐变背景动画 */
+
+/**
+ * 动态渐变背景
+ * 使用位置: 高亮面板或背景横幅 (.gradient-bg)
+ */
 .gradient-bg {
     background: linear-gradient(-45deg, #8B5CF6, #EC4899, #F59E0B, #10B981);
     background-size: 400% 400%;
@@ -551,14 +1100,28 @@ body {
     }
 }
 
+/**
+ * 默认基础字体设置
+ * 使用位置: 全局 body
+ */
 body {
     font-family: 'Noto Sans SC', sans-serif;
 }
 
+/**
+ * 瀑布流布局模式
+ * 使用位置: #content-grid (主照片/视频网格容器)
+ * 交互: 由 js/features/gallery/masonry.js 动态计算位置
+ */
 #content-grid.masonry-mode {
     position: relative;
 }
 
+/**
+ * 网格布局模式 (CSS Grid)
+ * 使用位置: #content-grid (主照片/视频网格容器)
+ * 交互: 由 js/features/gallery/ui.js 控制切换
+ */
 #content-grid.grid-mode {
     position: relative !important;
     display: grid !important;
@@ -577,7 +1140,12 @@ body {
     transform: none !important;
 }
 
-/* 统一网格卡片纵横比，消除行高参差导致的大面积空白 */
+
+/**
+ * 统一网格卡片纵横比
+ * 使用位置: #content-grid.grid-mode .grid-item .relative
+ * 目的: 消除行高参差导致的大面积空白
+ */
 #content-grid.grid-mode .grid-item .relative {
     aspect-ratio: var(--grid-aspect, 3/4) !important;
 }
@@ -587,7 +1155,12 @@ body {
     object-fit: cover;
 }
 
-/* 移动端：网格一行两个 */
+
+/**
+ * 移动端网格优化
+ * 使用位置: #content-grid.grid-mode (@media < 768px)
+ * 布局: 一行显示两列
+ */
 @media (max-width: 767.98px) {
     #content-grid.grid-mode {
         grid-template-columns: repeat(2, 1fr) !important;
@@ -595,7 +1168,7 @@ body {
     }
 }
 
-/* 面包屑导航遮罩效果 (demo.html风格) */
+
 .mask-linear-fade {
     mask-image: linear-gradient(to right, black 85%, transparent 100%);
     -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
@@ -617,15 +1190,31 @@ body {
     contain-intrinsic-size: 300px 400px;
 }
 
+
+/**
+ * 模态框主容器
+ * 使用位置:
+ *   - index.html (图片/视频查看器)
+ *   - js/app/modal.js (打开/关闭控制)
+ *   - js/modal/* (各种模态框功能)
+ */
 #modal {
     z-index: 9999;
-    /* 确保模态框在最顶层，高于topbar(1000)和下载页(1500) */
+
     transition: opacity 0.3s ease;
     background-color: rgba(17, 24, 39, 0.7);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
 }
 
+
+/**
+ * 基础 Spinner 加载动画
+ * 使用位置:
+ *   - index.html (多处加载占位)
+ *   - js/settings/form.js (设置保存时)
+ *   - js/settings/index.js (设置加载时)
+ */
 .spinner {
     border: 4px solid rgba(255, 255, 255, 0.3);
     border-radius: 50%;
@@ -636,41 +1225,23 @@ body {
     position: relative;
 }
 
-.spinner-enhanced {
-    border: 3px solid rgba(255, 255, 255, 0.1);
-    border-radius: 50%;
-    border-top-color: #8B5CF6;
-    width: 2rem;
-    height: 2rem;
-    animation: spin-enhanced 1s linear infinite;
-    position: relative;
-}
-
-.spinner-enhanced::after {
-    content: '';
-    position: absolute;
-    top: -2px;
-    left: -2px;
-    right: -2px;
-    bottom: -2px;
-    border: 2px solid transparent;
-    border-radius: 50%;
-    border-top-color: #EC4899;
-    animation: spin-enhanced 0.8s linear infinite reverse;
-}
-
 @keyframes spin {
     to {
         transform: rotate(360deg);
     }
 }
 
-@keyframes spin-enhanced {
-    to {
-        transform: rotate(360deg);
-    }
-}
 
+
+/**
+ * 相册/文件夹卡片
+ * 使用位置:
+ *   - js/app/router/browse.js (渲染文件夹列表)
+ *   - index.html (相册网格)
+ * 交互:
+ *   - hover: 图片放大 1.05x
+ *   - 包含封面图和相册信息
+ */
 .album-card img {
     transition: transform 0.3s ease-in-out;
 }
@@ -679,11 +1250,29 @@ body {
     transform: scale(1.05);
 }
 
+
+/**
+ * 照片/视频卡片容器
+ * 使用位置:
+ *   - index.html (照片网格)
+ *   - js/features/gallery/masonry.js (Masonry 布局计算)
+ *   - js/app/router/browse.js (动态渲染照片项)
+ * 交互:
+ *   - hover: 内部容器轻微放大 (scale 1.02)
+ *   - 包含子元素: .lazy-image, .image-placeholder, .video-thumbnail-overlay
+ * 状态类:
+ *   - .is-loading: 加载中显示进度
+ *   - .thumbnail-generating: 缩略图生成中
+ */
 .photo-item {
     transition: all 0.3s ease-in-out;
 }
 
-/* 避免外层缩放导致圆角裁剪失效，仅缩放内部容器 */
+/**
+ * 照片项悬停缩放效果
+ * 使用位置: .photo-item (网格中的单张照片/视频容器)
+ * 目的: 增强交互反馈，仅缩放内容不破坏圆角
+ */
 .photo-item:hover {
     transform: none;
 }
@@ -702,7 +1291,13 @@ body {
     }
 }
 
-/* === 新增：模态框样式 === */
+
+/**
+ * 模态框背景与毛玻璃
+ * 使用位置:
+ *   - index.html (模态框底层背景)
+ *   - js/modal/navigation.js (背景图片动态切换)
+ */
 .modal-backdrop {
     position: fixed;
     top: -40px;
@@ -719,13 +1314,18 @@ body {
 
 .active-backdrop {
     opacity: 1;
-    /* 这个类将用于显示当前激活的背景 */
+
 }
 
 #media-panel {
     position: relative;
 }
 
+/**
+ * 模态框切图模糊层
+ * 使用位置: .modal-blur-overlay (JS 动态添加到 #media-panel)
+ * 场景: 在模态框内切换上一张/下一张照片时的过渡效果
+ */
 .modal-blur-overlay {
     position: absolute;
     inset: 0;
@@ -802,7 +1402,11 @@ body {
 }
 
 
-/* === AI 模型选择下拉面板 === */
+
+/**
+ * AI 模型选择下拉面板 - 基础容器与文本框
+ * 使用位置: index.html (设置面板 -> AI 选项卡)
+ */
 .ai-model-field {
     position: relative;
 }
@@ -815,6 +1419,10 @@ body {
     padding-right: 2.75rem;
 }
 
+/**
+ * AI 模型下拉触发按钮
+ * 使用位置: .ai-model-combobox 内部
+ */
 .ai-model-dropdown-toggle {
     position: absolute;
     top: 50%;
@@ -841,6 +1449,10 @@ body {
     outline: 2px solid var(--primary-color, #2563eb);
 }
 
+/**
+ * AI 模型下拉列表容器
+ * 使用位置: .ai-model-field 动态展示
+ */
 .ai-model-dropdown {
     position: absolute;
     top: calc(100% + 6px);
@@ -977,6 +1589,10 @@ body {
     background: var(--gray-50);
 }
 
+/**
+ * AI 额度设置区域
+ * 使用位置: index.html (设置面板 -> AI 选项卡)
+ */
 .ai-quota-field {
     display: flex;
     flex-direction: column;
@@ -1006,6 +1622,9 @@ body {
     box-shadow: none;
 }
 
+/**
+ * AI 额度保存按钮
+ */
 .ai-quota-save-btn {
     border: none;
     background: rgba(226, 232, 240, 0.9);
@@ -1028,12 +1647,19 @@ body {
     opacity: 0.6;
 }
 
+/**
+ * AI 额度相关提示文本
+ */
 .ai-quota-hint {
     font-size: 0.8rem;
     color: #94a3b8;
     line-height: 1.4;
 }
 
+/**
+ * AI 对话历史工具栏 (清理/搜索历史等)
+ * 使用位置: index.html (设置面板 -> AI 选项卡)
+ */
 .ai-history-tools {
     display: flex;
     flex-direction: column;
@@ -1062,6 +1688,9 @@ body {
     flex-wrap: wrap;
 }
 
+/**
+ * AI 历史操作按钮
+ */
 .ai-history-btn {
     border: none;
     border-radius: 999px;
@@ -1088,7 +1717,14 @@ body {
     background: #1f2937;
 }
 
-/* === AI 对话面板 === */
+
+/**
+ * AI 对话面板
+ * 使用位置:
+ *   - index.html (AI 功能容器)
+ *   - js/features/ai/* (AI 对话相关功能)
+ *   - state: body.ai-chat-visible (显示状态)
+ */
 .ai-chat-panel-inner {
     display: flex;
     flex-direction: column;
@@ -1122,7 +1758,7 @@ body {
     margin: 2px 0 0;
 }
 
-/* 移动端隐藏 AI 聊天标题以扩展聊天区域 */
+
 @media (max-width: 767.98px) {
     .ai-chat-panel-header {
         display: none;
@@ -1161,6 +1797,10 @@ body {
     background: rgba(248, 250, 252, 0.25);
 }
 
+/**
+ * AI 对话历史记录滚动区域
+ * 使用位置: .ai-chat-panel-inner 内部
+ */
 .ai-chat-history {
     flex: 1;
     padding: 0 10px 8px;
@@ -1198,6 +1838,10 @@ body {
     margin-top: 8px;
 }
 
+/**
+ * AI 对话消息气泡容器
+ * 使用位置: .ai-chat-history 内部各条消息
+ */
 .ai-chat-message {
     display: flex;
     flex-direction: column;
@@ -1236,6 +1880,10 @@ body {
     -webkit-backdrop-filter: blur(1px);
 }
 
+/**
+ * AI 对话状态提示 (正在输入/成功/失败)
+ * 使用位置: .ai-chat-history 底部或消息下方
+ */
 .ai-chat-status {
     min-height: 18px;
     padding: 0 10px;
@@ -1251,14 +1899,18 @@ body {
     color: #6ee7b7;
 }
 
-/* 失败消息样式 */
+
+/**
+ * AI 消息发送失败样式与重试按钮
+ * 使用位置: .ai-chat-message.failed 状态
+ */
 .ai-chat-message.failed .ai-chat-bubble {
     opacity: 0.7;
     border: 1px dashed rgba(255, 100, 100, 0.4);
     background: rgba(255, 100, 100, 0.08);
 }
 
-/* 重试按钮 - 匹配项目风格 */
+
 .message-action {
     display: inline-flex;
     align-items: center;
@@ -1318,7 +1970,7 @@ body {
     }
 }
 
-/* 发送中状态 */
+
 .message-status.sending {
     display: inline-block;
     margin-top: 4px;
@@ -1328,6 +1980,10 @@ body {
 }
 
 
+/**
+ * AI 对话输入表单区域
+ * 使用位置: .ai-chat-panel-inner 底部
+ */
 .ai-chat-form {
     padding: 8px 10px 12px;
     display: flex;
@@ -1418,7 +2074,12 @@ body {
     transform: translateY(-1px);
 }
 
-/* === 新增：导航提示动画 === */
+
+/**
+ * 页面操作导航引导指示器
+ * 使用位置: index.html (全局浮层)
+ * 相关 JS: js/modules/navigation-hint.js
+ */
 #navigation-hint {
     opacity: 0;
     transition: opacity 0.5s ease;
@@ -1429,7 +2090,12 @@ body {
     animation: showAndFade 4s ease-in-out forwards;
 }
 
-/* === 首页快捷键提示 === */
+
+/**
+ * 首页/网格页面快捷键提示面板
+ * 使用位置: index.html (右下角提示)
+ * 相关 JS: js/modules/shortcuts.js
+ */
 .gallery-shortcuts-hint {
     position: fixed;
     bottom: 2rem;
@@ -1528,13 +2194,17 @@ body {
     }
 }
 
-/* 移动端隐藏快捷键提示 */
+
 @media (max-width: 767.98px) {
     .gallery-shortcuts-hint {
         display: none;
     }
 }
 
+/**
+ * 快捷键提示内容容器
+ * 使用位置: .gallery-shortcuts-hint 内部
+ */
 .hint-content {
     display: flex;
     flex-direction: column;
@@ -1553,6 +2223,10 @@ body {
     align-items: center;
 }
 
+/**
+ * 鼠标图标 (用于滚动提示)
+ * 使用位置: .hint-icon 内部
+ */
 .mouse-icon {
     width: 24px;
     height: 40px;
@@ -1561,6 +2235,10 @@ body {
     position: relative;
 }
 
+/**
+ * 鼠标滚轮动画
+ * 使用位置: .mouse-icon 内部
+ */
 .scroll-wheel {
     width: 4px;
     height: 8px;
@@ -1573,6 +2251,10 @@ body {
     animation: scroll-animation 2s infinite;
 }
 
+/**
+ * 键盘按键图标定义
+ * 使用位置: .hint-icon 内部 (左右方向键提示)
+ */
 .keyboard-icon {
     display: flex;
     gap: 0.5rem;
@@ -1609,6 +2291,10 @@ body {
     animation: key-press-right 2s infinite;
 }
 
+/**
+ * 提示文本样式
+ * 使用位置: .hint-content 内部
+ */
 .hint-text {
     color: white;
     font-size: 0.9rem;
@@ -1682,6 +2368,12 @@ body {
     }
 }
 
+
+/**
+ * 图片懒加载效果
+ * 使用位置: 所有 .photo-item img, .album-card img
+ * 相关 JS: js/modules/lazy-load.js
+ */
 .lazy-image {
     image-rendering: -webkit-optimize-contrast;
     image-rendering: crisp-edges;
@@ -1699,14 +2391,14 @@ body {
 .lazy-image.processing {
     object-fit: contain !important;
     z-index: 2;
-    /* 更优雅的视觉效果，与项目紫色主题协调 */
+
     filter:
         brightness(1.05) contrast(0.95) saturate(1.1) sepia(0.1) hue-rotate(5deg);
     transform: scale(0.99);
     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-    /* 更平滑的脉动效果 */
+
     animation: processing-pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-    /* 添加微妙的边框发光效果 */
+
     box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.3);
 }
 
@@ -1728,7 +2420,11 @@ body {
     }
 }
 
-/* Processing indicator styles - 简洁优雅的设计 */
+
+/**
+ * 处理中状态指示器 (AI 处理、转码等)
+ * 使用位置: 卡片组件内部绝对定位
+ */
 .processing-indicator {
     position: absolute;
     top: 50%;
@@ -1738,7 +2434,7 @@ body {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    /* 去掉背景，让其与卡片灰色背景融合 */
+
     background: transparent;
     color: white;
     padding: 16px 24px;
@@ -1746,7 +2442,7 @@ body {
     font-size: 12px;
     font-weight: 400;
     z-index: 15;
-    /* 完全透明，无任何阴影 */
+
     animation: indicator-fade-in 0.3s ease-out;
 }
 
@@ -1771,6 +2467,10 @@ body {
     height: 20px;
 }
 
+/**
+ * 处理中动画的小白点
+ * 使用位置: .processing-spinner 内部
+ */
 .processing-dots {
     display: flex;
     align-items: center;
@@ -1781,9 +2481,9 @@ body {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    /* 紫色渐变背景 */
+
     background: linear-gradient(135deg, #8B5CF6, #EC4899);
-    /* 添加微妙的阴影 */
+
     box-shadow: 0 1px 3px rgba(139, 92, 246, 0.3);
     animation: processing-bounce 1.4s ease-in-out infinite;
 }
@@ -1818,12 +2518,12 @@ body {
     white-space: nowrap;
     font-weight: 500;
     letter-spacing: 0.025em;
-    /* 简洁文字，无阴影 */
-    /* 使用更现代的字体栈 */
+
+
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
-/* 移动端适配 */
+
 @media (max-width: 767.98px) {
     .processing-indicator {
         padding: 12px 16px;
@@ -1842,14 +2542,14 @@ body {
     }
 }
 
-/* 暗色模式适配（如果项目支持） */
+
 @media (prefers-color-scheme: dark) {
     .processing-indicator {
         background: linear-gradient(135deg, rgba(139, 92, 246, 0.95), rgba(236, 72, 153, 0.95));
     }
 }
 
-/* 高对比度模式支持 */
+
 @media (prefers-contrast: high) {
     .processing-indicator {
         background: linear-gradient(135deg, #8B5CF6, #EC4899);
@@ -1864,17 +2564,22 @@ body {
 
 .lazy-image.error {
     opacity: 1;
-    /* 确保错误SVG可见 */
+
     z-index: 3;
-    /* 确保在占位符之上 */
+
     object-fit: contain;
-    /* 适应SVG尺寸 */
+
 }
 
+
+/**
+ * 图片占位符 (加载中或加载失败时显示)
+ * 使用位置: .photo-item, .album-card 内部
+ */
 .image-placeholder {
     position: absolute;
     inset: 0;
-    /* ✅ 改为全透明 */
+
     background: transparent;
     display: flex;
     align-items: center;
@@ -1904,47 +2609,17 @@ a.thumbnail-generating .image-placeholder {
     background: #374151;
 }
 
-.search-container {
-    position: relative;
-    max-width: 400px;
-    margin: 0 auto;
-}
-
-.search-input {
-    width: 100%;
-    padding: 0.75rem 1rem 0.75rem 2.5rem;
-    background: rgba(55, 65, 81, 0.8);
-    border: 1px solid rgba(156, 163, 175, 0.3);
-    border-radius: 0.5rem;
-    color: white;
-    font-size: 0.875rem;
-}
-
-.search-input:focus {
-    outline: none;
-    border-color: #8B5CF6;
-    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
-}
-
-.search-input::placeholder {
-    color: #9CA3AF;
-}
-
-.search-icon {
-    position: absolute;
-    left: 0.75rem;
-    top: 50%;
-    transform: translateY(-50%);
-    color: #9CA3AF;
-    pointer-events: none;
-}
-
 .blurred {
     filter: blur(12px) !important;
     transition: filter 0.3s;
 }
 
-/* === 动态沉浸式顶栏 === */
+
+/**
+ * 顶部导航栏容器
+ * 使用位置: 所有页面顶部
+ * 交互状态: .topbar--hidden (隐藏), .topbar--condensed (浓缩)
+ */
 .topbar {
     position: sticky;
     top: 0;
@@ -1965,7 +2640,7 @@ a.thumbnail-generating .image-placeholder {
     transform: translateY(-100%);
 }
 
-/* 打开模态框、设置页或下载页时始终隐藏顶栏，避免遮挡 */
+
 html.modal-open .topbar,
 body.modal-open .topbar,
 body.settings-open .topbar,
@@ -1975,7 +2650,7 @@ body.download-page-active .topbar {
     pointer-events: none;
 }
 
-/* 滚动收起时：降低不透明度与阴影，避免与背景产生突兀对比 */
+
 .topbar.topbar--condensed {
     --sg-surface-bg: rgba(17, 24, 39, 0.36);
     --sg-surface-bg-strong: rgba(17, 24, 39, 0.44);
@@ -1983,29 +2658,29 @@ body.download-page-active .topbar {
     --sg-surface-shadow: 0 8px 20px rgba(0, 0, 0, 0.22);
 }
 
-/* 为 gallery-view 添加顶部间距，与 topbar 分开 */
+
 #gallery-view {
     margin-top: 1rem;
-    /* 16px - topbar 下方间距 */
+
 }
 
 .with-fixed-topbar #page-inner {
     padding-bottom: 0.5rem;
-    /* 8px */
+
 }
 
-/* 响应式底部间距 */
+
 @media (min-width: 640px) {
     .with-fixed-topbar #page-inner {
         padding-bottom: 1rem;
-        /* 16px */
+
     }
 }
 
 @media (min-width: 768px) {
     .with-fixed-topbar #page-inner {
         padding-bottom: 2rem;
-        /* 32px */
+
     }
 }
 
@@ -2013,14 +2688,14 @@ body.download-page-active .topbar {
     width: 100%;
     margin: 0 auto;
     padding: 0.5rem 0.5rem;
-    /* 与 .container 的 p-2 对齐 */
+
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
 }
 
-/* 响应式 padding，与 page-inner 保持一致 */
+
 
 @media (min-width: 640px) {
     .topbar {
@@ -2058,7 +2733,11 @@ body.download-page-active .topbar {
     gap: 0.5rem;
 }
 
-/* 统一的 icon 按钮样式 */
+
+/**
+ * 标准设计系统图标按钮 (带背景和阴影)
+ * 使用位置: 顶部栏右侧操作按钮
+ */
 .sg-icon-btn {
     display: inline-flex;
     align-items: center;
@@ -2085,13 +2764,17 @@ body.download-page-active .topbar {
     filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
 }
 
-/* 焦点可访问态 */
+
 .sg-icon-btn:focus-visible {
     outline: none;
     box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35), var(--sg-surface-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
-/* 设置按钮：圆形，尺寸与搜索框高度一致（42px），图标居中 */
+
+/**
+ * 轻量级圆润图标按钮 (悬浮球样式)
+ * 使用位置: 移动端搜索返回、悬浮操作等
+ */
 .sg-icon-btn--light {
     display: inline-flex;
     align-items: center;
@@ -2120,28 +2803,28 @@ body.download-page-active .topbar {
     box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35), var(--sg-surface-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
-/* 移动端：默认隐藏内嵌搜索框，仅显示搜索图标；开启时下推一个悬浮搜索框 */
+
 @media (max-width: 639.98px) {
 
-    /* 移动端：默认隐藏输入框，显示右侧搜索图标；打开后全屏覆盖顶栏 */
-    .topbar .topbar-right .search-container {
+
+    .topbar .topbar-right .search-area {
         display: none;
         flex: 1 1 auto;
     }
 
-    .topbar.topbar--search-open .topbar-right .search-container {
+    .topbar.topbar--search-open .topbar-right .search-area {
         display: block;
         position: fixed;
         top: 0;
         left: max(0px, env(safe-area-inset-left));
         right: max(0px, env(safe-area-inset-right));
         height: 56px;
-        /* 覆盖顶栏高度 */
+
         padding: 8px 48px;
-        /* 为左右图标预留空间 */
+
         z-index: 60;
         background: rgba(17, 24, 39, 0.85);
-        /* 与顶栏一致 */
+
         backdrop-filter: blur(14px);
         -webkit-backdrop-filter: blur(14px);
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
@@ -2149,12 +2832,12 @@ body.download-page-active .topbar {
         border-radius: 0;
     }
 
-    .topbar.topbar--search-open .topbar-right .search-container .search-field {
+    .topbar.topbar--search-open .topbar-right .search-area .search-field {
         position: relative;
         height: 40px;
     }
 
-    .topbar.topbar--search-open .topbar-right .search-container .search-field .search-input {
+    .topbar.topbar--search-open .topbar-right .search-area .search-field .search-input {
         width: 100%;
         height: 100%;
         background: var(--sg-surface-bg-strong);
@@ -2165,7 +2848,7 @@ body.download-page-active .topbar {
         border-radius: 9999px;
     }
 
-    .topbar.topbar--search-open .topbar-right .search-container .search-field .search-submit-btn {
+    .topbar.topbar--search-open .topbar-right .search-area .search-field .search-submit-btn {
         position: absolute;
         right: 8px;
         top: 50%;
@@ -2191,8 +2874,7 @@ body.download-page-active .topbar {
         color: #e5e7eb;
     }
 
-    /* 新方案：在移动端直接用顶栏行内替换内容（非悬浮）。
-     添加类 .topbar--inline-search 时，仅显示返回+搜索输入，填满整行，无左右留白。 */
+
     .topbar.topbar--inline-search .topbar-left {
         display: none;
     }
@@ -2209,7 +2891,7 @@ body.download-page-active .topbar {
         width: 100%;
     }
 
-    .topbar.topbar--inline-search .topbar-right .search-container {
+    .topbar.topbar--inline-search .topbar-right .search-area {
         display: flex;
         align-items: center;
         width: 100%;
@@ -2233,7 +2915,7 @@ body.download-page-active .topbar {
         background: transparent;
         border: 0;
         transform: translateY(0);
-        /* 防止继承覆盖态的 translate */
+
     }
 
     .topbar.topbar--inline-search .search-field {
@@ -2271,92 +2953,11 @@ body.download-page-active .topbar {
     }
 }
 
-/* 统一的输入胶囊：与排序按钮阴影协调 */
-.search-input {
-    background: var(--sg-surface-bg);
-    border: 1px solid var(--sg-surface-border);
-    box-shadow: var(--sg-surface-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.04);
-    padding-left: 0.75rem;
-    padding-right: 3.25rem;
-    /* 右侧放大镜按钮空间 */
-    height: 42px;
-    border-radius: 9999px;
-}
 
-/* 保证按钮在输入容器内部定位 */
-.search-field {
-    position: relative;
-}
-
-.search-field .search-input {
-    width: 100%;
-}
-
-.search-field .search-submit-btn {
-    position: absolute;
-    right: 3px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 44px;
-    height: calc(100% - 6px);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-top-right-radius: 9999px;
-    border-bottom-right-radius: 9999px;
-    border-left: 1px solid var(--sg-surface-border);
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
-    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-    z-index: 1;
-}
-
-.search-submit-btn {
-    transition: background .2s ease, color .2s ease;
-}
-
-.search-submit-btn:hover {
-    background: rgba(255, 255, 255, 0.06);
-    color: #fff;
-}
-
-.search-submit-btn:active {
-    transform: translateY(-50%);
-    background: rgba(255, 255, 255, 0.08);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-}
-
-/* 移动端覆盖态：左侧返回按钮 */
-.search-back-btn {
-    position: absolute;
-    left: 8px;
-    top: 2px;
-    height: 38px;
-    width: 38px;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    border-radius: 9999px;
-    color: #e5e7eb;
-}
-
-.topbar.topbar--search-open .search-back-btn {
-    display: inline-flex !important;
-}
-
-.topbar.topbar--search-open .search-input {
-    padding-left: 0.75rem;
-}
-
-.search-input:focus {
-    border-color: rgba(167, 139, 250, 0.8);
-    box-shadow: 0 12px 34px rgba(139, 92, 246, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-}
-
-.search-icon {
-    color: #9CA3AF;
-}
-
-/* 排序按钮与面板统一风格 */
+/**
+ * 排序切换按钮
+ * 使用位置: .topbar-right -> #sort-container 内部
+ */
 #sort-button {
     background: var(--sg-surface-bg-strong);
     border: 1px solid var(--sg-surface-border);
@@ -2368,6 +2969,10 @@ body.download-page-active .topbar {
     box-shadow: 0 12px 34px rgba(139, 92, 246, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
+/**
+ * 排序选项下拉面板
+ * 使用位置: #sort-container 底部弹出
+ */
 #sort-dropdown {
     background: var(--sg-surface-bg-strong);
     border: 1px solid var(--sg-surface-border);
@@ -2382,7 +2987,7 @@ body.download-page-active .topbar {
     background: rgba(75, 85, 99, 0.65) !important;
 }
 
-/* Topbar按钮防抖动 - 固定尺寸避免hover时布局抖动 */
+
 #layout-toggle-btn,
 #sort-btn,
 #settings-btn {
@@ -2392,7 +2997,7 @@ body.download-page-active .topbar {
     border-radius: 9999px !important;
 }
 
-/* 移动端搜索框focus时隐藏面包屑(用opacity避免布局抖动) */
+
 @media (max-width: 767.98px) {
     .topbar-inner:has(#search-input:focus) #breadcrumb-container {
         opacity: 0;
@@ -2400,7 +3005,11 @@ body.download-page-active .topbar {
     }
 }
 
-/* 顶部容器:按钮对齐并留出间距 */
+
+/**
+ * 排序控制器容器
+ * 使用位置: .topbar-right 内部
+ */
 #sort-container {
     display: flex;
     align-items: center;
@@ -2408,9 +3017,9 @@ body.download-page-active .topbar {
     transition: all 0.2s ease-out;
 }
 
-/* 布局切换按钮容器动画 */
+
 #layout-toggle-wrap {
-    /* 初始状态：隐藏 */
+
     opacity: 0;
     transform: translateX(-8px);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -2418,12 +3027,12 @@ body.download-page-active .topbar {
 }
 
 #layout-toggle-wrap.visible {
-    /* 显示状态：可见 */
+
     opacity: 1;
     transform: translateX(0);
 }
 
-/* 分割线 */
+
 .layout-divider {
     width: 1px;
     height: 28px;
@@ -2431,16 +3040,16 @@ body.download-page-active .topbar {
     border-radius: 1px;
 }
 
-/* 顶栏上下文层(面包屑 + 排序),随topbar整体移动 */
+
 .topbar-context {
     width: 100%;
     margin: 0 auto;
     padding: 0 0.5rem 0.5rem 0.5rem;
-    /* ✅ 移除单独的过渡，让它跟随topbar整体移动 */
-    /* transition: height 0.25s ease, opacity 0.25s ease, padding 0.25s ease; */
+
+
 }
 
-/* 与 Tailwind container 的断点保持一致，确保上下文区域与内容区域左右对齐 */
+
 @media (min-width: 0px) {
     .topbar-context {
         max-width: min(96vw, 1760px);
@@ -2461,14 +3070,22 @@ body.download-page-active .topbar {
     }
 }
 
-/* ✅ 移除单独的height/opacity动画，让整个topbar作为整体移动 */
-/* .topbar.topbar--condensed .topbar-context { height: 0; opacity: 0; padding-bottom: 0; overflow: hidden; } */
 
-/* === 覆盖：固定左右边距为 5px，容器不再受 max-width 限制（满足 4K 下不留巨大左右空白） === */
+
+
+
+/**
+ * 全局外边距变量定义
+ * 使用位置: 根级配置
+ */
 :root {
     --page-side-gap: clamp(10px, 2.5vw, 30px);
 }
 
+/**
+ * 全局内容宽度与边距对齐
+ * 使用位置: 首页、分类页、设置页的主要包裹容器
+ */
 #page-inner,
 .topbar-inner,
 .topbar-context {
@@ -2480,7 +3097,7 @@ body.download-page-active .topbar {
     padding-right: var(--page-side-gap) !important;
 }
 
-/* === 全局兜底和修复 === */
+
 img:focus,
 .photo-item:focus,
 .album-card:focus,
@@ -2488,11 +3105,11 @@ img:focus,
     outline: none !important;
 }
 
-/* ===== 交互式信息环样式 ===== */
 
-/* === 现代化系统状态页面样式 === */
 
-/* 状态卡片渐变背景 */
+
+
+
 .status-card-success {
     background: linear-gradient(135deg, rgba(34, 197, 94, 0.1), rgba(34, 197, 94, 0.05));
     border-color: rgba(34, 197, 94, 0.2);
@@ -2519,12 +3136,12 @@ img:focus,
     -webkit-user-select: none;
 }
 
-/* === 解决移动端滚动穿透问题 === */
+
 body.modal-open {
     overflow: hidden;
 }
 
-/* === 解决PC端滚动条穿透问题 === */
+
 html.modal-open {
     overflow: hidden;
 }
@@ -2532,21 +3149,25 @@ html.modal-open {
 
 
 
+/**
+ * 相册卡片高亮选中效果
+ * 使用位置: js 操作选中相册时
+ */
 .highlight-album {
     box-shadow: 0 0 0 4px rgba(168, 85, 247, 0.8), 0 0 15px rgba(168, 85, 247, 0.6);
-    /* 紫色光晕效果 */
+
     transition: box-shadow 0.3s ease-in-out;
 }
 
-/* 确保图片容器是相对定位 */
+
 .photo-item,
 .album-card>a>div:first-child {
     position: relative;
 }
 
-/* ===== 第二套懒加载系统：带进度指示器的详细加载 ===== */
 
-/* 占位符样式 - 简单版本，用于进度显示场景 */
+
+
 .image-placeholder-detailed {
     position: absolute;
     top: 0;
@@ -2557,16 +3178,16 @@ html.modal-open {
     align-items: center;
     justify-content: center;
     background-color: #374151;
-    /* bg-gray-700 */
+
     border-radius: 0.5rem;
-    /* rounded-lg */
+
     z-index: 1;
-    /* 确保在图片下方 */
+
 }
 
-/* 图片加载成功后的过渡效果 - 已由统一的动画系统处理 */
 
-/* --- Thumbnail Loading Progress Indicator --- */
+
+
 .loading-overlay {
     position: absolute;
     inset: 0;
@@ -2603,32 +3224,36 @@ html.modal-open {
     transition: stroke-dashoffset 0.2s linear;
 }
 
-/* === 新的模态框关闭按钮样式 === */
+
+/**
+ * 模态框全局关闭按钮 (右上角)
+ * 使用位置: .modal 内部
+ */
 .modal-close-button {
     position: absolute;
     top: 0.75rem;
-    /* 12px */
+
     right: 0.75rem;
-    /* 12px */
+
     z-index: 60;
 
-    /* 按钮外观 */
+
     display: flex;
     align-items: center;
     justify-content: center;
     width: 2.5rem;
-    /* 40px */
+
     height: 2.5rem;
-    /* 40px */
+
     border-radius: 9999px;
-    /* rounded-full */
+
     background-color: rgb(247 247 247 / 3%);
-    /* bg-gray-900 with 60% opacity */
+
     color: white;
     border: 1px solid rgba(255, 255, 255, 0.1);
     cursor: pointer;
 
-    /* 过渡效果 */
+
     transition-property: background-color, transform, opacity;
     transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
     transition-duration: 200ms;
@@ -2636,14 +3261,14 @@ html.modal-open {
 
 .modal-close-button:hover {
     background-color: rgba(17, 24, 39, 0.8);
-    /* 悬停时背景变深 */
+
     transform: scale(1.1);
-    /* 悬停时轻微放大 */
+
 }
 
 .modal-close-button:active {
     transform: scale(0.95);
-    /* 点击时缩小 */
+
 }
 
 body.ai-chat-visible .modal-close-button {
@@ -2651,17 +3276,21 @@ body.ai-chat-visible .modal-close-button {
     pointer-events: none;
 }
 
-/* 适配小屏幕 */
+
 @media (min-width: 640px) {
     .modal-close-button {
         top: 1rem;
-        /* 16px */
+
         right: 1rem;
-        /* 16px */
+
     }
 }
 
-/* --- 视频缩略图播放图标样式 (修复) --- */
+
+/**
+ * 视频缩略图播放图标遮罩
+ * 使用位置: 视频类型的 .photo-item
+ */
 .video-thumbnail-overlay {
     position: absolute;
     inset: 0;
@@ -2669,33 +3298,33 @@ body.ai-chat-visible .modal-close-button {
     align-items: center;
     justify-content: center;
     background-color: rgba(0, 0, 0, 0.2);
-    /* 添加一个轻微的蒙层，增加对比度 */
+
     border-radius: 0.5rem;
-    /* 匹配父容器的圆角 */
+
     opacity: 0.7;
     transition: opacity 0.3s ease-in-out;
     pointer-events: none;
-    /* 确保不会遮挡下方的图片 */
+
     z-index: 4;
-    /* 确保在图片之上，但低于信息覆盖层 */
+
 }
 
-/* 当鼠标悬浮在 photo-item 上时，显示播放图标 */
+
 .photo-item:hover .video-thumbnail-overlay {
     opacity: 1;
 }
 
 .video-play-button {
     width: 4rem;
-    /* 64px */
+
     height: 4rem;
-    /* 64px */
+
     display: flex;
     align-items: center;
     justify-content: center;
     background-color: rgba(0, 0, 0, 0.5);
     border-radius: 9999px;
-    /* 圆形 */
+
     transform: scale(0.8);
     transition: transform 0.3s ease;
 }
@@ -2706,20 +3335,20 @@ body.ai-chat-visible .modal-close-button {
 
 .video-play-button svg {
     width: 2.5rem;
-    /* 40px */
+
     height: 2.5rem;
-    /* 40px */
+
     color: white;
 }
 
-/* --- 新增：为图片和占位符添加平滑的过渡效果 --- */
+
 .real-image,
 .image-placeholder,
 .image-placeholder-detailed {
     transition: opacity 300ms ease-in-out;
 }
 
-/* === 新增样式：为气泡内的"前往目录"链接添加样式 === */
+
 #caption-actions-container a {
     display: flex;
     align-items: center;
@@ -2727,11 +3356,11 @@ body.ai-chat-visible .modal-close-button {
     width: 100%;
     padding: 0.5rem;
     color: #C7D2FE;
-    /* indigo-200 */
+
     font-size: 0.875rem;
     font-weight: 500;
     border-radius: 0.375rem;
-    /* rounded-md */
+
     transition: background-color 0.2s, color 0.2s;
     text-decoration: none;
 }
@@ -2742,88 +3371,96 @@ body.ai-chat-visible .modal-close-button {
 }
 
 
-/* --- 新增：回到顶部按钮样式 --- */
+
+/**
+ * 回到顶部按钮
+ * 使用位置: 页面右下角
+ */
 #back-to-top-btn {
     position: fixed;
     bottom: 2rem;
-    /* 距离底部 32px */
-    right: 2rem;
-    /* 距离右侧 32px */
-    z-index: 40;
-    /* 确保在模态框之下 */
 
-    /* 按钮外观 */
+    right: 2rem;
+
+    z-index: 40;
+
+
+
     width: 2.75rem;
-    /* 44px */
+
     height: 2.75rem;
-    /* 44px */
+
     border-radius: 9999px;
-    /* 圆形 */
+
     background-color: rgba(110, 110, 115, 0.4);
-    /* 半透明背景，类似 iOS/macOS 控件 */
+
     color: rgba(235, 235, 245, 0.6);
-    /* 图标颜色 */
+
     border: none;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
 
-    /* 玻璃拟态效果 */
+
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
 
-    /* 默认隐藏状态 */
+
     opacity: 0;
     transform: translateY(20px);
     pointer-events: none;
 
-    /* 过渡动画 */
+
     transition: opacity 0.3s ease, transform 0.3s ease, background-color 0.2s ease;
 }
 
-/* 按钮可见时的状态 (滚动时) */
+
 #back-to-top-btn.visible {
     opacity: 1;
     transform: translateY(0);
     pointer-events: auto;
 }
 
-/* 当模态框打开时，强制隐藏按钮 */
+
 body.modal-open #back-to-top-btn.visible {
     opacity: 0;
     pointer-events: none;
 }
 
-/* 鼠标悬浮效果 */
+
 #back-to-top-btn:hover {
     background-color: rgba(120, 120, 128, 0.5);
     color: white;
 }
 
-/* 按钮内的 SVG 图标大小 */
+
 #back-to-top-btn svg {
     width: 1.25rem;
-    /* 20px */
+
     height: 1.25rem;
-    /* 20px */
+
 }
 
-/* 在小屏幕上稍微调整位置 */
+
 @media (max-width: 767.98px) {
     #back-to-top-btn {
         bottom: 1.5rem;
-        /* 24px */
+
         right: 1.5rem;
-        /* 24px */
+
         width: 3rem;
-        /* 48px */
+
         height: 3rem;
-        /* 48px */
+
     }
 }
 
-/* --- 极简加载器 (Minimal Loader) --- */
+
+/**
+ * 极简加载指示器
+ * 使用位置: 页面或组件加载占位
+ */
 .minimal-loader {
     display: flex;
     flex-direction: column;
@@ -2848,7 +3485,7 @@ body.modal-open #back-to-top-btn.visible {
     width: 8px;
     height: 8px;
     background-color: #111827;
-    /* gray-900 */
+
     border-radius: 50%;
     animation: minimal-bounce 1.4s infinite ease-in-out both;
 }
@@ -2867,7 +3504,7 @@ body.modal-open #back-to-top-btn.visible {
 
 .minimal-loader-text {
     color: #6B7280;
-    /* gray-500 */
+
     font-size: 0.875rem;
     font-weight: 500;
     letter-spacing: 0.025em;
@@ -2887,7 +3524,11 @@ body.modal-open #back-to-top-btn.visible {
 }
 
 
-/* === 【新增】认证和设置页面样式 === */
+
+/**
+ * 认证页面全局遮罩/背景
+ * 使用位置: login.html
+ */
 #auth-overlay {
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
@@ -2902,11 +3543,15 @@ body.modal-open #back-to-top-btn.visible {
     transform: scale(1.1);
 }
 
-/* 备用背景样式 */
+
 #auth-background.fallback {
     background-color: #F9FAFB;
 }
 
+/**
+ * 登录/认证卡片容器
+ * 使用位置: login.html
+ */
 .auth-card,
 .login-card {
     background-color: transparent;
@@ -2930,7 +3575,7 @@ body.modal-open #back-to-top-btn.visible {
     text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
-/* --- 密码输入框的眼睛图标 --- */
+
 .password-wrapper {
     position: relative;
 }
@@ -2941,17 +3586,21 @@ body.modal-open #back-to-top-btn.visible {
     right: 0.75rem;
     transform: translateY(-50%);
     color: #9CA3AF;
-    /* gray-400 */
+
     cursor: pointer;
     transition: color 0.2s;
 }
 
 .password-toggle-icon:hover {
     color: #111827;
-    /* gray-900 */
+
 }
 
-/* --- 按钮 --- */
+
+/**
+ * 基础按钮样式系统
+ * 使用位置: 表单、弹窗等各处
+ */
 .btn {
     padding: 0.625rem 1.25rem;
     border-radius: 0.5rem;
@@ -2963,7 +3612,7 @@ body.modal-open #back-to-top-btn.visible {
 
 .btn-primary {
     background-color: #111827;
-    /* gray-900 */
+
     color: white;
     box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
 }
@@ -2973,7 +3622,7 @@ body.modal-open #back-to-top-btn.visible {
     transform: translateY(-1px);
 }
 
-/* 登录页特定按钮样式 */
+
 .auth-card .btn-primary,
 .password-prompt-card .btn-primary {
     background-color: rgba(0, 0, 0, 0.1);
@@ -2990,7 +3639,7 @@ body.modal-open #back-to-top-btn.visible {
     box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
 }
 
-/* 登录卡片样式由 auth.js 中的 Tailwind 类统一处理 */
+
 
 .btn-primary:disabled {
     background-color: #4B5563;
@@ -2999,16 +3648,20 @@ body.modal-open #back-to-top-btn.visible {
 
 .btn-secondary {
     background-color: #4B5563;
-    /* gray-600 */
+
     color: white;
 }
 
 .btn-secondary:hover {
     background-color: #6B7280;
-    /* gray-500 */
+
 }
 
-/* === 全站美化通知样式（居中悬浮） === */
+
+/**
+ * 通知/全局提示容器
+ * 使用位置: index.html (顶部固定)
+ */
 #notification-container {
     position: fixed;
     top: clamp(1rem, 3vw, 2rem);
@@ -3024,6 +3677,11 @@ body.modal-open #back-to-top-btn.visible {
     max-width: calc(100% - 2rem);
 }
 
+
+/**
+ * 单条通知样式
+ * 使用位置: #notification-container 动态添加
+ */
 .notification {
     pointer-events: auto;
     min-width: 300px;
@@ -3114,7 +3772,7 @@ body.modal-open #back-to-top-btn.visible {
     }
 }
 
-/* 设置页样式 */
+
 :root {
     --gray-900: #111827;
     --gray-800: #1F2937;
@@ -3197,6 +3855,11 @@ body.demo-body {
 
 
 
+/**
+ * 设置面板模态框
+ * 使用位置: index.html (设置操作开启)
+ * 相关 JS: js/modules/settings.js
+ */
 #settings-modal {
     position: fixed;
     inset: 0;
@@ -3225,7 +3888,7 @@ body.demo-body {
     transform: translateY(100%);
 }
 
-/* 设置模态框打开时隐藏页面滚动条 */
+
 body.settings-open {
     overflow: hidden;
 }
@@ -3246,7 +3909,7 @@ body.settings-open {
 }
 
 
-/* 副标题样式 */
+
 .settings-subtitle {
     font-size: 0.75rem;
     color: #9ca3af;
@@ -3267,6 +3930,10 @@ body.settings-open {
     display: none;
 }
 
+/**
+ * 设置面板侧边/顶部导航
+ * 使用位置: #settings-card 内部
+ */
 .settings-nav {
     display: flex;
     flex-direction: row;
@@ -3437,6 +4104,10 @@ body.settings-open {
 }
 
 
+/**
+ * 设置详情选项卡内容区域
+ * 使用位置: .settings-content-panel 内部
+ */
 .settings-tab-content {
     position: absolute;
     inset: 0;
@@ -3456,7 +4127,7 @@ body.settings-open {
     pointer-events: auto;
 }
 
-/* 设置页面滚动条美化 */
+
 .settings-tab-content::-webkit-scrollbar {
     width: 6px;
 }
@@ -3476,7 +4147,7 @@ body.settings-open {
     background: #64748b;
 }
 
-/* Firefox 滚动条样式 */
+
 .settings-tab-content {
     scrollbar-width: thin;
     scrollbar-color: #94a3b8 rgba(226, 232, 240, 0.5);
@@ -3523,6 +4194,10 @@ body.settings-open {
     border: 0;
 }
 
+/**
+ * 管理卡片组件 (用于系统设置项)
+ * 使用位置: 设置面板 -> 管理/系统选项卡
+ */
 .manage-card {
 
     border-radius: 1.25rem;
@@ -3556,6 +4231,10 @@ body.settings-open {
     gap: 1rem;
 }
 
+/**
+ * 管理卡片内的主要操作按钮
+ * 使用位置: .manage-card 内部
+ */
 .manage-primary-btn {
     align-self: flex-start;
     padding: 0.75rem 1.35rem;
@@ -3795,18 +4474,30 @@ body.settings-open {
     }
 }
 
+/**
+ * 表单行容器
+ * 使用位置: 设置面板、弹窗表单
+ */
 .form-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
 }
 
+/**
+ * 表单标签
+ * 使用位置: .form-row 内部
+ */
 .form-label {
     font-size: 0.9rem;
     color: #475569;
     font-weight: 500;
 }
 
+/**
+ * 基础输入框与下拉框
+ * 使用位置: 设置面板、弹窗、认证页面
+ */
 .form-input,
 .form-select {
     width: 100%;
@@ -3832,7 +4523,11 @@ body.settings-open {
     box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.02);
 }
 
-/* textarea样式 - 与input统一 */
+
+/**
+ * 多行文本输入框
+ * 使用位置: AI 提示词设置、描述输入等
+ */
 .form-textarea {
     width: 100%;
     padding: 0.75rem 1rem;
@@ -3858,7 +4553,7 @@ body.settings-open {
         0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
-/* 登录页特定输入框样式 */
+
 .auth-card .form-input,
 .password-prompt-card .form-input {
     background-color: rgba(0, 0, 0, 0.1);
@@ -3879,6 +4574,10 @@ body.settings-open {
     animation: shake 0.3s;
 }
 
+/**
+ * 开关切换组件
+ * 使用位置: 设置面板开关项
+ */
 .toggle-switch {
     position: relative;
     display: inline-block;
@@ -3914,6 +4613,10 @@ body.settings-open {
 }
 
 
+/**
+ * 设置面板底操作栏
+ * 使用位置: #settings-card 底部
+ */
 .settings-actions {
     margin-top: auto;
     position: sticky;
@@ -3931,6 +4634,10 @@ body.settings-open {
     justify-content: flex-end;
 }
 
+/**
+ * 设置面板操作按钮 (保存/取消)
+ * 使用位置: .settings-actions 内部
+ */
 .settings-action-btn {
     padding: 0.75rem 1.25rem;
     border-radius: 0.625rem;
@@ -4094,7 +4801,7 @@ body.settings-open {
         transform: scale(0.95);
     }
 
-    /* 浏览器兼容性降级方案 */
+
     @supports not (backdrop-filter: blur(40px)) {
         #settings-card {
             background: rgba(255, 255, 255, 0.95) !important;
@@ -4149,6 +4856,10 @@ body.settings-open {
 
 }
 
+/**
+ * 密码确认/输入全局遮罩
+ * 使用位置: 特权操作前弹出 (如删除相册、下载确认)
+ */
 .password-prompt-overlay {
     position: fixed;
     inset: 0;
@@ -4168,6 +4879,10 @@ body.settings-open {
     pointer-events: auto;
 }
 
+/**
+ * 密码输入卡片
+ * 使用位置: .password-prompt-overlay 内部
+ */
 .password-prompt-card {
     background: #ffffff87;
     border-radius: 1.5rem;
@@ -4208,6 +4923,10 @@ body.settings-open {
     position: relative;
 }
 
+/**
+ * 密码输入框专用样式
+ * 使用位置: .password-prompt-card 内部
+ */
 .password-input {
     width: 100%;
     background-color: #f5f7fb;
@@ -4284,6 +5003,10 @@ body.settings-open {
     margin-top: 2rem;
 }
 
+/**
+ * 提示框操作按钮基类
+ * 使用位置: .password-prompt-card 内部底部按钮组
+ */
 .prompt-btn {
     flex: 1;
     padding: 0.7rem 1rem;
@@ -4359,11 +5082,11 @@ body.settings-open {
     animation: shake 0.5s cubic-bezier(.36, .07, .19, .97) both;
 }
 
-/* Chrome专项修复 */
-/* 禁止普通区域出现插入符/选区，防止 Chrome 显示输入光标 */
+
+
 #main-subtitle,
 #breadcrumb-nav,
-.search-container,
+.search-area,
 .hint-text,
 #modal-content,
 #media-panel,
@@ -4382,7 +5105,7 @@ body.settings-open {
     -webkit-user-select: none;
 }
 
-/* 隐藏相册/图片卡片的焦点指示器，防止按上下键出现蓝色边框或插入符 */
+
 .album-link:focus-visible,
 .photo-link:focus-visible,
 .album-card:focus-visible,
@@ -4395,7 +5118,11 @@ body.settings-open {
     caret-color: transparent !important;
 }
 
-/* === 新增：会呼吸的卡片效果 === */
+
+/**
+ * 相册卡片容器
+ * 使用位置: 网格视图中的相册单元
+ */
 .album-card {
     position: relative;
     overflow: hidden;
@@ -4411,7 +5138,7 @@ body.settings-open {
     box-shadow: none;
 }
 
-/* 仅缩放内部内容容器，确保外层圆角不受影响 */
+
 .album-card>div:first-child {
     transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     will-change: transform;
@@ -4421,12 +5148,8 @@ body.settings-open {
     transform: scale(1.03);
 }
 
-/* --- 修复：悬停时卡片圆角丢失（相册与照片统一处理） --- */
-/* 说明：部分浏览器在元素放大（transform: scale）或内部绝对定位覆盖层出现时，
-   会出现圆角裁剪失效的视觉问题。通过以下规则：
-   1) 在 hover 状态下继续强制 border-radius 与 overflow: hidden；
-   2) 让内部图片与覆盖层继承圆角，保证边缘一致；
-*/
+
+
 .album-card,
 .photo-item {
     border-radius: 0.75rem;
@@ -4442,7 +5165,7 @@ body.settings-open {
     clip-path: inset(0 round 0.75rem);
 }
 
-/* 内部首个容器与常见覆盖层/图片继承圆角 */
+
 .album-card>div:first-child,
 .photo-item>div:first-child,
 .album-card img,
@@ -4457,6 +5180,10 @@ body.settings-open {
     border-radius: inherit;
 }
 
+/**
+ * 相册卡片悬浮信息遮罩 (显示名称、数量、路径等)
+ * 使用位置: .album-card 内部
+ */
 .album-card .card-info-overlay {
     position: absolute;
     bottom: 0;
@@ -4470,7 +5197,7 @@ body.settings-open {
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     pointer-events: none;
     z-index: 4;
-    /* 确保在图片和其他元素之上 */
+
 }
 
 .album-card:hover .card-info-overlay {
@@ -4490,6 +5217,10 @@ body.settings-open {
     filter: brightness(0.65);
 }
 
+/**
+ * 相册删除确认确认遮罩
+ * 使用位置: .album-card 内部 (删除操作激活时显示)
+ */
 .album-delete-overlay {
     position: absolute;
     inset: 0;
@@ -4626,18 +5357,18 @@ body.settings-open {
     align-items: center;
 }
 
-/* 移除默认状态下的文字标签 */
+
 .album-card .album-info {
     display: none;
 }
 
-/* 移动端优化 */
+
 @media (max-width: 767.98px) {
     .album-card:hover {
         transform: none;
     }
 
-    /* 仅缩放内部内容容器 */
+
     .album-card:hover>div:first-child {
         transform: scale(1.02);
     }
@@ -4658,9 +5389,9 @@ body.settings-open {
     }
 }
 
-/* === 智能加载状态样式 === */
 
-/* 性能优化 */
+
+
 * {
     will-change: auto;
 }
@@ -4671,7 +5402,7 @@ body.settings-open {
     transform: translateZ(0);
 }
 
-/* 减少动画在低端设备上的性能消耗 */
+
 @media (prefers-reduced-motion: reduce) {
 
     .spinner,
@@ -4687,7 +5418,7 @@ body.settings-open {
     }
 }
 
-/* 移动端优化 */
+
 @media (max-width: 767.98px) {
 
     .spinner,
@@ -4702,7 +5433,7 @@ body.settings-open {
     }
 }
 
-/* 渐进式加载条 */
+
 .progressive-loading {
     position: fixed;
     top: 0;
@@ -4714,38 +5445,13 @@ body.settings-open {
     display: none;
 }
 
-.progressive-loading-bar {
-    height: 100%;
-    background: linear-gradient(90deg, #8B5CF6, #EC4899, #F59E0B);
-    width: 0%;
-    transition: width 0.3s ease;
-    position: relative;
-    overflow: hidden;
-}
 
-.progressive-loading-bar::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
-    animation: loading-shimmer 2s infinite;
-}
 
-@keyframes loading-shimmer {
-    0% {
-        background-position: 200% 0;
-    }
 
-    100% {
-        background-position: -200% 0;
-    }
-}
-
-/* === 优化的空状态样式 === */
-
+/**
+ * 页面空状态布局 (如没有照片或搜索结果为空时)
+ * 使用位置: #gallery-view 或主要内容容器
+ */
 .empty-state {
     display: flex;
     flex-direction: column;
@@ -4758,7 +5464,7 @@ body.settings-open {
     position: relative;
     margin: 2rem auto;
     will-change: transform;
-    /* 减少滚动时抖动 */
+
 }
 
 .empty-illustration {
@@ -4778,17 +5484,17 @@ body.settings-open {
     align-items: center;
     justify-content: center;
     background: #F3F4F6;
-    /* gray-100 */
+
     border-radius: 50%;
     border: 1px solid #E5E7EB;
-    /* gray-200 */
+
 }
 
 .empty-icon {
     width: 60px;
     height: 60px;
     color: #9CA3AF;
-    /* gray-400 */
+
     animation: empty-icon-float 3s ease-in-out infinite;
 }
 
@@ -4802,7 +5508,7 @@ body.settings-open {
     width: 8px;
     height: 8px;
     background-color: #D1D5DB;
-    /* gray-300 */
+
     border-radius: 50%;
     animation: empty-dot-bounce 1.5s ease-in-out infinite;
 }
@@ -4929,7 +5635,7 @@ body.settings-open {
     }
 }
 
-/* 响应式优化 */
+
 @media (max-width: 767.98px) {
     .empty-state {
         min-height: 40vh;
@@ -4967,8 +5673,12 @@ body.settings-open {
     }
 }
 
-/* === 优化的错误状态样式 === */
 
+
+/**
+ * 页面错误提示容器
+ * 使用位置: 加载失败或异常时的全局覆盖
+ */
 .error-container {
     display: flex;
     flex-direction: column;
@@ -5069,7 +5779,7 @@ body.settings-open {
     color: #111827;
 }
 
-/* 响应式优化 */
+
 @media (max-width: 767.98px) {
     .error-container {
         min-height: 30vh;
@@ -5107,8 +5817,12 @@ body.settings-open {
     }
 }
 
-/* === 连接状态样式（复用现有设计系统）=== */
 
+
+/**
+ * 系统连接中提示布局 (如等待服务器启动)
+ * 使用位置: 启动/预加载层
+ */
 .connecting-container {
     display: flex;
     flex-direction: column;
@@ -5194,7 +5908,7 @@ body.settings-open {
     margin-bottom: 1.5rem;
 }
 
-/* 连接状态动画 */
+
 @keyframes connecting-icon-pulse {
 
     0%,
@@ -5252,7 +5966,7 @@ body.settings-open {
     }
 }
 
-/* 响应式优化 */
+
 @media (max-width: 767.98px) {
     .connecting-container {
         min-height: 30vh;
@@ -5285,9 +5999,9 @@ body.settings-open {
     }
 }
 
-/* === 新增：现代化系统状态页面样式 === */
 
-/* CSS变量定义 */
+
+
 :root {
     --gray-900: #111827;
     --gray-800: #1F2937;
@@ -5307,7 +6021,11 @@ body.settings-open {
     --emerald-400: #34D399;
 }
 
-/* 现代化状态卡片容器 */
+
+/**
+ * 现代化系统状态卡片 (用于展示 CPU、内存、索引进度等)
+ * 使用位置: 设置面板 -> 系统状态/管理选项卡
+ */
 .status-card-new {
     background: rgba(255, 255, 255, 0.9);
     backdrop-filter: blur(20px);
@@ -5322,26 +6040,9 @@ body.settings-open {
 
 .status-card-new:hover {
     transform: translateY(-4px);
-    border-color: rgba(139, 92, 246, 0.2);
 }
 
-.status-card-new::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(139, 92, 246, 0.5), transparent);
-    opacity: 0;
-    transition: opacity 0.3s ease;
-}
 
-.status-card-new:hover::before {
-    opacity: 1;
-}
-
-/* 卡片头部 */
 .card-header-new {
     display: flex;
     justify-content: space-between;
@@ -5355,7 +6056,11 @@ body.settings-open {
     color: #484545;
 }
 
-/* 状态徽章 */
+
+/**
+ * 状态卡片内的圆形状态标签
+ * 使用位置: .card-header-new 内部
+ */
 .status-badge-new {
     font-size: 0.75rem;
     font-weight: 500;
@@ -5386,7 +6091,11 @@ body.settings-open {
     color: #60A5FA;
 }
 
-/* 进度条 */
+
+/**
+ * 线性进度条组件
+ * 使用位置: 系统状态卡片内
+ */
 .linear-progress {
     height: 6px;
     width: 100%;
@@ -5418,7 +6127,11 @@ body.settings-open {
     --glow-color: rgba(245, 158, 11, 0.7);
 }
 
-/* 详细信息网格 */
+
+/**
+ * 详情网格展示系统
+ * 使用位置: 状态卡片正文
+ */
 .details-grid-new {
     display: grid;
     gap: 0.75rem 1.5rem;
@@ -5456,7 +6169,11 @@ body.settings-open {
     color: var(--red-400);
 }
 
-/* 卡片底部 */
+
+/**
+ * 自定义卡片底部操作区域
+ * 使用位置: .status-card-new 底部
+ */
 .card-footer-new {
     display: flex;
     justify-content: space-between;
@@ -5478,7 +6195,11 @@ body.settings-open {
     flex-wrap: wrap;
 }
 
-/* 加载状态覆盖层 */
+
+/**
+ * 状态卡片内部的局部加载遮罩
+ * 使用位置: .status-card-new 内部
+ */
 .status-pod-loading {
     position: absolute;
     inset: 0;
@@ -5499,7 +6220,11 @@ body.settings-open {
     pointer-events: auto;
 }
 
-/* 同步按钮样式增强 */
+
+/**
+ * 同步/刷新数据操作按钮
+ * 使用位置: .actions-new 内部
+ */
 .sync-btn {
     display: inline-flex;
     align-items: center;
@@ -5548,7 +6273,7 @@ body.settings-open {
     animation: spin 0.8s linear infinite;
 }
 
-/* 响应式设计 */
+
 @media (min-width: 768px) {
     .status-card-new {
         transform: scale(0.95);
@@ -5559,10 +6284,10 @@ body.settings-open {
     }
 }
 
-/* 移动端适配 */
+
 @media (max-width: 767px) {
 
-    /* 移动端状态页面卡片间距 */
+
     #status-settings-content {
         display: flex;
         flex-direction: column;
@@ -5631,7 +6356,7 @@ body.settings-open {
     }
 }
 
-/* 超小屏幕适配 - 确保三个按钮始终在一行 */
+
 @media (max-width: 480px) {
     .actions-new {
         display: flex;
@@ -5664,7 +6389,7 @@ body.settings-open {
     }
 }
 
-/* 极小屏幕适配 - 320px及以下 */
+
 @media (max-width: 320px) {
     .sync-btn {
         padding: 0.4rem 0.2rem;
@@ -5679,7 +6404,12 @@ body.settings-open {
 }
 
 
-/* 加载器始终占据空间，避免布局偏移导致滚动抖动 */
+
+/**
+ * 无限滚动加载指示器
+ * 使用位置: #gallery-view 底部
+ * 相关 JS: js/modules/infinite-scroll.js
+ */
 #infinite-scroll-loader {
     width: 100%;
     min-height: 80px !important;
@@ -5694,14 +6424,18 @@ body.settings-open {
     pointer-events: none;
 }
 
-/* visible类控制可见性，不改变布局 */
+
 #infinite-scroll-loader.visible {
     opacity: 1 !important;
     transform: scale(1);
     pointer-events: auto;
 }
 
-/* 保持旧容器样式的兼容性（如果将来添加） */
+
+/**
+ * 无限滚动加载指示器容器
+ * 使用位置: 页面底部占位
+ */
 #infinite-scroll-loader-container {
     min-height: 80px;
     display: flex;
@@ -5720,25 +6454,20 @@ body.settings-open {
     pointer-events: auto;
 }
 
-【
-
-/* 隐藏滚动条 */
-.no-scrollbar::-webkit-scrollbar {
+【 .no-scrollbar::-webkit-scrollbar {
     display: none;
 }
 
+/**
+ * 隐藏滚动条工具类
+ * 使用位置: 全局通用 (如对话历史、自动隐藏区域)
+ */
 .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
 }
 
-/* 面包屑遮罩渐变 */
-.mask-linear-fade {
-    mask-image: linear-gradient(to right, black 85%, transparent 100%);
-    -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
-}
 
-/* 搜索面板动画 */
 .search-panel-enter {
     opacity: 0;
     transform: translateY(-10px) scale(0.98);
@@ -5749,23 +6478,24 @@ body.settings-open {
     transform: translateY(0) scale(1);
 }
 
-/* 顶栏隐藏动画 */
+
 .header-hidden {
     transform: translateY(-100%);
 }
 
-/* 强制面包屑链接颜色，覆盖可能的默认样式 */
+
+
 .breadcrumb-link {
     color: #6b7280 !important;
-    /* text-gray-500 */
+
 }
 
 .breadcrumb-link:hover {
     color: #000000 !important;
-    /* hover:text-black */
+
 }
 
-/* 登录页面密码输入框 placeholder 居中 */
+
 #password::placeholder {
     text-align: center;
 }
@@ -5782,10 +6512,11 @@ body.settings-open {
     text-align: center;
 }
 
-.hidden {
-    display: none !important;
-}
-
+/**
+ * 模态框分档布局系统 (媒体 + 对话)
+ * 使用位置: .modal 内部
+ * 状态: body.ai-chat-visible 影响比例
+ */
 .modal-layout {
     width: min(96vw, 1760px);
     height: min(96vh, 1024px);
@@ -5885,7 +6616,7 @@ body.ai-chat-visible #modal-layout .modal-chat,
     }
 }
 
-/* 工具类（Utility classes） */
+
 .mt-auto {
     margin-top: auto !important;
 }

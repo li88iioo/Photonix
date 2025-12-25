@@ -28,6 +28,29 @@ import { applyAlbumTombstones, generateBreadcrumbHTML } from './utils.js';
 import { prepareForNewContent, finalizeNewContent } from './scroll.js';
 
 /**
+ * 搜索完成后折叠搜索框并清空输入，方便下一次搜索
+ */
+function collapseSearchUI() {
+    const topbar = document.getElementById('topbar');
+    const searchInput = document.getElementById('search-input');
+    const searchContainer = searchInput ? searchInput.closest('.search-area') : null;
+    const historyContainer = document.getElementById('search-history');
+
+    if (topbar) {
+        topbar.classList.remove('topbar--search-open');
+        topbar.classList.remove('topbar--inline-search');
+    }
+    if (searchContainer) {
+        searchContainer.removeAttribute('style');
+    }
+    if (searchInput) {
+        searchInput.value = '';
+        searchInput.blur();
+    }
+    historyContainer?.classList.add('hidden');
+}
+
+/**
  * 搜索路由处理业务入口。
  * @param {Object} navigation
  * @param {AbortSignal} pageSignal
@@ -124,6 +147,7 @@ async function executeSearch(query, signal) {
 
         applyLayoutMode();
         finalizeNewContent(searchPathKey);
+        collapseSearchUI();
 
         setManagedTimeout(() => {
             ensureLayoutToggleVisible();

@@ -652,7 +652,7 @@ export function renderSortDropdown() {
 	// 排序下拉菜单
 	const sortMenu = document.createElement('div');
 	sortMenu.id = 'sort-menu';
-	sortMenu.className = 'hidden absolute right-0 mt-2 w-48 bg-white border border-gray-100 rounded-xl shadow-[0_10px_25px_-5px_rgba(0,0,0,0.1)] py-2 z-50 origin-top-right opacity-0 scale-95 transition-all';
+	sortMenu.className = 'hidden absolute right-0 mt-2 w-48 bg-white border border-gray-100 rounded-xl shadow-soft-lg py-2 z-50 origin-top-right opacity-0 scale-95 transition-all';
 
 	// 菜单标题
 	const menuTitle = document.createElement('div');

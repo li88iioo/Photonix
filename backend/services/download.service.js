@@ -23,8 +23,12 @@ const {
   ValidationError
 } = require('../utils/errors');
 
-// 常量定义
-const DATA_ROOT = path.resolve(__dirname, '../../data/download-service');
+// 优先使用 PHOTONIX_DOWNLOAD_DATA_DIR 环境变量，其次 DATA_DIR，最后降级到代码目录
+const DATA_ROOT = path.resolve(
+  process.env.PHOTONIX_DOWNLOAD_DATA_DIR ||
+  (process.env.DATA_DIR ? path.join(process.env.DATA_DIR, 'download-service') : null) ||
+  path.join(__dirname, '../../data/download-service')
+);
 const STATE_ROOT = path.join(DATA_ROOT, 'state');
 const TASKS_FILE = path.join(STATE_ROOT, 'tasks.json');
 const HISTORY_FILE = path.join(STATE_ROOT, 'history.json');

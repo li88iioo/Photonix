@@ -66,9 +66,7 @@ export function reinitializeElements() {
     elements.modalToolbar = document.getElementById('modal-toolbar');
     elements.aiCloseHint = document.getElementById('ai-close-hint');
     elements.aiCloseHintDismiss = document.getElementById('ai-close-hint-dismiss');
-    // sortContainer现在是topbar右侧的按钮容器区域
-    // 我们使用包含layout-toggle-wrap和sort-wrapper的父容器
-    const topbarRightContainer = document.querySelector('#topbar .flex.items-center.space-x-1');
+    const topbarRightContainer = document.querySelector('#topbar .topbar-actions');
     elements.sortContainer = topbarRightContainer;
     elements.layoutToggle = document.getElementById('layout-toggle');
     elements.layoutToggleBtn = document.getElementById('layout-toggle-btn');

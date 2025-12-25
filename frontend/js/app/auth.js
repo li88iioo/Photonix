@@ -324,7 +324,7 @@ export function showLoginScreen() {
 
     // XSS安全修复：对静态HTML模板进行安全检查
     const loginTemplate = `
-    <div class="relative w-full max-w-[340px] p-6 transition-all duration-500 transform animate-fade-in-up">
+    <div class="login-card relative w-full max-w-[340px] p-6 transition-all duration-500 transform animate-fade-in-up">
         <!-- Header -->
         <div class="relative flex flex-col items-center justify-center mb-10 text-center z-10">
              <h1 class="text-4xl text-white mb-2" style="font-family: 'ZCOOL KuaiLe', sans-serif; text-shadow: 0 4px 12px rgba(0,0,0,0.3);">

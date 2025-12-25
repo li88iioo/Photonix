@@ -6,6 +6,7 @@ const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/auth.controller');
 const rateLimit = require('express-rate-limit');
+const logger = require('../config/logger');
 let refreshStore;
 try {
   const { redis } = require('../config/redis');

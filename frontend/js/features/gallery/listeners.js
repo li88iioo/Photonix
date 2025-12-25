@@ -75,7 +75,7 @@ function handleDocumentClick(e) {
     // 1. 关闭移动端搜索层
     const topbar = document.getElementById('topbar');
     if (topbar && topbar?.classList.contains('topbar--search-open')) {
-        const isInsideSearch = e.target.closest && e.target.closest('.search-container');
+        const isInsideSearch = e.target.closest && e.target.closest('.search-area');
         const isToggle = e.target.closest && e.target.closest('#search-toggle-btn');
         if (!isInsideSearch && !isToggle) {
             topbar?.classList.remove('topbar--search-open');
@@ -841,7 +841,7 @@ function setupTopbarInteractions() {
     const mobileSearchBackBtn = document.getElementById('mobile-search-back-btn');
     const searchSubmitBtn = document.getElementById('search-submit-btn');
     const searchInput = document.getElementById('search-input');
-    const searchContainer = searchInput ? searchInput.closest('.search-container') : null;
+    const searchContainer = searchInput ? searchInput.closest('.search-area') : null;
     if (!topbar) {
         return;
     }

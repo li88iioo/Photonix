@@ -13,7 +13,6 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="preload" href="/assets/css/output.css" as="style">
     <link rel="modulepreload" href="/js/dist/main.js">
-    <!-- AI密语字体文件 -->
     <style>
         body,
         html {
@@ -23,59 +22,50 @@
     <link rel="stylesheet" href="/assets/css/output.css">
 </head>
 
-<body class="bg-gray-50 text-gray-800 selection:bg-purple-500 selection:text-white">
-    <div id="app-container" class="transition-opacity duration-500 opacity-0 with-fixed-topbar">
-        <div id="page-inner" class="mx-auto max-w-[min(96vw,1760px)] px-2 sm:px-4 md:px-8">
-            <header id="topbar"
-                class="topbar sticky top-0 left-0 right-0 z-50 transition-transform duration-300 ease-in-out">
-                <div
-                    class="topbar-inner mx-auto h-16 w-full flex items-center justify-between bg-white/85 backdrop-blur-md border-b border-gray-200/60 shadow-sm">
+<body class="page-body">
+    <div id="app-container" class="app-shell with-fixed-topbar">
+        <div id="page-inner" class="page-inner-shell">
+            <header id="topbar" class="topbar topbar-sticky">
+                <div class="topbar-inner topbar-bar">
 
-                    <nav id="breadcrumb-container"
-                        class="flex-1 min-w-0 mr-4 overflow-hidden transition-opacity duration-200">
-                        <ol id="breadcrumb-nav"
-                            class="flex items-center space-x-2 text-sm text-gray-500 whitespace-nowrap overflow-x-auto no-scrollbar font-medium mask-linear-fade pr-6">
+                    <nav id="breadcrumb-container" class="breadcrumb-shell">
+                        <ol id="breadcrumb-nav" class="breadcrumb-nav breadcrumb-nav-ui mask-linear-fade">
                             <!-- 面包屑将由JS动态生成 -->
                         </ol>
                     </nav>
 
-                    <div class="flex items-center space-x-1 md:space-x-3 shrink-0">
-                        <div class="group relative flex items-center transition-all z-50" id="search-container">
-                            <div class="absolute left-3 pointer-events-none text-gray-400">
+                    <div class="topbar-actions">
+                        <div class="search-area" id="search-container">
+                            <div class="search-icon">
                                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
                                     viewBox="0 0 24 24">
                                     <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
                                 </svg>
                             </div>
                             <input type="text" id="search-input" placeholder="搜索" autocomplete="off"
-                                class="w-10 md:w-40 focus:w-40 md:focus:w-64 h-9 pl-9 pr-3 rounded-full bg-gray-100/80 hover:bg-gray-100 border-transparent 
-                                          focus:bg-white focus:ring-2 focus:ring-black/5 focus:border-gray-300 focus:shadow-lg
-                                          transition-all duration-300 text-sm outline-none placeholder-transparent md:placeholder-gray-400 focus:placeholder-gray-300 cursor-pointer focus:cursor-text" />
+                                class="search-input-field" />
 
-                            <div id="search-history"
-                                class="hidden fixed top-16 left-0 right-0 mx-auto w-[95%] md:absolute md:top-full md:left-auto md:right-0 md:mx-0 md:mt-2 md:w-64 bg-white border border-gray-100 rounded-xl shadow-xl py-2 origin-top md:origin-top-right transition-all duration-200 search-panel-enter z-[60]">
-                                <div
-                                    class="flex items-center justify-between px-4 py-2 text-xs text-gray-400 border-b border-gray-50 mb-1">
-                                    <span class="font-bold uppercase tracking-wider">搜索历史</span>
-                                    <button class="hover:text-red-500 transition-colors"
+                            <div id="search-history" class="search-history-panel hidden">
+                                <div class="search-history-header">
+                                    <span class="search-history-title">搜索历史</span>
+                                    <button class="search-history-clear clear-history-btn"
                                         id="clear-history-btn">清空</button>
                                 </div>
-                                <ul id="history-list" class="max-h-60 overflow-y-auto"></ul>
+                                <ul id="history-list" class="search-history-list"></ul>
                             </div>
                         </div>
 
-                        <div class="h-4 w-px bg-gray-300 hidden md:block mx-2"></div>
+                        <div class="topbar-divider"></div>
 
                         <!-- 布局切换按钮占位 -->
-                        <div id="layout-toggle-wrap" class="relative"></div>
+                        <div id="layout-toggle-wrap" class="layout-slot"></div>
 
                         <!-- 排序按钮占位 -->
-                        <div id="sort-wrapper" class="relative"></div>
+                        <div id="sort-wrapper" class="layout-slot"></div>
 
-                        <button id="settings-btn"
-                            class="p-2 rounded-lg text-gray-600 hover:text-black hover:bg-gray-100 transition-all flex items-center justify-center">
+                        <button id="settings-btn" class="settings-trigger">
                             <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
-                                viewBox="0 0 24 24">
+                                viewBox="0 0 24 24" class="settings-trigger-icon">
                                 <path
                                     d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z">
                                 </path>
@@ -90,9 +80,9 @@
                 </div>
                 <div id="content-grid"></div>
                 <div id="infinite-scroll-loader">
-                    <div class="flex items-center justify-center">
+                    <div class="loader-container">
                         <div class="spinner"></div>
-                        <p class="ml-4 text-gray-400">正在加载更多...</p>
+                        <p class="loader-text">正在加载更多...</p>
                     </div>
                 </div>
                 <!-- 首页快捷键提示 -->
@@ -111,25 +101,22 @@
             </div>
         </div>
     </div>
-    <div id="auth-overlay"
-        class="fixed inset-0 z-[100] bg-gray-900 flex items-center justify-center transition-opacity duration-300 opacity-0 pointer-events-none">
-        <div id="auth-background"
-            class="absolute inset-0 bg-cover bg-center transition-opacity duration-1000 opacity-0"></div>
-        <div id="auth-container" class="relative z-10"></div>
+    <div id="auth-overlay" class="auth-overlay opacity-0 pointer-events-none">
+        <div id="auth-background" class="auth-background"></div>
+        <div id="auth-container" class="auth-container"></div>
     </div>
     <div id="settings-modal">
         <div id="settings-card"></div>
     </div>
-    <div id="modal" class="fixed inset-0 z-50 opacity-0 pointer-events-none">
+    <div id="modal" class="modal-root opacity-0 pointer-events-none">
         <div id="modal-backdrop-one" class="modal-backdrop"></div>
         <div id="modal-backdrop-two" class="modal-backdrop"></div>
-        <div id="modal-content" class="relative w-full h-full flex flex-col items-center justify-center">
+        <div id="modal-content" class="modal-content-shell">
             <div id="modal-layout" class="modal-layout">
                 <div id="media-panel" class="modal-media">
-                    <img id="modal-img" alt="" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-                        draggable="false" style="user-select: none; -webkit-user-select: none;">
-                    <video id="modal-video" class="hidden max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-                        controls></video>
+                    <img id="modal-img" alt="" class="modal-image" draggable="false"
+                        style="user-select: none; -webkit-user-select: none;">
+                    <video id="modal-video" class="modal-video hidden" controls></video>
                 </div>
                 <aside id="ai-chat-wrapper" class="modal-chat hidden" aria-hidden="true">
                     <div class="ai-chat-panel-inner">
@@ -163,7 +150,7 @@
                     </div>
                 </aside>
             </div>
-            <div id="navigation-hint" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div id="navigation-hint" class="modal-nav-hint">
                 <div class="hint-content">
                     <div class="hint-icon mouse-icon">
                         <div class="scroll-wheel"></div>
@@ -176,9 +163,8 @@
                 </div>
             </div>
 
-            <div id="modal-toolbar"
-                class="absolute bottom-0 left-0 right-0 p-2 sm:p-4 flex justify-center items-center">
-                <div class="toolbar-inner flex items-center space-x-2 sm:space-x-4 p-2 rounded-full">
+            <div id="modal-toolbar" class="modal-toolbar modal-toolbar-shell">
+                <div class="toolbar-inner modal-toolbar-inner">
                 </div>
             </div>
         </div>
@@ -388,7 +374,7 @@
                                                 <button type="button" id="ai-history-import"
                                                     class="ai-history-btn ai-history-btn-secondary">导入</button>
                                                 <input type="file" id="ai-history-import-input"
-                                                    accept="application/json,.json" class="sr-only">
+                                                    accept="application/json,.json" class="visually-hidden">
                                             </div>
                                         </div>
                                     </form>
@@ -448,7 +434,7 @@
                                             <div class="manage-toggle-description">支持直接在前端管理相册内容</div>
                                         </div>
                                         <div class="manage-toggle-control">
-                                            <label class="sr-only" for="album-delete-toggle">启用网页相册删除</label>
+                                            <label class="visually-hidden" for="album-delete-toggle">启用网页相册删除</label>
                                             <input type="checkbox" id="album-delete-toggle" class="toggle-switch"
                                                 aria-label="启用网页相册删除">
                                         </div>

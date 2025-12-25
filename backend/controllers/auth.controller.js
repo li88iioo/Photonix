@@ -375,12 +375,12 @@ exports.login = async (req, res) => {
         // 管理员密钥已匹配，直接通过
         isMatch = true;
     } else {
-        // 修复：严格验证密码哈希格式，防止空字符串或无效哈希导致的异常
+        // 严格验证密码哈希格式，防止空字符串或无效哈希导致的异常
         // bcrypt 哈希以 $2a$, $2b$, $2y$ 或 $2x$ 开头，长度至少 60 字符
-        const isValidHashFormat = PASSWORD_HASH && 
-                                  PASSWORD_HASH.trim().length >= 60 && 
-                                  /^\$2[aybx]\$/.test(PASSWORD_HASH);
-        
+        const isValidHashFormat = PASSWORD_HASH &&
+            PASSWORD_HASH.trim().length >= 60 &&
+            /^\$2[aybx]\$/.test(PASSWORD_HASH);
+
         if (!isValidHashFormat) {
             logger.warn(`[${req.requestId || '-'}] 密码哈希格式无效，拒绝登录`);
             let failureStats = { fails: 0, lockSec: 0 };
@@ -542,5 +542,14 @@ exports.refresh = async (req, res) => {
         userId: userId,
         type: 'download'
     }, JWT_SECRET, { expiresIn: '7d' });
+
+    // 同步刷新 httpOnly cookie，确保 SSE 认证持续有效
+    res.cookie('auth_token', newToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000  // 7天
+    });
+
     return res.json({ success: true, token: newToken });
 };

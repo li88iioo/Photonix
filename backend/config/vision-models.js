@@ -32,6 +32,41 @@ const MODEL_METADATA = {
         provider: 'Google Gemini',
         capabilities: ['vision', 'multimodal']
     },
+    'gemini-3-flash': {
+        label: 'Gemini 3 Flash',
+        provider: 'Google Gemini',
+        capabilities: ['vision', 'multimodal']
+    },
+    'gemini-3-flash-preview': {
+        label: 'Gemini 3 Flash Preview',
+        provider: 'Google Gemini',
+        capabilities: ['vision', 'multimodal']
+    },
+    'gemini-3-pro': {
+        label: 'Gemini 3 Pro',
+        provider: 'Google Gemini',
+        capabilities: ['vision', 'multimodal']
+    },
+    'gemini-3-pro-preview': {
+        label: 'Gemini 3 Pro Preview',
+        provider: 'Google Gemini',
+        capabilities: ['vision', 'multimodal']
+    },
+    'gemini-3-pro-image-preview': {
+        label: 'Gemini 3 Pro Image Preview',
+        provider: 'Google Gemini',
+        capabilities: ['vision', 'multimodal']
+    },
+    'gemini-2.5-flash-image': {
+        label: 'Gemini 2.5 Flash Image',
+        provider: 'Google Gemini',
+        capabilities: ['vision', 'multimodal']
+    },
+    'gemini-2.5-flash-image-preview': {
+        label: 'Gemini 2.5 Flash Image Preview',
+        provider: 'Google Gemini',
+        capabilities: ['vision', 'multimodal']
+    },
     'gemini-1.5-flash': {
         label: 'Gemini 1.5 Flash',
         provider: 'Google Gemini',
@@ -246,6 +281,131 @@ const MODEL_METADATA = {
         label: 'Yi Vision',
         provider: '01.AI',
         capabilities: ['vision']
+    },
+    'grok-4': {
+        label: 'Grok 4',
+        provider: 'xAI',
+        capabilities: ['vision', 'multimodal']
+    },
+    'seed-1.6-flash': {
+        label: 'Seed 1.6 Flash',
+        provider: 'ByteDance',
+        capabilities: ['vision', 'multimodal']
+    },
+    'kimi-vl-a3b-thinking': {
+        label: 'Kimi VL A3B Thinking',
+        provider: 'Moonshot AI',
+        capabilities: ['vision']
+    },
+    'qwen2.5-vl-32b-instruct': {
+        label: 'Qwen 2.5 VL 32B Instruct',
+        provider: 'Alibaba Qwen',
+        capabilities: ['vision']
+    },
+    'qwen2.5-vl-72b-instruct': {
+        label: 'Qwen 2.5 VL 72B Instruct',
+        provider: 'Alibaba Qwen',
+        capabilities: ['vision']
+    },
+    'llama-3.2-11b-vision-instruct': {
+        label: 'Llama 3.2 11B Vision Instruct',
+        provider: 'Meta',
+        capabilities: ['vision']
+    },
+    'llama-3.2-90b-vision-instruct': {
+        label: 'Llama 3.2 90B Vision Instruct',
+        provider: 'Meta',
+        capabilities: ['vision']
+    },
+    'ministral-3b': {
+        label: 'Ministral 3B',
+        provider: 'Mistral',
+        capabilities: ['vision']
+    },
+    'ministral-8b': {
+        label: 'Ministral 8B',
+        provider: 'Mistral',
+        capabilities: ['vision']
+    },
+    'claude-3-5-sonnet-20241022': {
+        label: 'Claude 3.5 Sonnet (Oct 2024)',
+        provider: 'Anthropic',
+        capabilities: ['vision']
+    },
+    'claude-3-5-haiku-20241022': {
+        label: 'Claude 3.5 Haiku (Oct 2024)',
+        provider: 'Anthropic',
+        capabilities: ['vision']
+    },
+    'gpt-4.1': {
+        label: 'GPT-4.1',
+        provider: 'OpenAI',
+        capabilities: ['vision', 'multimodal']
+    },
+    'gpt-4.1-mini': {
+        label: 'GPT-4.1 Mini',
+        provider: 'OpenAI',
+        capabilities: ['vision']
+    },
+    'gpt-4.1-nano': {
+        label: 'GPT-4.1 Nano',
+        provider: 'OpenAI',
+        capabilities: ['vision']
+    },
+    'o3': {
+        label: 'OpenAI o3',
+        provider: 'OpenAI',
+        capabilities: ['vision', 'reasoning']
+    },
+    'o3-mini': {
+        label: 'OpenAI o3 Mini',
+        provider: 'OpenAI',
+        capabilities: ['vision', 'reasoning']
+    },
+    'o4-mini': {
+        label: 'OpenAI o4 Mini',
+        provider: 'OpenAI',
+        capabilities: ['vision', 'reasoning']
+    },
+    'llama-4-behemoth': {
+        label: 'Llama 4 Behemoth',
+        provider: 'Meta',
+        capabilities: ['vision', 'multimodal']
+    },
+    'llama-4-maverick': {
+        label: 'Llama 4 Maverick',
+        provider: 'Meta',
+        capabilities: ['vision', 'multimodal']
+    },
+    'llama-4-scout': {
+        label: 'Llama 4 Scout',
+        provider: 'Meta',
+        capabilities: ['vision', 'multimodal']
+    },
+    'mistral-small-3.1-24b-instruct': {
+        label: 'Mistral Small 3.1 24B Instruct',
+        provider: 'Mistral',
+        capabilities: ['vision']
+    },
+    'claude-opus-4.5': {
+        label: 'Claude Opus 4.5',
+        provider: 'Anthropic',
+        capabilities: ['vision', 'multimodal']
+    },
+    'glm-4.6v': {
+        label: 'GLM-4.6V',
+        provider: 'Zhipu',
+        capabilities: ['vision', 'multimodal']
+    },
+    'nemotron-nano-2-vl': {
+        label: 'Nemotron Nano 2 VL',
+        provider: 'NVIDIA',
+        capabilities: ['vision', 'video']
+    },
+    'qwen2.5-vl-3b-instruct': {
+        label: 'Qwen 2.5 VL 3B Instruct',
+        provider: 'Alibaba Qwen',
+        capabilities: ['vision']
     }
 };
 
@@ -271,6 +431,13 @@ const RAW_VISION_MODELS = [
     'gemini-2.5-flash',
     'gemini-2.5-flash-lite',
     'gemini-2.5-pro',
+    'gemini-2.5-flash-image',
+    'gemini-2.5-flash-image-preview',
+    'gemini-3-flash',
+    'gemini-3-flash-preview',
+    'gemini-3-pro',
+    'gemini-3-pro-preview',
+    'gemini-3-pro-image-preview',
     'gemini-pro-vision',
     'gemma-3-27b-vision',
     'gemma-3-9b-vision',
@@ -323,7 +490,32 @@ const RAW_VISION_MODELS = [
     'yi-vision',
     'deepseek-vl',
     'deepseek-vl2',
-    'deepseek-janus-pro-7b'
+    'deepseek-janus-pro-7b',
+    'grok-4',
+    'seed-1.6-flash',
+    'kimi-vl-a3b-thinking',
+    'qwen2.5-vl-32b-instruct',
+    'qwen2.5-vl-72b-instruct',
+    'llama-3.2-11b-vision-instruct',
+    'llama-3.2-90b-vision-instruct',
+    'ministral-3b',
+    'ministral-8b',
+    'claude-3-5-sonnet-20241022',
+    'claude-3-5-haiku-20241022',
+    'gpt-4.1',
+    'gpt-4.1-mini',
+    'gpt-4.1-nano',
+    'o3',
+    'o3-mini',
+    'o4-mini',
+    'llama-4-behemoth',
+    'llama-4-maverick',
+    'llama-4-scout',
+    'mistral-small-3.1-24b-instruct',
+    'claude-opus-4.5',
+    'glm-4.6v',
+    'nemotron-nano-2-vl',
+    'qwen2.5-vl-3b-instruct'
 ];
 
 const NORMALIZED_WHITELIST = new Map();
@@ -375,16 +567,21 @@ const VISION_MODEL_KEYWORDS = Array.from(new Set([
     'gemini-1.5',
     'gemini-2.0',
     'gemini-2.5',
+    'gemini-3',
     'cogvlm',
     'qwen-vl',
     'qvq'
 ]));
 
 function normalizeVisionModelId(modelId = '') {
-    return String(modelId || '')
-        .trim()
-        .replace(/^models\//i, '')
-        .toLowerCase();
+    const cleaned = String(modelId || '').trim();
+    if (!cleaned) return '';
+
+    // 去掉可选前缀 models/ 以及渠道/实例后缀（如 :free、:newapi）
+    const withoutPrefix = cleaned.replace(/^models\//i, '');
+    const withoutChannel = withoutPrefix.split(':')[0];
+
+    return withoutChannel.toLowerCase();
 }
 
 function buildModelLabel(id = '') {

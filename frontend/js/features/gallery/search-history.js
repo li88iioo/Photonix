@@ -97,23 +97,23 @@ export function renderSearchHistory(searchInput, historyContainer) {
     }
 
     const historyHtml = history.map(query => `
-        <li class="px-4 py-2 hover:bg-gray-50 cursor-pointer flex items-center justify-between group" data-query="${escapeHtml(query)}">
-            <span class="text-sm text-gray-600 group-hover:text-black flex gap-2 items-center transition-colors">
-                <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <li class="search-history-item" data-query="${escapeHtml(query)}">
+            <span class="search-history-text">
+                <svg class="search-history-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                 </svg>
                 ${escapeHtml(query)}
             </span>
-            <button class="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 px-1 transition-all remove-history-btn" data-query="${escapeHtml(query)}" title="删除">×</button>
+            <button class="search-history-remove remove-history-btn" data-query="${escapeHtml(query)}" title="删除" aria-label="删除历史项">×</button>
         </li>
     `).join('');
 
     safeSetInnerHTML(historyContainer, `
-        <div class="flex items-center justify-between px-4 py-2 text-xs text-gray-400 border-b border-gray-50 mb-1">
-            <span class="font-bold uppercase tracking-wider">搜索历史</span>
-            <button class="clear-history-btn hover:text-red-500 transition-colors" title="清空所有历史">清空</button>
+        <div class="search-history-header">
+            <span class="search-history-title">搜索历史</span>
+            <button class="search-history-clear clear-history-btn" title="清空所有历史">清空</button>
         </div>
-        <ul id="history-list" class="max-h-60 overflow-y-auto">
+        <ul id="history-list" class="search-history-list">
             ${historyHtml}
         </ul>
     `);
