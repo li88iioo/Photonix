@@ -19,7 +19,7 @@ const ongoingRequests = new Map();
  * @param {Function} loadStatusTables 状态刷新回调
  * @returns {Promise<Record<string, any>>} 后端返回的任务结果
  */
-export async function triggerSync(type, options = {}, loadStatusTables) {
+export async function triggerSync(type, options = {}, loadStatusTables, adminSecret = null) {
     try {
         if (ongoingRequests.has(type)) {
             settingsLogger.warn('触发补全操作被拒绝：请求正在进行中', { type });
@@ -45,6 +45,9 @@ export async function triggerSync(type, options = {}, loadStatusTables) {
         if (token) {
             headers.Authorization = `Bearer ${token}`;
         }
+        if (adminSecret) {
+            headers['X-Admin-Secret'] = adminSecret;
+        }
 
         settingsLogger.debug('发送补全请求', { type, loop: options.loop, silent: options.silent });
 
@@ -54,6 +57,7 @@ export async function triggerSync(type, options = {}, loadStatusTables) {
             body: JSON.stringify({
                 loop: options.loop || false,
                 silent: syncState.isSilent || false,
+                adminSecret
             }),
         });
 
@@ -70,7 +74,12 @@ export async function triggerSync(type, options = {}, loadStatusTables) {
 
         const data = await response.json();
 
-        if (!syncState.isSilent) {
+        const message = data.message || '';
+        const skipped = data.data?.skipped || data.data?.result?.skipped || /已在运行|跳过/.test(message);
+
+        if (skipped) {
+            showNotification(message || '任务已在运行，跳过本次触发', 'info');
+        } else if (!syncState.isSilent) {
             showNotification(
                 `补全${type === 'index' ? '索引' : type === 'thumbnail' ? '缩略图' : 'HLS'} 成功`,
                 'success',
@@ -109,17 +118,21 @@ export async function triggerSync(type, options = {}, loadStatusTables) {
  * @param {Function} loadStatusTables 状态刷新回调
  * @returns {Promise<void>} 清理操作完成
  */
-export async function triggerCleanup(type, loadStatusTables) {
+export async function triggerCleanup(type, loadStatusTables, adminSecret = null) {
     try {
         const token = getAuthToken();
         const headers = { 'Content-Type': 'application/json' };
         if (token) {
             headers.Authorization = `Bearer ${token}`;
         }
+        if (adminSecret) {
+            headers['X-Admin-Secret'] = adminSecret;
+        }
 
         const response = await fetch(`/api/settings/cleanup/${type}`, {
             method: 'POST',
             headers,
+            body: JSON.stringify({ adminSecret })
         });
 
         if (!response.ok) {

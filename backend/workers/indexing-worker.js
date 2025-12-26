@@ -448,6 +448,44 @@ const INDEX_CACHE_LOG_INTERVAL_MS = Math.max(1000, Number(process.env.INDEX_CACH
 
     process.on('exit', () => clearInterval(cacheCleanupInterval));
 
+    /**
+     * 安全获取图片尺寸（支持超大图片，如 8192×40881 长图）
+     * 策略：sharp(limitInputPixels:false) -> image-size fallback
+     * @param {string} filePath - 图片文件绝对路径
+     * @returns {Promise<{width: number, height: number}>}
+     */
+    async function getImageDimensionsSafe(filePath) {
+        // 方法1：使用 sharp 读取元数据（放宽像素限制）
+        try {
+            const metadata = await sharp(filePath, {
+                limitInputPixels: false,  // 允许读取超大图片的元数据
+                sequentialRead: true,     // 顺序读取，减少内存占用
+                failOn: 'none'            // 容忍轻微损坏的文件
+            }).metadata();
+
+            if (metadata.width && metadata.height) {
+                return { width: metadata.width, height: metadata.height };
+            }
+        } catch (sharpError) {
+            // sharp 失败，继续尝试 image-size
+            logger.debug(`${LOG_PREFIXES.INDEXING_WORKER} Sharp元数据读取失败，尝试image-size: ${path.basename(filePath)}`);
+        }
+
+        // 方法2：使用 image-size 库（只读文件头，极快）
+        try {
+            const imageSize = require('image-size');
+            const dimensions = imageSize(filePath);
+            if (dimensions.width && dimensions.height) {
+                return { width: dimensions.width, height: dimensions.height };
+            }
+        } catch (imageSizeError) {
+            logger.debug(`${LOG_PREFIXES.INDEXING_WORKER} image-size读取失败: ${path.basename(filePath)}, ${imageSizeError.message}`);
+        }
+
+        // 两种方法都失败，抛出错误让上层处理
+        throw new Error('无法读取图片尺寸');
+    }
+
     async function getMediaDimensions(filePath, type, mtime) {
         const cacheKey = `${filePath}:${mtime}`;
 
@@ -458,7 +496,7 @@ const INDEX_CACHE_LOG_INTERVAL_MS = Math.max(1000, Number(process.env.INDEX_CACH
         try {
             let dimensions = type === 'video'
                 ? await getVideoDimensions(filePath)
-                : await sharp(filePath).metadata().then(m => ({ width: m.width, height: m.height }));
+                : await getImageDimensionsSafe(filePath);
 
             // 异步缓存，不阻塞主流程
             externalCache.set(cacheKey, dimensions).catch(e =>

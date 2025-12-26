@@ -23,7 +23,8 @@ const state = {
   cronJob: null,                                    // Cron 任务
   running: false,                                   // 是否正在运行
   lastRunAt: null,                                  // 上次运行时间
-  nextRunAt: null                                   // 下次运行时间
+  nextRunAt: null,                                  // 下次运行时间
+  pipelineRunning: false                            // 维护流水线运行互斥
 };
 
 /**
@@ -85,6 +86,11 @@ function normalizeScheduleInput(input) {
 async function runManualSync(trigger, raw) {
   if (state.running) {
     logger.debug(`${LOG_PREFIXES.AUTO_SYNC} 已有任务在运行，跳过 (${trigger})`);
+    return;
+  }
+
+  if (state.pipelineRunning) {
+    logger.debug(`${LOG_PREFIXES.AUTO_SYNC} 自动维护流水线运行中，跳过本次手动触发 (${trigger})`);
     return;
   }
 
@@ -156,6 +162,11 @@ async function runManualSync(trigger, raw) {
 }
 
 async function runScheduledMaintenancePipeline() {
+  if (state.pipelineRunning) {
+    logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护流水线已在运行，跳过本次触发`);
+    return;
+  }
+  state.pipelineRunning = true;
   try {
     try {
       logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：启动缩略图同步`);
@@ -177,7 +188,8 @@ async function runScheduledMaintenancePipeline() {
 
     logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：启动缩略图补全`);
     const thumbSyncResult = await triggerSyncOperation('thumbnail');
-    logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：缩略图补全完成 ${thumbSyncResult?.message ? `(${thumbSyncResult.message})` : ''}`.trim());
+    const thumbMessage = thumbSyncResult?.message ? `(${thumbSyncResult.message})` : '';
+    logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：缩略图补全完成 ${thumbMessage}`.trim());
 
     try {
       logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：启动缩略图清理`);
@@ -194,12 +206,15 @@ async function runScheduledMaintenancePipeline() {
     try {
       logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：启动 HLS 清理`);
       const hlsCleanupResult = await triggerCleanupOperation('hls');
-      logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：HLS 清理完成 ${hlsCleanupResult?.message ? `(${hlsCleanupResult.message})` : ''}`.trim());
+      const hlsCleanupMessage = hlsCleanupResult?.message ? `(${hlsCleanupResult.message})` : '';
+      logger.info(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：HLS 清理完成 ${hlsCleanupMessage}`.trim());
     } catch (hlsCleanupError) {
       logger.error(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：HLS 清理失败`, hlsCleanupError);
     }
   } catch (pipelineError) {
     logger.error(`${LOG_PREFIXES.AUTO_SYNC} 自动维护：维护流水线执行失败`, pipelineError);
+  } finally {
+    state.pipelineRunning = false;
   }
 }
 

@@ -228,12 +228,13 @@ exports.triggerSync = async (req, res) => {
       throw new ValidationError('无效的补全类型', { validTypes });
     }
 
+    const adminSecret = req.headers['x-admin-secret'] || req.body?.adminSecret;
+
     if (type === 'index') {
       const hasPermissionToRun = hasPermission(getUserRole(req), PERMISSIONS.GENERATE_THUMBNAILS);
       if (!hasPermissionToRun) {
         throw new AuthorizationError('需要先设置访问密码才能重建索引');
       }
-      const adminSecret = req.headers['x-admin-secret'] || req.body?.adminSecret;
       const buildCtx = (extra) => buildAuditContext(req, {
         action: 'trigger_sync',
         type: 'index',
@@ -245,6 +246,18 @@ exports.triggerSync = async (req, res) => {
         throw mapAdminSecretError(verifyResult, '重建索引验证失败');
       }
       logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved', message: '重建索引管理员密钥验证成功' }))));
+    } else {
+      const buildCtx = (extra) => buildAuditContext(req, {
+        action: 'trigger_sync',
+        type,
+        sensitive: true,
+        ...extra
+      });
+      const verifyResult = await verifySensitiveOperations(true, adminSecret, buildCtx);
+      if (!verifyResult.ok) {
+        throw mapAdminSecretError(verifyResult, `触发${getTypeDisplayName(type)}补全验证失败`);
+      }
+      logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved', message: `触发${getTypeDisplayName(type)}补全管理员密钥验证成功` }))));
     }
 
     const syncResult = await triggerSyncOperation(type);
@@ -318,6 +331,19 @@ exports.triggerCleanup = async (req, res) => {
     if (!validTypes.includes(type)) {
       throw new ValidationError('无效的同步类型', { validTypes });
     }
+    const adminSecret = req.headers['x-admin-secret'] || req.body?.adminSecret;
+    const buildCtx = (extra) => buildAuditContext(req, {
+      action: 'trigger_cleanup',
+      type,
+      sensitive: true,
+      ...extra
+    });
+    const verifyResult = await verifySensitiveOperations(true, adminSecret, buildCtx);
+    if (!verifyResult.ok) {
+      throw mapAdminSecretError(verifyResult, `触发${getTypeDisplayName(type)}清理验证失败`);
+    }
+    logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved', message: `触发${getTypeDisplayName(type)}清理管理员密钥验证成功` }))));
+
     const cleanupResult = await triggerCleanupOperation(type);
     res.json({
       success: true,

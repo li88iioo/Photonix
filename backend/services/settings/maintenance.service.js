@@ -22,6 +22,65 @@ const idxRepo = require('../../repositories/indexStatus.repo');
 const { getMediaStats, getGroupStats, getCount } = require('../../repositories/stats.repo');
 const { sanitizePath, isPathSafe } = require('../../utils/path.utils');
 const { redis } = require('../../config/redis');
+const { getSettingsWorker } = require('../worker.manager');
+const { normalizeWorkerMessage } = require('../../utils/workerMessage');
+
+const lockState = new Map();
+
+function isTaskRunning(key) {
+  return lockState.get(key) === true;
+}
+
+async function runMaintenanceInWorker(taskType, payload, fallback) {
+  try {
+    const worker = getSettingsWorker();
+    if (!worker) {
+      throw new Error('settings worker unavailable');
+    }
+    const message = TraceManager.injectToWorkerMessage({ type: taskType, payload });
+    return await new Promise((resolve, reject) => {
+      const onMessage = (raw) => {
+        const normalized = normalizeWorkerMessage(raw);
+        if (normalized.payload?.type !== taskType) {
+          return;
+        }
+        cleanup();
+        if (normalized.kind === 'result') {
+          resolve(normalized.payload.result);
+        } else {
+          const errMessage = normalized.payload?.error?.message || 'Worker maintenance task failed';
+          reject(new Error(errMessage));
+        }
+      };
+      const onError = (err) => {
+        cleanup();
+        reject(err);
+      };
+      const cleanup = () => {
+        worker.off('message', onMessage);
+        worker.off('error', onError);
+      };
+      worker.on('message', onMessage);
+      worker.on('error', onError);
+      worker.postMessage(message);
+    });
+  } catch (error) {
+    logger.debug(`${LOG_PREFIXES.SYSTEM_MAINTENANCE} worker 调度失败，使用主线程执行: ${error?.message || error}`);
+    return fallback();
+  }
+}
+
+async function runWithLock(key, task) {
+  if (isTaskRunning(key)) {
+    return { skipped: true, running: true, task: key };
+  }
+  lockState.set(key, true);
+  try {
+    return await task();
+  } finally {
+    lockState.set(key, false);
+  }
+}
 
 async function scanKeysByPattern(redisClient, pattern, { count = 500, maxKeys = 10000 } = {}) {
   if (!redisClient || redisClient.isNoRedis || typeof redisClient.scan !== 'function') {
@@ -604,12 +663,13 @@ async function getHlsStatus() {
   }
 }
 
-async function performThumbnailReconcile() {
-  try {
+async function performThumbnailReconcileLocal(options = {}) {
+  const { limit = 1000 } = options;
+  return runWithLock('thumbnail_reconcile_local', async () => {
     const ThumbStatusRepository = require('../../repositories/thumbStatus.repo');
     const thumbStatusRepo = new ThumbStatusRepository();
 
-    const missingFiles = await thumbStatusRepo.getByStatus('missing', 1000);
+    const missingFiles = await thumbStatusRepo.getByStatus('missing', limit);
 
     if (!missingFiles || missingFiles.length === 0) {
       logger.debug('缩略图补全检查完成：没有发现需要补全的缩略图');
@@ -619,11 +679,21 @@ async function performThumbnailReconcile() {
     let changed = 0;
     let skipped = 0;
 
+    let processed = 0;
+    const YIELD_EVERY = 200;
+    const yieldIfNeeded = async () => {
+      processed += 1;
+      if (processed % YIELD_EVERY === 0) {
+        await Promise.resolve();
+      }
+    };
+
     for (const row of missingFiles) {
       try {
         const sanitizedPath = sanitizePath(row.path || '');
         if (!sanitizedPath || !isPathSafe(sanitizedPath)) {
           skipped++;
+          await yieldIfNeeded();
           continue;
         }
 
@@ -640,6 +710,8 @@ async function performThumbnailReconcile() {
         skipped++;
         logger.debug(`${LOG_PREFIXES.SYSTEM_MAINTENANCE} 缩略图补全标记失败，已跳过: ${sanitizedPath || row.path} -> ${resyncErr && resyncErr.message}`);
       }
+
+      await yieldIfNeeded();
     }
 
     logger.debug(`缩略图补全检查完成：发现 ${changed} 个文件需要补全缩略图，跳过 ${skipped} 个无效或缺失的记录`);
@@ -651,14 +723,14 @@ async function performThumbnailReconcile() {
     } catch (dispatchErr) {
       logger.warn(`${LOG_PREFIXES.THUMB_BACKFILL_DISPATCH} 启动失败（不影响状态更新）：${dispatchErr && dispatchErr.message}`);
     }
-  } catch (error) {
+  }).catch((error) => {
     logger.error('缩略图补全检查失败:', error);
     throw error;
-  }
+  });
 }
 
-async function performHlsReconcileOnce(limit = 1000) {
-  try {
+async function performHlsReconcileOnceLocal(limit = 1000) {
+  return runWithLock('hls_reconcile_local', async () => {
     const ItemsRepository = require('../../repositories/items.repo');
     const itemsRepo = new ItemsRepository();
     const pageSize = Math.max(100, Number(limit) || 1000);
@@ -731,14 +803,14 @@ async function performHlsReconcileOnce(limit = 1000) {
       failed,
       skipped
     };
-  } catch (error) {
+  }).catch((error) => {
     logger.error('HLS补全检查失败:', error);
     throw error;
-  }
+  });
 }
 
-async function performThumbnailCleanup() {
-  try {
+async function performThumbnailCleanupLocal() {
+  return runWithLock('thumbnail_cleanup_local', async () => {
     const ThumbStatusRepository = require('../../repositories/thumbStatus.repo');
     const ItemsRepository = require('../../repositories/items.repo');
     const thumbStatusRepo = new ThumbStatusRepository();
@@ -752,12 +824,22 @@ async function performThumbnailCleanup() {
       errors: 0
     };
 
+    let processed = 0;
+    const YIELD_EVERY = 200;
+    const yieldIfNeeded = async () => {
+      processed += 1;
+      if (processed % YIELD_EVERY === 0) {
+        await Promise.resolve();
+      }
+    };
+
     for (const thumb of allThumbs) {
       if (!thumb?.path) continue;
 
       const sanitizedPath = sanitizePath(thumb.path);
       if (!sanitizedPath || !isPathSafe(sanitizedPath)) {
         logger.warn(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 跳过可疑路径: ${thumb.path}`);
+        await yieldIfNeeded();
         continue;
       }
 
@@ -781,6 +863,7 @@ async function performThumbnailCleanup() {
       const isOrphanThumb = !sourceExists;
 
       if (!shouldRemoveSource && !isOrphanThumb) {
+        await yieldIfNeeded();
         continue;
       }
 
@@ -797,39 +880,47 @@ async function performThumbnailCleanup() {
           await safeRedisDel(redis, redisKey, '清理永久失败缩略图标记');
         }
 
-        // 【安全措施】不再删除源文件，只清理缓存记录
-        // 原设计会删除 permanent_failed 的源文件，但这太危险了
-        // 因为缩略图生成失败不代表源文件损坏（可能只是超时、内存不足等临时问题）
+        // 删除永久失败的源文件（确认损坏/无法处理的文件）
         if (shouldRemoveSource && sourceExists) {
-          logger.info(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 跳过源文件删除（安全模式）: ${sourceAbsPath}`);
-          // 不删除源文件，只记录日志
+          try {
+            await fs.unlink(sourceAbsPath);
+            logger.debug(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 删除永久失败源文件: ${sourceAbsPath}`);
+            result.permanentSourcesRemoved += 1;
+          } catch (unlinkErr) {
+            if (unlinkErr.code !== 'ENOENT') {
+              logger.warn(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 删除源文件失败: ${sourceAbsPath}`, unlinkErr.message);
+            }
+          }
         }
 
         try {
           await fs.unlink(thumbAbsPath);
-          logger.info(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 删除缩略图文件: ${thumbAbsPath}`);
+          logger.debug(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 删除缩略图文件: ${thumbAbsPath}`);
           result.thumbFilesRemoved += 1;
         } catch (thumbErr) {
           if (thumbErr.code !== 'ENOENT') {
             logger.warn(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 删除缩略图文件失败: ${thumbAbsPath}`, thumbErr);
           }
         }
+
+        await yieldIfNeeded();
       } catch (cleanupErr) {
         logger.warn(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 处理路径失败: ${sanitizedPath}`, cleanupErr);
         result.errors += 1;
+        await yieldIfNeeded();
       }
     }
 
     logger.info(`缩略图清理完成：移除缩略图 ${result.thumbFilesRemoved} 个，永久失败源文件 ${result.permanentSourcesRemoved} 个，数据库清理 ${result.dbRecordsRemoved} 条`);
     return result;
-  } catch (error) {
+  }).catch((error) => {
     logger.error('缩略图清理失败:', error);
     throw error;
-  }
+  });
 }
 
-async function performHlsCleanup() {
-  try {
+async function performHlsCleanupLocal() {
+  return runWithLock('hls_cleanup_local', async () => {
     const ItemsRepository = require('../../repositories/items.repo');
     const itemsRepo = new ItemsRepository();
     const allVideos = await itemsRepo.getVideos();
@@ -838,6 +929,15 @@ async function performHlsCleanup() {
     let deletedCount = 0;
     let errorCount = 0;
     let permanentFailedCount = 0;
+
+    let processed = 0;
+    const YIELD_EVERY = 200;
+    const yieldIfNeeded = async () => {
+      processed += 1;
+      if (processed % YIELD_EVERY === 0) {
+        await Promise.resolve();
+      }
+    };
 
     async function scanAndDelete(dir, relativePath = '') {
       try {
@@ -852,7 +952,7 @@ async function performHlsCleanup() {
               const remaining = await fs.readdir(fullPath);
               if (remaining.length === 0) {
                 await fs.rmdir(fullPath);
-                logger.info(`删除空的HLS目录: ${fullPath}`);
+                logger.debug(`删除空的HLS目录: ${fullPath}`);
               }
             } catch (cleanupErr) {
               logger.debug(`${LOG_PREFIXES.SYSTEM_MAINTENANCE} 删除空 HLS 目录失败（忽略）: ${fullPath} -> ${cleanupErr && cleanupErr.message}`);
@@ -871,12 +971,14 @@ async function performHlsCleanup() {
                 errorCount++;
               }
             }
+            await yieldIfNeeded();
           }
         }
       } catch (error) {
         logger.warn(`扫描HLS目录失败: ${dir}`, error);
         errorCount++;
       }
+      await yieldIfNeeded();
     }
 
     // 第一步：清理孤立的HLS目录
@@ -902,6 +1004,7 @@ async function performHlsCleanup() {
 
             if (!sanitizedPath || !isPathSafe(sanitizedPath)) {
               logger.warn(`${LOG_PREFIXES.HLS_CLEANUP} 跳过可疑路径: ${relativePath}`);
+              await yieldIfNeeded();
               continue;
             }
 
@@ -922,6 +1025,7 @@ async function performHlsCleanup() {
               // 源文件已经不存在，只清理 Redis 标记
               await safeRedisDel(redis, key, '清理永久失败视频标记');
               logger.debug(`${LOG_PREFIXES.HLS_CLEANUP} 源文件不存在，清理标记: ${relativePath}`);
+              await yieldIfNeeded();
               continue;
             }
 
@@ -935,11 +1039,17 @@ async function performHlsCleanup() {
               logger.warn(`${LOG_PREFIXES.HLS_CLEANUP} 删除数据库记录失败: ${sanitizedPath}`, dbErr.message);
             }
 
-            // 【安全措施】不再删除视频源文件，只清理缓存记录
-            // 原设计会删除 permanent_failed 的源文件，但这太危险了
+            // 删除永久失败的视频源文件（确认损坏/无法处理的文件）
             if (sourceExists) {
-              logger.info(`${LOG_PREFIXES.HLS_CLEANUP} 跳过视频源文件删除（安全模式）: ${sourceAbsPath}`);
-              // 不删除源文件，只清理 Redis 标记
+              try {
+                await fs.unlink(sourceAbsPath);
+                logger.info(`${LOG_PREFIXES.HLS_CLEANUP} 删除永久失败视频源文件: ${sourceAbsPath}`);
+                permanentFailedCount++;
+              } catch (unlinkErr) {
+                if (unlinkErr.code !== 'ENOENT') {
+                  logger.warn(`${LOG_PREFIXES.HLS_CLEANUP} 删除视频源文件失败: ${sourceAbsPath}`, unlinkErr.message);
+                }
+              }
             }
 
             // 删除 HLS 目录（如果存在）
@@ -958,6 +1068,7 @@ async function performHlsCleanup() {
             logger.warn(`${LOG_PREFIXES.HLS_CLEANUP} 处理永久失败视频失败: ${key}`, itemErr.message);
             errorCount++;
           }
+          await yieldIfNeeded();
         }
       } catch (redisErr) {
         logger.warn(`${LOG_PREFIXES.HLS_CLEANUP} 扫描永久失败标记时出错:`, redisErr.message);
@@ -970,10 +1081,26 @@ async function performHlsCleanup() {
       permanentSourcesRemoved: permanentFailedCount,
       errors: errorCount
     };
-  } catch (error) {
+  }).catch((error) => {
     logger.error('HLS清理失败:', error);
     throw error;
-  }
+  });
+}
+
+async function performThumbnailReconcile(options = {}) {
+  return runMaintenanceInWorker('thumbnail_reconcile', options, () => performThumbnailReconcileLocal(options));
+}
+
+async function performHlsReconcileOnce(limit = 1000) {
+  return runMaintenanceInWorker('hls_reconcile', { limit }, () => performHlsReconcileOnceLocal(limit));
+}
+
+async function performThumbnailCleanup() {
+  return runMaintenanceInWorker('thumbnail_cleanup', {}, () => performThumbnailCleanupLocal());
+}
+
+async function performHlsCleanup() {
+  return runMaintenanceInWorker('hls_cleanup', {}, () => performHlsCleanupLocal());
 }
 
 async function checkSyncStatus(type) {
@@ -1096,9 +1223,16 @@ async function triggerSyncOperation(type) {
       return { message: '已启动索引补全任务' };
     }
     case 'thumbnail':
-      return { message: '已启动缩略图补全任务', result: await performThumbnailReconcile() };
+      const thumbResult = await performThumbnailReconcile();
+      if (thumbResult?.skipped) {
+        return { message: '缩略图补全已在运行，跳过本次请求', result: thumbResult, skipped: true };
+      }
+      return { message: '已启动缩略图补全任务', result: thumbResult };
     case 'hls': {
       const batch = await performHlsReconcileOnce();
+      if (batch?.skipped) {
+        return { message: 'HLS补全已在运行，跳过本次请求', result: batch, skipped: true };
+      }
       return { message: `HLS补全完成：total=${batch.total}, success=${batch.success}, failed=${batch.failed}, skipped=${batch.skipped}`, result: batch };
     }
     case 'all': {
@@ -1147,6 +1281,14 @@ async function triggerCleanupOperation(type) {
     case 'thumbnail': {
       // 执行缩略图清理
       const thumbResult = await performThumbnailCleanup();
+      if (thumbResult?.skipped) {
+        return {
+          message: '缩略图清理已在运行，跳过本次请求',
+          status: syncStatus,
+          result: thumbResult,
+          skipped: true
+        };
+      }
       const updatedStatus = await checkSyncStatus('thumbnail');
       return {
         message: `缩略图清理完成：移除缩略图 ${thumbResult.thumbFilesRemoved} 个，永久失败源文件 ${thumbResult.permanentSourcesRemoved} 个`,
@@ -1157,6 +1299,14 @@ async function triggerCleanupOperation(type) {
     case 'hls': {
       // 执行HLS清理
       const hlsResult = await performHlsCleanup();
+      if (hlsResult?.skipped) {
+        return {
+          message: 'HLS清理已在运行，跳过本次请求',
+          status: syncStatus,
+          result: hlsResult,
+          skipped: true
+        };
+      }
       return {
         message: `HLS同步完成：删除 ${hlsResult.deleted} 个冗余目录`,
         status: syncStatus,
@@ -1193,12 +1343,17 @@ module.exports = {
   getIndexStatus,             // 获取索引状态
   getHlsStatus,               // 获取HLS状态
   performThumbnailReconcile,  // 执行缩略图补全
+  performThumbnailReconcileLocal, // 本地执行缩略图补全（worker fallback）
   performHlsReconcileOnce,    // 执行HLS补全
-  performThumbnailCleanup,    // 执行缩略图清理
-  performHlsCleanup,          // 执行HLS清理
+  performHlsReconcileOnceLocal, // 本地执行HLS补全（worker fallback）
+  performThumbnailCleanup,    // 执行缩略图清理（worker 优先）
+  performThumbnailCleanupLocal, // 本地执行缩略图清理
+  performHlsCleanup,          // 执行HLS清理（worker 优先）
+  performHlsCleanupLocal,     // 本地执行HLS清理
   checkSyncStatus,            // 检查同步状态
   triggerSyncOperation,       // 触发补全操作
   triggerCleanupOperation,    // 触发清理操作
   getTypeDisplayName,         // 获取类型显示名称
-  getHlsFileStats             // 获取HLS文件统计
+  getHlsFileStats,            // 获取HLS文件统计
+  isTaskRunning               // 查询维护任务运行状态
 };

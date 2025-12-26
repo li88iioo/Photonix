@@ -7,6 +7,7 @@ const { redis } = require('../config/redis');
 const { invalidateTags } = require('../services/cache.service.js');
 const { safeRedisSet, safeRedisDel } = require('../utils/helpers');
 const { createWorkerResult, createWorkerError } = require('../utils/workerMessage');
+const maintenanceService = require('../services/settings/maintenance.service');
 
 (async () => {
     await initializeConnections();
@@ -96,6 +97,39 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
                 } catch (err) {
                     logger.debug(`${LOG_PREFIXES.SETTINGS_WORKER} 设置Redis失败状态失败: ${err.message}`);
                 }
+            }
+        }
+        ,
+        async thumbnail_reconcile({ limit } = {}) {
+            try {
+                const result = await maintenanceService.performThumbnailReconcileLocal({ limit });
+                parentPort && parentPort.postMessage(createWorkerResult({ type: 'thumbnail_reconcile', result }));
+            } catch (error) {
+                parentPort && parentPort.postMessage(createWorkerError({ type: 'thumbnail_reconcile', error }));
+            }
+        },
+        async hls_reconcile({ limit } = {}) {
+            try {
+                const result = await maintenanceService.performHlsReconcileOnceLocal(limit);
+                parentPort && parentPort.postMessage(createWorkerResult({ type: 'hls_reconcile', result }));
+            } catch (error) {
+                parentPort && parentPort.postMessage(createWorkerError({ type: 'hls_reconcile', error }));
+            }
+        },
+        async thumbnail_cleanup() {
+            try {
+                const result = await maintenanceService.performThumbnailCleanupLocal();
+                parentPort && parentPort.postMessage(createWorkerResult({ type: 'thumbnail_cleanup', result }));
+            } catch (error) {
+                parentPort && parentPort.postMessage(createWorkerError({ type: 'thumbnail_cleanup', error }));
+            }
+        },
+        async hls_cleanup() {
+            try {
+                const result = await maintenanceService.performHlsCleanupLocal();
+                parentPort && parentPort.postMessage(createWorkerResult({ type: 'hls_cleanup', result }));
+            } catch (error) {
+                parentPort && parentPort.postMessage(createWorkerError({ type: 'hls_cleanup', error }));
             }
         }
     };

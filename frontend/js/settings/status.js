@@ -113,12 +113,12 @@ export async function loadStatusTables(options = {}) {
 }
 
 // 包装sync函数以传入loadStatusTables回调
-export async function triggerSync(type, options = {}) {
-  return _triggerSync(type, options, loadStatusTables);
+export async function triggerSync(type, options = {}, adminSecret = null) {
+  return _triggerSync(type, options, loadStatusTables, adminSecret);
 }
 
-export async function triggerCleanup(type) {
-  return _triggerCleanup(type, loadStatusTables);
+export async function triggerCleanup(type, adminSecret = null) {
+  return _triggerCleanup(type, loadStatusTables, adminSecret);
 }
 
 export async function resyncThumbnails() {
@@ -251,6 +251,12 @@ async function handleStatusButtonClick(event) {
 
         const isThumbnailSync = type === 'thumbnail';
         const shouldShowOverlay = type === 'index';
+        const isAdminSecretConfigured = settingsContext.initialSettings?.isAdminSecretConfigured || false;
+
+        if (!isAdminSecretConfigured) {
+          showNotification('权限不足，无法执行补全操作', 'error');
+          return;
+        }
 
         if (shouldShowOverlay) {
           showPodLoading(type, true);
@@ -269,19 +275,38 @@ async function handleStatusButtonClick(event) {
         }
 
         try {
-          if (isThumbnailSync) {
-            await triggerThumbnailBatchSync({
-              loop: true,
-              silent: false
+          await new Promise((resolve) => {
+            showPasswordPrompt({
+              useAdminSecret: true,
+              onConfirm: async (adminSecret) => {
+                try {
+                  if (isThumbnailSync) {
+                    await triggerThumbnailBatchSync({
+                      loop: true,
+                      silent: false
+                    });
+                  } else if (type === 'index') {
+                    await handleIndexRebuildWithAuth(type, action);
+                  } else {
+                    await triggerSync(type, {
+                      loop: false,
+                      silent: false
+                    }, adminSecret);
+                  }
+                  resolve(true);
+                } catch (err) {
+                  settingsLogger.error('补全操作失败:', err);
+                  const errorMessage = err?.message || '操作失败，请稍后重试';
+                  showNotification(errorMessage, 'error');
+                  resolve(false);
+                }
+              },
+              onCancel: () => {
+                showNotification('操作已取消', 'info');
+                resolve(false);
+              }
             });
-          } else if (type === 'index') {
-            await handleIndexRebuildWithAuth(type, action);
-          } else {
-            await triggerSync(type, {
-              loop: false,
-              silent: false
-            });
-          }
+          });
         } finally {
           if (shouldShowOverlay) {
             showPodLoading(type, false);
@@ -300,6 +325,12 @@ async function handleStatusButtonClick(event) {
         const cleanupOriginalDisabled = button.disabled;
         const cleanupOriginalHTML = button.innerHTML;
         const cleanupLabel = button.querySelector('span')?.textContent?.trim() || '清理';
+        const isAdminSecretConfigured = settingsContext.initialSettings?.isAdminSecretConfigured || false;
+
+        if (!isAdminSecretConfigured) {
+          showNotification('权限不足，无法执行清理操作', 'error');
+          return;
+        }
 
         if (!cleanupOriginalDisabled) {
           button.disabled = true;
@@ -308,7 +339,26 @@ async function handleStatusButtonClick(event) {
         }
 
         try {
-          await triggerCleanup(type);
+          await new Promise((resolve) => {
+            showPasswordPrompt({
+              useAdminSecret: true,
+              onConfirm: async (adminSecret) => {
+                try {
+                  await triggerCleanup(type, adminSecret);
+                  resolve(true);
+                } catch (err) {
+                  settingsLogger.error('清理操作失败:', err);
+                  const errorMessage = err?.message || '清理失败，请稍后重试';
+                  showNotification(errorMessage, 'error');
+                  resolve(false);
+                }
+              },
+              onCancel: () => {
+                showNotification('操作已取消', 'info');
+                resolve(false);
+              }
+            });
+          });
         } finally {
           button.classList.remove('loading');
           button.disabled = false;

@@ -65,6 +65,9 @@ const BATCH_COOLDOWN_MS = Math.max(0, Number(process.env.THUMB_BATCH_COOLDOWN_MS
 const TELEMETRY_LOG_INTERVAL_MS = Math.max(5000, Number(process.env.THUMB_TELEMETRY_LOG_INTERVAL_MS || 15000));
 const QUEUE_FULL_WARN_INTERVAL_MS = Math.max(1000, Number(process.env.THUMB_QUEUE_WARN_INTERVAL_MS || 5000));
 const QUEUE_FULL_DEBUG_INTERVAL_MS = Math.max(5000, Number(process.env.THUMB_QUEUE_DEBUG_INTERVAL_MS || 30000));
+const ENQUEUE_LOG_INTERVAL_MS = Math.max(1000, Number(process.env.THUMB_QUEUE_ENQUEUE_LOG_INTERVAL_MS || 2000));
+// 仅当排队数较上次增加到 500 条时才追加一条日志，避免高并发时刷屏
+const ENQUEUE_LOG_STEP = Math.max(10, Number(process.env.THUMB_QUEUE_ENQUEUE_LOG_STEP || 500));
 
 const pendingTasks = new Map(); // relativePath -> context
 const pendingCounts = { ondemand: 0, batch: 0 };
@@ -77,6 +80,10 @@ const THUMB_ONDEMAND_IDLE_DESTROY_MS = Number(process.env.THUMB_ONDEMAND_IDLE_DE
 let __lastBatchTelemetryLog = 0;
 let lastQueueFullWarnAt = 0;
 let lastQueueFullDebugAt = 0;
+const enqueueLogState = {
+    ondemand: { lastCount: 0, lastAt: 0, loggedOnce: false },
+    batch: { lastCount: 0, lastAt: 0, loggedOnce: false }
+};
 
 function scheduleIdlePoolDestroy() {
     try {
@@ -413,11 +420,9 @@ function dispatchThumbnailTask(task, context = 'ondemand') {
     if (pendingCounts[label] >= maxQueue) {
         const now = Date.now();
         if (now - lastQueueFullWarnAt >= QUEUE_FULL_WARN_INTERVAL_MS) {
-            logger.warn(`[${label === 'ondemand' ? '按需' : '批量'}队列] 已满(${maxQueue})，暂缓新任务`);
+            const sample = safeTask?.relativePath ? `，示例=${safeTask.relativePath}` : '';
+            logger.warn(`[${label === 'ondemand' ? '按需' : '批量'}队列] 已满(${maxQueue})，暂缓新任务${sample}`);
             lastQueueFullWarnAt = now;
-        } else if (now - lastQueueFullDebugAt >= QUEUE_FULL_DEBUG_INTERVAL_MS) {
-            logger.debug(`[${label === 'ondemand' ? '按需' : '批量'}队列] 已满(${maxQueue})，任务推迟（示例）: ${safeTask.relativePath}`);
-            lastQueueFullDebugAt = now;
         }
         return false;
     }
@@ -425,8 +430,17 @@ function dispatchThumbnailTask(task, context = 'ondemand') {
     pendingTasks.set(safeTask.relativePath, label);
     pendingCounts[label] += 1;
     refreshThumbMetrics();
-    if (pendingCounts[label] <= 3 || (pendingCounts[label] % 50 === 0)) {
-        logger.debug(`[${label === 'ondemand' ? '按需' : '批量'}生成] 并发受限，任务入队: ${safeTask.relativePath} (队列=${pendingCounts[label]}, active=${state.thumbnail.getActiveCount()}, limit=${thumbQueue.concurrency})`);
+    const now = Date.now();
+    const stateForLabel = enqueueLogState[label];
+    const isFirstFew = pendingCounts[label] <= 3;
+    const steppedIncrease = pendingCounts[label] - stateForLabel.lastCount >= ENQUEUE_LOG_STEP;
+    const intervalElapsed = now - stateForLabel.lastAt >= ENQUEUE_LOG_INTERVAL_MS;
+    const shouldLog = !stateForLabel.loggedOnce || (isFirstFew || ((steppedIncrease || intervalElapsed) && pendingCounts[label] > stateForLabel.lastCount));
+    if (shouldLog) {
+        logger.debug(`[${label === 'ondemand' ? '按需' : '批量'}任务] 排队中，等待资源 (queue=${pendingCounts[label]}, active=${state.thumbnail.getActiveCount()}, limit=${thumbQueue.concurrency})`);
+        stateForLabel.lastCount = pendingCounts[label];
+        stateForLabel.lastAt = now;
+        stateForLabel.loggedOnce = true;
     }
     const priority = label === 'ondemand' ? 1 : 2; // Lower number = higher priority in PQueue
     thumbQueue.add(() => runQueuedTask(safeTask, label, traceData), { priority }).catch((error) => {
@@ -925,7 +939,7 @@ async function batchGenerateMissingThumbnails(limit = 1000) {
                 if (yieldCount === 1) {
                     logger.info(`${LOG_PREFIXES.BATCH_BACKFILL} 检测到前台任务，批量补全完全暂停等待 (按需任务=${ondemandPending})`);
                 } else if (yieldCount % 10 === 0) {
-                    logger.info(`${LOG_PREFIXES.BATCH_BACKFILL} 继续等待前台任务完成 (按需任务=${ondemandPending}, 已等待${yieldCount}秒)`);
+                    logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 继续等待前台任务完成 (按需任务=${ondemandPending}, 已等待${yieldCount}秒)`);
                 }
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
