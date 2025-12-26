@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getCacheStats, clearCache } = require('../middleware/cache');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const rateLimit = require('express-rate-limit');
 
 /**
@@ -36,7 +37,7 @@ router.post('/clear', adminLimiter, clearCache('route_cache:*'));
  */
 router.post('/clear/:pattern', adminLimiter, (req, res) => {
     const pattern = req.params.pattern;
-    return clearCache(pattern)(req, res, () => {});
+    return clearCache(pattern)(req, res, () => { });
 });
 
 module.exports = router; 

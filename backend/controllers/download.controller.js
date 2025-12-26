@@ -6,6 +6,8 @@ const {
   AppError
 } = require('../utils/errors');
 const { verifyAdminSecret } = require('../services/settings/update.service');
+const { readAdminSecret, scrubAdminSecret } = require('../utils/adminSecret');
+const settingsService = require('../services/settings.service');
 
 const ADMIN_SECRET_CACHE_TTL_MS = Number(process.env.DOWNLOAD_ADMIN_CACHE_TTL_MS || 5 * 60 * 1000);
 const adminSecretCache = {
@@ -26,12 +28,9 @@ function extractAdminSecret(req) {
   if (req.user && req.user.authenticated) {
     return 'JWT_AUTHENTICATED'; // 特殊标记，表示已通过JWT认证
   }
-  
-  // 向后兼容：支持直接传递密钥
-  return req.headers['x-admin-secret']
-    || req.headers['x-photonix-admin-secret']
-    || req.body?.adminSecret
-    || req.query?.adminSecret;
+
+  // 优先 Header；兼容旧客户端 body/query（读取后会立刻删除，尽量避免泄露）
+  return readAdminSecret(req);
 }
 
 /**
@@ -63,13 +62,31 @@ function mapAdminSecretError(result) {
  * @param {Request} req 
  */
 async function ensureAdminAccess(req) {
+  // 若请求中错误地携带了明文密钥，提前删除，避免后续日志/中间件误记录
   const adminSecret = extractAdminSecret(req);
-  
+  scrubAdminSecret(req);
+
   // 如果已通过JWT认证，直接放行
   if (adminSecret === 'JWT_AUTHENTICATED') {
     return;
   }
-  
+
+  // 检查密码功能是否开启 - 下载管理功能需要密码功能已启用
+  try {
+    const settings = await settingsService.getAllSettings();
+    const isPasswordEnabled = settings?.PASSWORD_ENABLED === 'true';
+    if (!isPasswordEnabled) {
+      // 密码功能未启用，禁止访问下载管理页面
+      throw new AuthorizationError('下载管理功能需要先启用访问密码');
+    }
+  } catch (settingsError) {
+    // 如果是我们抛出的 AuthorizationError，直接传递
+    if (settingsError instanceof AuthorizationError) {
+      throw settingsError;
+    }
+    // 其他错误（如获取设置失败），继续原有验证流程
+  }
+
   const now = Date.now();
 
   if (
@@ -86,14 +103,6 @@ async function ensureAdminAccess(req) {
 
   adminSecretCache.secret = adminSecret;
   adminSecretCache.expiresAt = now + ADMIN_SECRET_CACHE_TTL_MS;
-
-  // 校验通过后删除明文密钥，避免泄露
-  if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'adminSecret')) {
-    delete req.body.adminSecret;
-  }
-  if (req.query && Object.prototype.hasOwnProperty.call(req.query, 'adminSecret')) {
-    delete req.query.adminSecret;
-  }
 }
 
 /**

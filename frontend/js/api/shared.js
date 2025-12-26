@@ -9,6 +9,7 @@ import { showNotification } from '../shared/utils.js';
 import { getAuthToken, removeAuthToken, setAuthToken } from '../app/auth.js';
 import { createModuleLogger } from '../core/logger.js';
 import { executeAsync, ErrorTypes, ErrorSeverity } from '../core/error-handler.js';
+import { applyAdminSecretHeader } from '../shared/admin-secret.js';
 
 /**
  * API 模块级日志记录器
@@ -240,6 +241,17 @@ export function getAuthHeaders() {
     const headers = { 'Content-Type': 'application/json' };
     const token = getAuthToken();
     if (token) headers.Authorization = `Bearer ${token}`;
+    return headers;
+}
+
+/**
+ * 构建带管理员密钥的请求头（优先使用 Header 传递密钥）
+ * @param {string|null} adminSecret 管理员密钥
+ * @returns {object|Headers} 请求头对象
+ */
+export function buildAdminHeaders(adminSecret = null) {
+    const headers = getAuthHeaders();
+    applyAdminSecretHeader(headers, adminSecret);
     return headers;
 }
 

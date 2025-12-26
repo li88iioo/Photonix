@@ -1,18 +1,15 @@
 import { getAuthHeaders, requestJSONWithDedup } from './shared.js';
 import { resolveMessage } from '../shared/utils.js';
+import { applyAdminSecretHeader } from '../shared/admin-secret.js';
 
 /**
  * 构建带查询参数的下载服务接口 URL
  * @param {string} path 路径
- * @param {string} [adminSecret] 管理员密钥（可选）
  * @param {object} [query={}] 查询参数
  * @returns {string} 完整 URL
  */
-function buildUrl(path, adminSecret, query = {}) {
+function buildUrl(path, query = {}) {
   const url = new URL(`/api/download${path}`, window.location.origin);
-  if (adminSecret && !Object.prototype.hasOwnProperty.call(query || {}, 'adminSecret')) {
-    url.searchParams.set('adminSecret', adminSecret);
-  }
   Object.entries(query || {}).forEach(([key, value]) => {
     if (value === undefined || value === null || value === '') return;
     url.searchParams.set(key, value);
@@ -70,10 +67,12 @@ async function request(path, { method = 'GET', adminSecret, body, query, options
   
   // 如果有JWT Token，就不需要传adminSecret了
   const hasToken = headers.Authorization && headers.Authorization.startsWith('Bearer ');
+  if (!hasToken && adminSecret) {
+    applyAdminSecretHeader(headers, adminSecret);
+  }
   
   if (isGetLike) {
-    // 只有在没有Token时才传adminSecret（向后兼容）
-    url = buildUrl(path, hasToken ? null : adminSecret, finalQuery);
+    url = buildUrl(path, finalQuery);
   }
 
   const fetchOptions = {
@@ -84,12 +83,7 @@ async function request(path, { method = 'GET', adminSecret, body, query, options
   };
 
   if (!isGetLike) {
-    const payload = { ...(body || {}) };
-    // 只有在没有Token时才在body中传adminSecret（向后兼容）
-    if (!hasToken && adminSecret) {
-      payload.adminSecret = adminSecret;
-    }
-    fetchOptions.body = JSON.stringify(payload);
+    fetchOptions.body = JSON.stringify({ ...(body || {}) });
   }
 
   if (!isGetLike && !headers['Content-Type']) {
@@ -112,9 +106,14 @@ async function request(path, { method = 'GET', adminSecret, body, query, options
  * @returns {Promise<object>} 服务状态数据
  */
 export async function fetchDownloadStatus(adminSecret) {
-  return requestJSONWithDedup(buildUrl('/status', adminSecret), {
+  const headers = getAuthHeaders();
+  const hasToken = headers.Authorization && headers.Authorization.startsWith('Bearer ');
+  if (!hasToken && adminSecret) {
+    applyAdminSecretHeader(headers, adminSecret);
+  }
+  return requestJSONWithDedup(buildUrl('/status'), {
     method: 'GET',
-    headers: getAuthHeaders(),
+    headers,
     cache: 'no-store'
   }).then((payload) => (payload?.data ? payload.data : payload));
 }

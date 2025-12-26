@@ -18,7 +18,7 @@ class AlbumCoversRepository {
             const row = await dbGet('main', 'SELECT * FROM album_covers WHERE album_path = ?', [String(albumPath || '')]);
             return row || null;
         } catch (error) {
-            logger.warn(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 获取封面失败 (albumPath=${albumPath}):`, error.message);
+            logger.debug(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 获取封面失败 (albumPath=${albumPath}):`, error.message);
             return null;
         }
     }
@@ -36,7 +36,7 @@ class AlbumCoversRepository {
             const rows = await dbAll('main', `SELECT * FROM album_covers WHERE album_path IN (${placeholders})`, albumPaths);
             return rows || [];
         } catch (error) {
-            logger.warn(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 批量获取封面失败:`, error.message);
+            logger.debug(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 批量获取封面失败:`, error.message);
             return [];
         }
     }
@@ -64,7 +64,7 @@ class AlbumCoversRepository {
             );
             return true;
         } catch (error) {
-            logger.warn(`${LOG_PREFIXES.ALBUM_COVERS_REPO} upsert封面失败 (albumPath=${albumPath}):`, error.message);
+            logger.debug(`${LOG_PREFIXES.ALBUM_COVERS_REPO} upsert封面失败 (albumPath=${albumPath}):`, error.message);
             return false;
         }
     }
@@ -79,7 +79,7 @@ class AlbumCoversRepository {
             await dbRun('main', 'DELETE FROM album_covers WHERE album_path = ?', [String(albumPath || '')]);
             return true;
         } catch (error) {
-            logger.warn(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 删除封面失败 (albumPath=${albumPath}):`, error.message);
+            logger.debug(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 删除封面失败 (albumPath=${albumPath}):`, error.message);
             return false;
         }
     }
@@ -117,7 +117,7 @@ class AlbumCoversRepository {
             logger.debug(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 已删除目录及子目录的封面: ${dirPath}`);
             return true;
         } catch (error) {
-            logger.warn(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 删除目录封面失败 (dirPath=${dirPath}):`, error.message);
+            logger.debug(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 删除目录封面失败 (dirPath=${dirPath}):`, error.message);
             return false;
         }
     }
@@ -136,7 +136,7 @@ class AlbumCoversRepository {
             );
             return (rows || []).map(r => r.album_path).filter(Boolean);
         } catch (error) {
-            logger.warn(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 查询封面引用失败 (dirPath=${dirPath}):`, error.message);
+            logger.debug(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 查询封面引用失败 (dirPath=${dirPath}):`, error.message);
             return [];
         }
     }
@@ -156,7 +156,7 @@ class AlbumCoversRepository {
             logger.debug(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 已删除封面引用（cover_path 前缀）: ${dirPath}`);
             return true;
         } catch (error) {
-            logger.warn(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 删除封面引用失败 (dirPath=${dirPath}):`, error.message);
+            logger.debug(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 删除封面引用失败 (dirPath=${dirPath}):`, error.message);
             return false;
         }
     }
@@ -201,7 +201,7 @@ class AlbumCoversRepository {
             const row = await dbGet('main', 'SELECT COUNT(1) as count FROM album_covers INDEXED BY idx_album_covers_album_path');
             return row ? Number(row.count) || 0 : 0;
         } catch (error) {
-            logger.warn(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 统计album_covers失败:`, error.message);
+            logger.debug(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 统计album_covers失败:`, error.message);
             return 0;
         }
     }
@@ -220,7 +220,7 @@ class AlbumCoversRepository {
             const rows = await dbAll('main', sql, params);
             return rows || [];
         } catch (error) {
-            logger.warn(`[AlbumCoversRepo] 获取所有封面失败:`, error.message);
+            logger.debug(`${LOG_PREFIXES.ALBUM_COVERS_REPO} 获取所有封面失败`, { error: error && error.message });
             return [];
         }
     }

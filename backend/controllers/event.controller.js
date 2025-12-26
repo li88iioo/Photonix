@@ -1,5 +1,6 @@
 const eventBus = require('../services/event.service.js');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 
 // 环境检测：开发环境显示详细日志
 const isDevelopment = process.env.NODE_ENV !== 'production';
@@ -24,14 +25,14 @@ exports.streamEvents = (req, res) => {
     try {
         req.socket && req.socket.setKeepAlive && req.socket.setKeepAlive(true);
     } catch (error) {
-        logger.debug('[SSE] 设置socket keepAlive失败:', error.message);
+        logger.debug(`${LOG_PREFIXES.SSE} 设置socket keepAlive失败`, { error: error && error.message });
     }
 
     // 尝试立即刷新headers
     try {
         res.flushHeaders && res.flushHeaders();
     } catch (error) {
-        logger.debug('[SSE] 刷新headers失败:', error.message);
+        logger.debug(`${LOG_PREFIXES.SSE} 刷新headers失败`, { error: error && error.message });
     }
 
     // 规范化 IP：将 IPv4 映射地址形态 ::ffff:1.2.3.4 转为 1.2.3.4
@@ -67,7 +68,7 @@ exports.streamEvents = (req, res) => {
     // 为这个客户端创建一个唯一的ID
     const clientId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
     clients.add(clientId);
-    logger.debug(`[SSE] 新客户端连接 | IP: ${clientIP} | 连接数: ${clients.size}`);
+    logger.debug(`${LOG_PREFIXES.SSE} 新客户端连接`, { ip: clientIP, connections: clients.size });
 
     let cleanedUp = false;
 
@@ -81,7 +82,7 @@ exports.streamEvents = (req, res) => {
     const onThumbnailGenerated = (data) => {
         // 只在开发模式下记录详细日志，减少生产环境日志量
         if (isDevelopment) {
-            logger.silly(`[SSE] 将 thumbnail-generated 事件发送给 ${clientId}: ${data.path || ''}`);
+            logger.debug(`${LOG_PREFIXES.SSE} 发送 thumbnail-generated 事件`, { clientId, path: data.path || '' });
         }
         sendEvent('thumbnail-generated', data);
     };
@@ -130,11 +131,11 @@ exports.streamEvents = (req, res) => {
             // 发送keep-alive并检查是否成功
             const success = res.write(': keep-alive\n\n');
             if (!success) {
-                logger.debug(`[SSE] Keep-alive写入失败，客户端可能已断开 ${clientId}`);
+                logger.debug(`${LOG_PREFIXES.SSE} Keep-alive写入失败，客户端可能已断开 ${clientId}`);
                 cleanup('keepalive-backpressure');
             }
         } catch (error) {
-            logger.debug(`[SSE] Keep-alive发送失败，清理连接 ${clientId}:`, error && error.message ? error.message : error);
+            logger.debug(`${LOG_PREFIXES.SSE} Keep-alive发送失败，清理连接 ${clientId}`, { error: error && error.message ? error.message : error });
             cleanup('keepalive-error', error);
         }
     }, 15000);
@@ -149,7 +150,7 @@ exports.streamEvents = (req, res) => {
         try {
             eventBus.removeListener('thumbnail-generated', onThumbnailGenerated);
         } catch (listenerError) {
-            logger.debug(`[SSE] 移除事件监听器失败 ${clientId}:`, listenerError && listenerError.message ? listenerError.message : listenerError);
+            logger.debug(`${LOG_PREFIXES.SSE} 移除事件监听器失败 ${clientId}`, { error: listenerError && listenerError.message ? listenerError.message : listenerError });
         }
 
         clearInterval(keepAliveInterval);
@@ -159,16 +160,16 @@ exports.streamEvents = (req, res) => {
             try {
                 res.end();
             } catch (endError) {
-                logger.debug(`[SSE] 结束响应失败 ${clientId}:`, endError && endError.message ? endError.message : endError);
+                logger.debug(`${LOG_PREFIXES.SSE} 结束响应失败 ${clientId}`, { error: endError && endError.message ? endError.message : endError });
             }
         }
 
-        const logLevel = reason === 'aborted' ? 'silly' : 'debug';
+        // aborted 是正常断开，使用 debug；其他原因也用 debug（silly 级别在生产环境无效）
         const errorSuffix = error && error.message ? ` - ${error.message}` : '';
-        logger[logLevel](`[SSE] 客户端断开 | IP: ${clientIP} | 连接数: ${clients.size} | 原因: ${reason}${errorSuffix}`);
+        logger.debug(`${LOG_PREFIXES.SSE} 客户端断开`, { ip: clientIP, connections: clients.size, reason, error: errorSuffix || undefined });
 
         if (error && reason !== 'aborted') {
-            logger.silly(`[SSE] 客户端连接异常堆栈 ${clientId} (${reason}):`, error);
+            logger.debug(`${LOG_PREFIXES.SSE} 客户端连接异常堆栈`, { clientId, reason, stack: error.stack });
         }
     }
 };

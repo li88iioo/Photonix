@@ -30,6 +30,7 @@
  */
 const path = require('path');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { TraceManager } = require('../utils/trace');
 const { redis } = require('../config/redis');
 const { safeRedisDel } = require('../utils/helpers');
@@ -61,7 +62,7 @@ const PHOTOS_ROOT = path.resolve(PHOTOS_DIR);
 
 function logIndexerIgnore(scope, error) {
     if (!error) return;
-    logger.silly(`[IndexerService] ${scope} 忽略异常: ${error.message}`);
+    logger.debug(`${LOG_PREFIXES.INDEXER_SERVICE} ${scope} 忽略异常: ${error.message}`);
 }
 
 
@@ -92,7 +93,7 @@ let videoCompletionTimer = null;
 function processCompletedVideoBatch() {
     if (completedVideoBatch.length === 0) return;
 
-    logger.info(`[Main-Thread] 开始处理 ${completedVideoBatch.length} 个已完成视频的后续任务...`);
+    logger.info(`${LOG_PREFIXES.MAIN_THREAD} 开始处理 ${completedVideoBatch.length} 个已完成视频的后续任务...`);
 
     for (const videoPath of completedVideoBatch) {
         enqueueIndexChange({ type: 'add', filePath: videoPath });
@@ -123,7 +124,7 @@ function handleVideoWorkerMessage(rawMessage) {
 
             if (message.kind === 'error') {
                 if (payload.type === 'worker_shutdown') {
-                    logger.info(`[VIDEO-WORKER] 线程关闭: ${payload.reason || 'unknown'}`);
+                    logger.info(`${LOG_PREFIXES.VIDEO_WORKER} 线程关闭: ${payload.reason || 'unknown'}`);
                 } else {
                     const errorPath = payload.path || (payload.task && payload.task.relativePath) || 'unknown';
                     const errorMessage = (payload.error && payload.error.message) || payload.message || '未知错误';
@@ -151,7 +152,7 @@ function handleVideoWorkerMessage(rawMessage) {
                 videoCompletionTimer = setTimeout(processCompletedVideoBatch, 5000);
             }
         } catch (err) {
-            logger.debug('[Main-Thread] 视频消息处理失败（忽略）:', err && err.message ? err.message : err);
+            logger.debug(`${LOG_PREFIXES.MAIN_THREAD} 视频消息处理失败（忽略）`, { error: err?.message || err });
         }
     };
 
@@ -163,7 +164,7 @@ function handleVideoWorkerMessage(rawMessage) {
             processMessage();
         }
     } catch (err) {
-        logger.debug('[Main-Thread] 视频消息追踪恢复失败（忽略）:', err && err.message ? err.message : err);
+        logger.debug(`${LOG_PREFIXES.MAIN_THREAD} 视频消息追踪恢复失败（忽略）`, { error: err?.message || err });
     }
 }
 
@@ -246,13 +247,13 @@ function resolveVideoTaskPaths(inputPath) {
     const relativeRaw = path.relative(PHOTOS_ROOT, absoluteCandidate);
     const sanitizedRelative = sanitizePath(relativeRaw);
     if (!sanitizedRelative || !isPathSafe(sanitizedRelative)) {
-        logger.warn(`[VideoQueue] 拒绝不安全的视频路径: ${relativeRaw}`);
+        logger.warn(`${LOG_PREFIXES.VIDEO_QUEUE} 拒绝不安全的视频路径: ${relativeRaw}`);
         return null;
     }
 
     const resolvedAbsolute = path.resolve(PHOTOS_ROOT, sanitizedRelative);
     if (!resolvedAbsolute.startsWith(PHOTOS_ROOT)) {
-        logger.warn(`[VideoQueue] 视频任务路径超出受信目录: ${resolvedAbsolute}`);
+        logger.warn(`${LOG_PREFIXES.VIDEO_QUEUE} 视频任务路径超出受信目录: ${resolvedAbsolute}`);
         return null;
     }
 
@@ -271,7 +272,7 @@ async function queueVideoTasksInBatches(videos) {
         return;
     }
 
-    logger.debug(`[Main-Thread] 发现 ${videos.length} 个视频待处理，开始以分批方式加入队列...`);
+    logger.debug(`${LOG_PREFIXES.MAIN_THREAD} 发现 ${videos.length} 个视频待处理，开始以分批方式加入队列...`);
 
     // HLS处理已改为手动模式，跳过所有批量视频处理
 
@@ -288,7 +289,7 @@ function setupWorkerListeners() {
     if (videoWorker) {
         attachVideoWorkerListeners(videoWorker);
     } else {
-        logger.debug('[Main-Thread] 视频工作线程暂未启动，监听器将在首次启动时挂载。');
+        logger.debug(`${LOG_PREFIXES.MAIN_THREAD} 视频工作线程暂未启动，监听器将在首次启动时挂载。`);
     }
 
     indexingWorker.on('message', async (rawMessage) => {
@@ -318,7 +319,7 @@ function setupWorkerListeners() {
 
                 if (message.kind === 'error') {
                     const errorMessage = (payload.error && payload.error.message) || payload.message || 'UNKNOWN_ERROR';
-                    logger.error(`[Main-Thread] Indexing Worker 报告一个错误: ${errorMessage}`);
+                    logger.error(`${LOG_PREFIXES.MAIN_THREAD} Indexing Worker 报告一个错误: ${errorMessage}`);
                     isIndexing = false;
                     return;
                 }
@@ -326,7 +327,7 @@ function setupWorkerListeners() {
                 switch (eventType) {
                     case 'rebuild_complete': {
                         const processed = typeof payload.count === 'number' ? payload.count : 0;
-                        logger.info(`[Main-Thread] Indexing Worker 完成索引重建，共处理 ${processed} 个条目。`);
+                        logger.info(`${LOG_PREFIXES.MAIN_THREAD} Indexing Worker 完成索引重建，共处理 ${processed} 个条目。`);
                         isIndexing = false;
 
                         (async () => {
@@ -338,7 +339,7 @@ function setupWorkerListeners() {
                                     await queueVideoTasksInBatches(videos);
                                 }
                             } catch (e) {
-                                logger.error('[Main-Thread] 启动分批视频处理任务时出错:', e);
+                                logger.error(`${LOG_PREFIXES.MAIN_THREAD} 启动分批视频处理任务时出错`, { error: e?.message || e });
                             }
                         })();
                         break;
@@ -349,7 +350,7 @@ function setupWorkerListeners() {
                         break;
 
                     case 'process_changes_complete': {
-                        logger.info('[Main-Thread] Indexing Worker 完成索引增量更新。');
+                        logger.info(`${LOG_PREFIXES.MAIN_THREAD} Indexing Worker 完成索引增量更新。`);
                         isIndexing = false;
 
                         try {
@@ -393,9 +394,9 @@ function setupWorkerListeners() {
                     case 'backfill_dimensions_complete': {
                         try {
                             const updated = typeof payload.updated === 'number' ? payload.updated : 0;
-                            logger.info(`[Main-Thread] 媒体尺寸回填完成，更新 ${updated} 条记录。`);
+                            logger.info(`${LOG_PREFIXES.MAIN_THREAD} 媒体尺寸回填完成，更新 ${updated} 条记录。`);
                         } catch (e) {
-                            logger.debug('[Main-Thread] 记录尺寸回填结果失败（忽略）');
+                            logger.debug(`${LOG_PREFIXES.MAIN_THREAD} 记录尺寸回填结果失败（忽略）`);
                         }
                         break;
                     }
@@ -403,14 +404,14 @@ function setupWorkerListeners() {
                     case 'backfill_mtime_complete':
                     case 'post_index_backfill_complete':
                         // 保持兼容：记录完成即可
-                        logger.info(`[Main-Thread] 收到 ${eventType} 通知。`);
+                        logger.info(`${LOG_PREFIXES.MAIN_THREAD} 收到 ${eventType} 通知。`);
                         break;
 
                     default:
-                        logger.warn(`[Main-Thread] 收到来自Indexing Worker的未知消息类型: ${eventType}`);
+                        logger.warn(`${LOG_PREFIXES.MAIN_THREAD} 收到来自Indexing Worker的未知消息类型: ${eventType}`);
                 }
             } catch (error) {
-                logger.debug('[Main-Thread] Indexing Worker 消息处理失败（忽略）:', error && error.message ? error.message : error);
+                logger.debug(`${LOG_PREFIXES.MAIN_THREAD} Indexing Worker 消息处理失败（忽略）`, { error: error?.message || error });
             }
         };
 
@@ -422,7 +423,7 @@ function setupWorkerListeners() {
                 await processMessage();
             }
         } catch (error) {
-            logger.debug('[Main-Thread] Indexing Worker 追踪恢复失败（忽略）:', error && error.message ? error.message : error);
+            logger.debug(`${LOG_PREFIXES.MAIN_THREAD} Indexing Worker 追踪恢复失败（忽略）`, { error: error?.message || error });
         }
     });
 
@@ -448,7 +449,7 @@ function setupWorkerListeners() {
 
                 if (message.kind === 'error') {
                     const errorMessage = (payload.error && payload.error.message) || payload.message || '未知错误';
-                    logger.error(`[Main-Thread] 设置更新失败: ${errorMessage}`);
+                    logger.error(`${LOG_PREFIXES.MAIN_THREAD} 设置更新失败: ${errorMessage}`);
                     try {
                         const { updateSettingsStatus } = require('../controllers/settings.controller');
                         updateSettingsStatus('failed', errorMessage, payload && payload.updateId);
@@ -460,7 +461,7 @@ function setupWorkerListeners() {
 
                 if (eventType === 'settings_update_complete') {
                     const updatedKeys = Array.isArray(payload.updatedKeys) ? payload.updatedKeys : [];
-                    logger.info(`[Main-Thread] 设置更新成功: ${updatedKeys.join(', ')}`);
+                    logger.info(`${LOG_PREFIXES.MAIN_THREAD} 设置更新成功: ${updatedKeys.join(', ')}`);
                     settingsService.clearCache();
                     try {
                         const { updateSettingsStatus } = require('../controllers/settings.controller');
@@ -468,11 +469,20 @@ function setupWorkerListeners() {
                     } catch (e) {
                         logger.debug('无法更新设置状态（控制器可能未加载）');
                     }
+                    return;
+                }
+
+                // Settings Worker 也会被用于其他维护任务（例如 hls_reconcile / thumbnail_resync）。
+                // 这类消息不属于“设置更新”流程，避免误报为 WARN。
+                if (payload && payload.updateId) {
+                    logger.warn(`${LOG_PREFIXES.MAIN_THREAD} 收到来自Settings Worker的未知设置更新消息类型: ${eventType}`, {
+                        updateId: payload.updateId
+                    });
                 } else {
-                    logger.warn(`[Main-Thread] 收到来自Settings Worker的未知消息类型: ${eventType}`);
+                    logger.debug(`${LOG_PREFIXES.MAIN_THREAD} 忽略来自Settings Worker的非设置更新消息: ${eventType}`);
                 }
             } catch (error) {
-                logger.debug('[Main-Thread] Settings Worker 消息处理失败（忽略）:', error && error.message ? error.message : error);
+                logger.debug(`${LOG_PREFIXES.MAIN_THREAD} Settings Worker 消息处理失败（忽略）`, { error: error?.message || error });
             }
         };
 
@@ -484,19 +494,19 @@ function setupWorkerListeners() {
                 processMessage();
             }
         } catch (error) {
-            logger.debug('[Main-Thread] Settings Worker 追踪恢复失败（忽略）:', error && error.message ? error.message : error);
+            logger.debug(`${LOG_PREFIXES.MAIN_THREAD} Settings Worker 追踪恢复失败（忽略）`, { error: error?.message || error });
         }
     });
 
     // 索引工作线程错误和退出处理
     indexingWorker.on('error', (err) => {
-        logger.error(`[Main-Thread] Indexing Worker 遇到致命错误，索引功能可能中断: ${err.message}`, err);
+        logger.error(`${LOG_PREFIXES.MAIN_THREAD} Indexing Worker 遇到致命错误，索引功能可能中断: ${err.message}`, err);
         isIndexing = false;
     });
 
     indexingWorker.on('exit', (code) => {
         if (code !== 0) {
-            logger.warn(`[Main-Thread] Indexing Worker 意外退出，退出码: ${code}。索引功能将停止。`);
+            logger.warn(`${LOG_PREFIXES.MAIN_THREAD} Indexing Worker 意外退出，退出码: ${code}。索引功能将停止。`);
         }
         isIndexing = false;
     });
@@ -748,7 +758,7 @@ async function processManualChanges(changes = []) {
 
     isIndexing = true;
     try {
-        logger.info(`[ManualIndex] 准备处理 ${consolidated.length} 个手动索引变更`);
+        logger.info(`${LOG_PREFIXES.MANUAL_INDEX} 准备处理 ${consolidated.length} 个手动索引变更`);
         await runIndexingTask('process_changes', { changes: consolidated, photosDir: PHOTOS_DIR });
         schedulePostIndexMaintenance();
         return { processed: consolidated.length };
@@ -805,7 +815,7 @@ async function enqueueManualChanges(changes = [], options = {}) {
         ? delayCandidate
         : MANUAL_ENQUEUE_DEFAULT_DELAY_MS;
 
-    logger.info(`[ManualIndex] 已排队 ${normalized.length} 个手动变更${reason ? ` (${reason})` : ''}`);
+    logger.info(`${LOG_PREFIXES.MANUAL_INDEX} 已排队 ${normalized.length} 个手动变更${reason ? ` (${reason})` : ''}`);
 
     // 使用 Promise.resolve 包裹，确保不会阻塞调用方
     Promise.resolve().then(() => {

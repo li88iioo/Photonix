@@ -6,6 +6,7 @@ const {
     INDEX_DB_FILE
 } = require('../config');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { getCachedQueryResult, cacheQueryResult, generateQueryKey } = require('../services/cache.service');
 
 const DEFAULT_BUSY_TIMEOUT_MS = Number(process.env.SQLITE_BUSY_TIMEOUT || 10000);
@@ -50,7 +51,7 @@ function logIfSlow(sql, startedAt, label) {
         // 维护命令（ANALYZE, PRAGMA optimize 等）预期耗时较长，使用 info 级别
         const isMaintenance = sqlUpper.startsWith('ANALYZE') || sqlUpper.includes('PRAGMA OPTIMIZE');
         const logFn = isMaintenance ? logger.debug.bind(logger) : logger.warn.bind(logger);
-        logFn(`[SQLite] ${label} 慢查询 ${elapsed}ms | SQL: ${String(sql).slice(0, 200)}`);
+        logFn(`${LOG_PREFIXES.SQLITE} ${label} 慢查询 ${elapsed}ms | SQL: ${String(sql).slice(0, 200)}`);
     }
 }
 
@@ -60,9 +61,9 @@ function scheduleInterrupt(db, sql, label) {
     const timer = setTimeout(() => {
         try {
             db.interrupt();
-            logger.error(`[SQLite] ${label} 强制中断超时查询 (${SQLITE_INTERRUPT_MS}ms): ${String(sql).slice(0, 200)}`);
+            logger.error(`${LOG_PREFIXES.SQLITE} ${label} 强制中断超时查询 (${SQLITE_INTERRUPT_MS}ms): ${String(sql).slice(0, 200)}`);
         } catch (err) {
-            logger.debug(`[SQLite] 尝试中断查询失败（忽略）: ${err && err.message}`);
+            logger.debug(`${LOG_PREFIXES.SQLITE} 尝试中断查询失败（忽略）`, { error: err && err.message });
         }
     }, SQLITE_INTERRUPT_MS);
     if (typeof timer.unref === 'function') timer.unref();
@@ -79,9 +80,8 @@ function applyPragmas(db, label) {
         db.pragma('foreign_keys = ON');
         db.pragma(`busy_timeout = ${DEFAULT_BUSY_TIMEOUT_MS}`);
         db.pragma('optimize');
-        // logger.debug(`[SQLite] ${label} PRAGMA 初始化完成`);
     } catch (error) {
-        logger.debug(`[SQLite] ${label} PRAGMA 设置失败（忽略）: ${error.message}`);
+        logger.debug(`${LOG_PREFIXES.SQLITE} ${label} PRAGMA 设置失败（忽略）: ${error.message}`);
     }
 }
 
@@ -98,7 +98,7 @@ async function initializeConnections() {
     connections.main = createConnection(DB_FILE, 'main');
     connections.settings = createConnection(SETTINGS_DB_FILE, 'settings');
     connections.index = createConnection(INDEX_DB_FILE, 'index');
-    logger.info('[SQLite] 所有数据库连接已建立');
+    logger.info(`${LOG_PREFIXES.SQLITE} 所有数据库连接已建立`);
     return connections;
 }
 
@@ -128,9 +128,9 @@ async function closeAllConnections() {
         if (!db) return;
         try {
             db.close();
-            logger.info(`[SQLite] 关闭 ${name} 连接`);
+            logger.info(`${LOG_PREFIXES.SQLITE} 关闭 ${name} 连接`);
         } catch (error) {
-            logger.warn(`[SQLite] 关闭 ${name} 连接失败: ${error.message}`);
+            logger.warn(`${LOG_PREFIXES.SQLITE} 关闭 ${name} 连接失败: ${error.message}`);
         }
     });
 }
@@ -310,7 +310,7 @@ async function dbAllWithCache(dbType, sql, params = [], cacheOptions = {}) {
     }
     const result = await dbAll(dbType, sql, params);
     cacheQueryResult(queryKey, result, tags, ttl).catch((error) => {
-        logger.debug('[SQLite] 缓存查询结果失败:', error.message);
+        logger.debug(`${LOG_PREFIXES.SQLITE} 缓存查询结果失败`, { error: error && error.message });
     });
     return result;
 }
@@ -327,7 +327,7 @@ async function dbGetWithCache(dbType, sql, params = [], cacheOptions = {}) {
     }
     const result = await dbGet(dbType, sql, params);
     cacheQueryResult(queryKey, result, tags, ttl).catch((error) => {
-        logger.debug('[SQLite] 缓存查询结果失败:', error.message);
+        logger.debug(`${LOG_PREFIXES.SQLITE} 缓存查询结果失败`, { error: error && error.message });
     });
     return result;
 }
@@ -367,7 +367,7 @@ async function checkDatabaseHealth() {
             dbHealthStatus.set(name, 'connected');
         } catch (error) {
             dbHealthStatus.set(name, 'error');
-            logger.error(`[SQLite] ${name} 健康检查失败: ${error.message}`);
+            logger.error(`${LOG_PREFIXES.SQLITE} ${name} 健康检查失败: ${error.message}`);
         }
     });
     await Promise.all(checks);

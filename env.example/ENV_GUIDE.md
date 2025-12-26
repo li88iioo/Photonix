@@ -36,86 +36,95 @@
 
 ### A. 必需（必须设置或确认）
 
-1) PORT
+1) **PORT**
 - 作用：服务监听端口
 - 默认值：13001
 - 取值/格式：整数端口号
 - 推荐修改场景：宿主机端口冲突或反代约定端口不同
 - 风险：与反代/compose 端口映射不一致将导致访问失败
 - 代码引用：backend/config/index.js（PORT）
-- 示例：PORT=13001
+- 示例：`PORT=13001`
 
-2) NODE_ENV
+
+2) **NODE_ENV**
 - 作用：运行模式，影响日志与错误信息详略
 - 默认值：development
 - 取值/格式：development | production | test
 - 推荐修改场景：上线必须设为 production
 - 风险：production 若误设 development，可能在错误时泄露细节
 - 代码引用：backend/app.js、controllers/*、workers/*（日志级别判断）
-- 示例：NODE_ENV=production
+- 示例：`NODE_ENV=production`
 
-3) LOG_LEVEL
+
+3) **LOG_LEVEL**
 - 作用：Winston 日志级别
 - 默认值：info
 - 取值/格式：error | warn | info | debug
 - 推荐修改场景：排障期临时提升到 debug
 - 风险：debug 产生日志量大，影响 IO/成本
 - 代码引用：backend/config/index.js、config/logger.js、workers/*
-- 示例：LOG_LEVEL=info
+- 示例：`LOG_LEVEL=info`
 
-4) LOG_JSON
+
+4) **LOG_JSON**
 - 作用：以 JSON 格式输出日志，便于集中式日志/可观测平台采集与分析
 - 默认值：false（彩色人类可读格式）
 - 取值/格式：true | false
 - 推荐修改场景：生产环境接入 Loki/ELK/Datadog 等日志系统
 - 风险：开启后本地阅读不友好；建议结合 `X-Trace-Id` 与 `X-Span-Id` 进行查询
 - 代码引用：backend/config/logger.js
-- 示例：LOG_JSON=true
+- 示例：`LOG_JSON=true`
 
-5) PHOTOS_DIR
+
+5) **PHOTOS_DIR**
 - 作用：媒体库根目录（图片/视频）
 - 默认值：/app/photos
 - 取值/格式：绝对路径（容器内）
 - 推荐修改场景：挂载到宿主机（NAS/NFS/本地盘）
 - 风险：挂载错误则扫描不到数据；网络盘需配合 WATCH_* 参数
 - 代码引用：backend/config/index.js、services/file.service.js、workers/indexing-worker.js
-- 示例：PHOTOS_DIR=/app/photos
+- 示例：`PHOTOS_DIR=/app/photos`
 
-6) DATA_DIR
+
+6) **DATA_DIR**
 - 作用：应用数据目录（数据库/缩略图/HLS 等）
 - 默认值：/app/data
 - 取值/格式：绝对路径（容器内）
 - 推荐修改场景：持久化数据到宿主机卷
 - 风险：未持久化会在容器重建后丢数据
 - 代码引用：backend/config/index.js、db/*
-- 示例：DATA_DIR=/app/data
+- 示例：`DATA_DIR=/app/data`
 
-7) REDIS_URL
+
+7) **REDIS_URL**
 - 作用：Redis 连接（缓存/限流/队列/PubSub）
 - 默认值：redis://localhost:6379（开发）/ 生产推荐 redis://redis:6379
 - 取值/格式：redis://[user:pass@]host:port[/db]
 - 推荐修改场景：容器网络或外部 Redis，含密码/ACL
 - 风险：错误地址导致限流/缓存/队列/事件全部不可用
 - 代码引用：backend/config/index.js、config/redis.js、middleware/rateLimiter.js、services/*、workers/*
-- 示例：REDIS_URL=redis://redis:6379
+- 示例：`REDIS_URL=redis://redis:6379`
 
-8) JWT_SECRET
+
+8) **JWT_SECRET**
 - 作用：JWT 签名密钥
 - 默认值：无（必须提供）
 - 取值/格式：32+ 随机字符串
 - 推荐修改场景：生产必须设置强随机
 - 风险：弱密钥可被伪造 Token，存在严重安全隐患
 - 代码引用：backend/middleware/auth.js、controllers/auth.controller.js
-- 示例：JWT_SECRET=g3A4...32plusRandom
+- 示例：`JWT_SECRET=g3A4...32plusRandom`
 
-9) ADMIN_SECRET
+
+9) **ADMIN_SECRET**
 - 作用：后台敏感操作校验密钥
 - 默认值：admin（必须修改）
 - 取值/格式：强口令
 - 推荐修改场景：生产必须自定义强口令
 - 风险：默认值将导致敏感操作被滥用
 - 代码引用：backend/controllers/settings.controller.js
-- 示例：ADMIN_SECRET=ChangeMe_Strong_Admin
+- 示例：`ADMIN_SECRET=ChangeMe_Strong_Admin`
+
 
 ---
 
@@ -152,7 +161,7 @@
 - 代码引用：backend/config/runtime.js、backend/services/worker.manager.js（resourceLimits）
 - 示例：`# 留空自动计算（推荐）或 WORKER_MEMORY_MB=512（手动覆盖）`
 
-2) UV_THREADPOOL_SIZE
+2) **UV_THREADPOOL_SIZE**
 - 作用：libuv 线程池大小，影响Sharp图片处理和文件IO操作的并发能力
 - 默认值：4
 - 取值/格式：1-32的整数（通常不超过CPU核心数）
@@ -163,9 +172,10 @@
   - 16核CPU：12-16（最大化利用）
 - 风险：盲目上调增加线程切换开销；过低影响Sharp/IO性能
 - 代码引用：Node.js 运行时（影响Sharp和fs操作）
-- 示例：UV_THREADPOOL_SIZE=4
+- 示例：`UV_THREADPOOL_SIZE=4`
 
-3) FFMPEG_THREADS
+
+3) **FFMPEG_THREADS**
 - 作用：FFmpeg视频处理并行线程数，影响视频转码和处理速度
 - 默认值：2（生产环境）
 - 取值/格式：1-16的整数
@@ -176,9 +186,10 @@
   - 16核CPU：6-8个（最大化利用）
 - 风险：过高与其他线程竞争，可能导致系统过载；视频处理对CPU要求较高
 - 代码引用：backend/config/index.js、services/adaptive.service.js、workers/video-processor.js
-- 示例：FFMPEG_THREADS=2
+- 示例：`FFMPEG_THREADS=2`
 
-4) SHARP_CONCURRENCY
+
+4) **SHARP_CONCURRENCY**
 - 作用：Sharp图片处理库的并发线程数，影响图片缩略图生成速度
 - 默认值：**硬件自适应**（单核或≤2GB=1；≤4核或≤6GB=2；更高=min(4,floor(cpu/2))），可用环境变量手动覆盖
 - 取值/格式：1-16的整数
@@ -188,9 +199,10 @@
   - 高配（>8核）：3-4（视内存余量）
 - 风险：过高导致CPU饱和和内存激增；过低影响图片处理速度
 - 代码引用：backend/config/runtime.js（动态默认）、backend/config/index.js、workers/thumbnail-worker.js、workers/indexing-worker.js
-- 示例：SHARP_CONCURRENCY=3
+- 示例：`SHARP_CONCURRENCY=3`
 
-5) SQLITE_BUSY_TIMEOUT
+
+5) **SQLITE_BUSY_TIMEOUT**
 - 作用：SQLite数据库锁等待超时时间，影响并发访问时的等待时间
 - 默认值：20000ms（生产环境）
 - 取值/格式：1000-60000的整数（毫秒）
@@ -200,9 +212,10 @@
   - 高并发场景：20000-30000ms（平衡等待和性能）
 - 风险：过低易导致数据库锁错误；过高可能导致长时间等待
 - 代码引用：backend/db/multi-db.js
-- 示例：SQLITE_BUSY_TIMEOUT=20000
+- 示例：`SQLITE_BUSY_TIMEOUT=20000`
 
-6) SQLITE_QUERY_TIMEOUT
+
+6) **SQLITE_QUERY_TIMEOUT**
 - 作用：SQLite查询执行超时时间，防止长时间运行的查询阻塞系统
 - 默认值：30000ms（生产环境）
 - 取值/格式：5000-120000的整数（毫秒）
@@ -212,9 +225,10 @@
   - 网络存储：60000-90000ms（网络延迟补偿）
 - 风险：过低可能中断正常查询；过高可能导致系统响应慢
 - 代码引用：backend/db/multi-db.js
-- 示例：SQLITE_QUERY_TIMEOUT=30000
+- 示例：`SQLITE_QUERY_TIMEOUT=30000`
 
-7) TRUST_PROXY
+
+7) **TRUST_PROXY**
 - 作用：是否信任反向代理头（如 `X-Forwarded-For`），影响客户端 IP 识别
 - 默认值：false（安全默认，不信任任何代理头）
 - 取值/格式：
@@ -243,7 +257,7 @@
   TRUST_PROXY=2
   ```
 
-8) RATE_LIMIT_WINDOW_MINUTES
+8) **RATE_LIMIT_WINDOW_MINUTES**
 - 作用：API请求限流的时间窗口长度，影响允许的请求频率
 - 默认值：1分钟
 - 取值/格式：1-60的整数（分钟）
@@ -253,9 +267,10 @@
   - 高并发场景：1分钟（频繁检查）
 - 风险：过短窗口容易误伤正常请求；过长窗口失去保护效果
 - 代码引用：backend/middleware/rateLimiter.js
-- 示例：RATE_LIMIT_WINDOW_MINUTES=15
+- 示例：`RATE_LIMIT_WINDOW_MINUTES=15`
 
-9) RATE_LIMIT_MAX_REQUESTS
+
+9) **RATE_LIMIT_MAX_REQUESTS**
 - 作用：限流时间窗口内允许的最大请求数量
 - 默认值：800（生产环境）
 - 取值/格式：10-10000的整数
@@ -266,28 +281,34 @@
   - API服务：100-300（严格限制）
 - 风险：过低频繁返回429错误；过高失去DDoS保护
 - 代码引用：backend/middleware/rateLimiter.js
-- 示例：RATE_LIMIT_MAX_REQUESTS=1000
+- 示例：`RATE_LIMIT_MAX_REQUESTS=1000`
 
-10) REFRESH_RATE_WINDOW_MS / REFRESH_RATE_MAX
+
+10) **REFRESH_RATE_WINDOW_MS / REFRESH_RATE_MAX**
 - 作用：刷新令牌限流（窗口毫秒/最大次数）
 - 默认值：60000 / 60
 - 取值/格式：整数
 - 推荐修改场景：大规模登录/刷新
 - 风险：过严导致无法刷新 Token
 - 代码引用：backend/routes/auth.routes.js
-- 示例：REFRESH_RATE_WINDOW_MS=60000
-- 示例：REFRESH_RATE_MAX=60
+- 示例：
+  ```bash
+  REFRESH_RATE_WINDOW_MS=60000
+  REFRESH_RATE_MAX=60
+  ```
 
-11) AUTH_DEBUG_LOGS
+
+11) **AUTH_DEBUG_LOGS**
 - 作用：显式开启认证模块的详细调试日志（包括 Token/Secret 前缀，仅建议本地排障时短期使用）
 - 默认值：未设置（关闭）
 - 取值/格式：true | false
 - 推荐配置方案：开发环境调试认证问题时临时设为 true；生产环境保持未设置
 - 风险：在生产开启将把敏感信息写入日志
 - 代码引用：backend/middleware/auth.js
-- 示例：AUTH_DEBUG_LOGS=true
+- 示例：`AUTH_DEBUG_LOGS=true`
 
-12) BROWSE_CACHE_TTL / SEARCH_CACHE_TTL
+
+12) **BROWSE_CACHE_TTL / SEARCH_CACHE_TTL**
 - 作用：后端 Redis 路由缓存 TTL（秒），分别用于目录浏览与全文搜索接口
 - 默认值：180 / 180
 - 取值/格式：>=30 的整数秒
@@ -297,8 +318,12 @@
   - 若要求实时性（频繁变更内容），可临时下调至 60 秒
 - 风险：过大可能在更新后短时间返回旧数据；过小则增加 Redis/后端负载
 - 代码引用：backend/routes/browse.routes.js、backend/routes/search.routes.js
-- 示例：BROWSE_CACHE_TTL=180
-- 示例：SEARCH_CACHE_TTL=180
+- 示例：
+  ```bash
+  BROWSE_CACHE_TTL=180
+  SEARCH_CACHE_TTL=180
+  ```
+
 
 13) CACHE_SINGLEFLIGHT_WAIT_TIMEOUT_MS / CACHE_SINGLEFLIGHT_STALE_MS / CACHE_SINGLEFLIGHT_CLEANUP_INTERVAL_MS
 - 作用：控制路由缓存 SingleFlight 的等待/失效/清理节奏，保障缓存 miss 时只有一个请求回源
@@ -310,9 +335,13 @@
   - 慢存储/高延迟环境：可将 STALE_MS 提高到 45000-60000，以免长任务被过早判定为失效
 - 风险：WAIT_TIMEOUT 过低会导致跟随者频繁放弃等待重新回源；STALE_MS 过高可能让挂死的领导者阻塞跟随者过久；CLEANUP_INTERVAL 过低则增加后台扫描开销
 - 代码引用：backend/middleware/cache.js（SingleFlight 控制）
-- 示例：CACHE_SINGLEFLIGHT_WAIT_TIMEOUT_MS=15000
-- 示例：CACHE_SINGLEFLIGHT_STALE_MS=45000
-- 示例：CACHE_SINGLEFLIGHT_CLEANUP_INTERVAL_MS=60000
+- 示例：
+  ```bash
+  CACHE_SINGLEFLIGHT_WAIT_TIMEOUT_MS=15000
+  CACHE_SINGLEFLIGHT_STALE_MS=45000
+  CACHE_SINGLEFLIGHT_CLEANUP_INTERVAL_MS=60000
+  ```
+
 
 ---
 
@@ -320,7 +349,7 @@
 
 **安全增强与性能优化参数**
 
-1) MAX_PATH_LENGTH
+1) **MAX_PATH_LENGTH**
 - 作用：请求路径的最大允许字符数，防止超长路径攻击
 - 默认值：1024
 - 取值/格式：512-4096的整数（字符）
@@ -330,9 +359,10 @@
   - 安全加固环境：512（严格限制）
 - 风险：设置过小可能拒绝合法的深层路径；过大削弱防护效果
 - 代码引用：backend/middleware/pathValidator.js
-- 示例：MAX_PATH_LENGTH=1024
+- 示例：`MAX_PATH_LENGTH=1024`
 
-2) MAX_PATH_DEPTH
+
+2) **MAX_PATH_DEPTH**
 - 作用：路径的最大允许层级深度，防止目录遍历攻击
 - 默认值：20
 - 取值/格式：5-50的整数（层级）
@@ -342,9 +372,10 @@
   - 安全加固环境：10（严格限制）
 - 风险：设置过小可能拒绝合法的深层相册；过大削弱防护效果
 - 代码引用：backend/middleware/pathValidator.js
-- 示例：MAX_PATH_DEPTH=20
+- 示例：`MAX_PATH_DEPTH=20`
 
-3) THUMB_WORKER_MEMORY_MB
+
+3) **THUMB_WORKER_MEMORY_MB**
 - 作用：缩略图Worker的最大内存限制（MB），独立于其他Worker
 - 默认值：512
 - 取值/格式：256-2048的整数（MB）
@@ -355,22 +386,23 @@
   - 处理超高分辨率/RAW：1024-2048MB
 - 风险：过低导致大图片OOM失败；过高占用过多系统内存
 - 代码引用：backend/services/worker.manager.js
-- 示例：THUMB_WORKER_MEMORY_MB=512
+- 示例：`THUMB_WORKER_MEMORY_MB=512`
 
-4) SHARP_MAX_PIXELS
+
+4) **SHARP_MAX_PIXELS**
 - 作用：Sharp图像处理库允许的最大像素数，防止超大图片导致OOM
-- 默认值：50000000（约7000×7000，5000万像素）
-- 取值/格式：10000000-200000000的整数（像素）
+- 默认值：268000000（约16384×16384，2.68亿像素，支持16K分辨率）
+- 取值/格式：10000000-576000000的整数（像素）
 - 推荐配置方案：
-  - 一般场景：50000000（默认，支持8K图片33M像素）
-  - 专业摄影/RAW：100000000-150000000（1亿-1.5亿像素）
-  - 极端高分辨率：200000000（2亿像素，需配合THUMB_WORKER_MEMORY_MB≥1024）
+  - 一般场景：268000000（默认，支持16K图片）
+  - 专业摄影/超高分：400000000-576000000（需配合较大的 WORKER_MEMORY_MB）
 - 风险：设置过低拒绝合法大图；过高可能OOM导致Worker崩溃
 - 内存估算：像素数 × 4字节 × 2（解码+编码） ≈ 峰值内存
 - 代码引用：backend/workers/thumbnail-worker.js
-- 示例：SHARP_MAX_PIXELS=50000000
+- 示例：`SHARP_MAX_PIXELS=268000000`
 
-5) THUMB_POOL_MAX
+
+5) **THUMB_POOL_MAX**
 - 作用：缩略图线程池的最大数量，独立于NUM_WORKERS
 - 默认值：NUM_WORKERS（继承全局配置）
 - 取值/格式：1-32的整数
@@ -381,15 +413,16 @@
   - 超高配环境（32核+）：16-24
 - 风险：设置过低无法充分利用CPU；过高导致内存/CPU竞争激烈
 - 代码引用：backend/services/adaptive.service.js
-- 示例：THUMB_POOL_MAX=8
+- 示例：`THUMB_POOL_MAX=8`
 
-> 新增：THUMB_MAX_CONCURRENCY（缩略图实际执行的软上限）
+
+6) THUMB_MAX_CONCURRENCY（缩略图实际执行的软上限）
 - 默认值：min(NUM_WORKERS, 6)，用于限制真正并发执行的缩略图任务数，保护大图场景内存
 - 取值/格式：1-32 的整数
 - 推荐：低配/大图密集场景保持默认或设置为 3-6；高配可按需调高
 - 代码引用：backend/services/thumbnail.service.js（resolveThumbConcurrencyLimit）
 
-6) THUMB_TARGET_WIDTH / THUMB_QUALITY_*
+7) **THUMB_TARGET_WIDTH / THUMB_QUALITY_***
 - 作用：控制缩略图生成的尺寸与动态质量（基于像素量自动降质以平衡体积与画质）
 - 默认值：
   - THUMB_TARGET_WIDTH=500
@@ -407,10 +440,13 @@
 - 风险：质量过高显著增加缩略图体积与带宽占用；尺寸过大增加生成耗时
 - 代码引用：backend/workers/thumbnail-worker.js
 - 示例：
+  ```bash
   THUMB_TARGET_WIDTH=800
   THUMB_QUALITY_HIGH=85
+  ```
 
-7) USE_FILE_SYSTEM_HLS_CHECK / HLS_*（TTL/批次/间隔/延迟）
+
+8) USE_FILE_SYSTEM_HLS_CHECK / HLS_*（TTL/批次/间隔/延迟）
 - 作用：基于文件系统检查 HLS 就绪与缓存
 - 默认值：true / 300000 / 10 / 1000 / 100
 - 取值/格式：布尔 / 毫秒 / 数量
@@ -424,55 +460,60 @@
     每10000条约占用4MB内存。
 
 
-8) FFMPEG_PRESET
+9) **FFMPEG_PRESET**
 - 作用：FFmpeg 编码预设（速度/质量权衡）
 - 默认值：veryfast
 - 取值/范围：ultrafast|superfast|veryfast|faster|fast|medium|slow|slower|veryslow
 - 推荐修改场景：需要更高质量或更快速度
 - 风险：更慢预设显著增加 CPU/耗时
 - 代码引用：services/adaptive.service.js、workers/video-processor.js
-- 示例：FFMPEG_PRESET=fast
+- 示例：`FFMPEG_PRESET=fast`
 
-9) SHARP_CACHE_*（MEMORY_MB/ITEMS/FILES）/ SHARP_MAX_PIXELS
+
+10) SHARP_CACHE_*（MEMORY_MB/ITEMS/FILES）/ SHARP_MAX_PIXELS
 - 作用：Sharp 内存与最大像素保护
 - 默认值：32 / 100 / 0 / 576000000
 - 取值/格式：整数
 - 推荐修改场景：内存充足增大缓存；超大图提高 MAX_PIXELS
 - 风险：缓存过大占用内存；像素阈值过高风险 OOM
 - 代码引用：workers/thumbnail-worker.js、workers/indexing-worker.js、services/file.service.js
-- 示例：SHARP_CACHE_MEMORY_MB=64
+- 示例：`SHARP_CACHE_MEMORY_MB=64`
 
-10) DIMENSION_PROBE_CONCURRENCY
+
+11) **DIMENSION_PROBE_CONCURRENCY**
 - 作用：文件尺寸探测并发（文件服务）
 - 默认值：4
 - 取值/格式：>=1 的整数
 - 推荐修改场景：I/O 富余时上调
 - 风险：并发过高增加磁盘压力
 - 代码引用：services/file.service.js
-- 示例：DIMENSION_PROBE_CONCURRENCY=4
+- 示例：`DIMENSION_PROBE_CONCURRENCY=4`
 
-11) AI_*（AI_CACHE_MAX_BYTES / AI_DAILY_LIMIT / AI_PER_IMAGE_COOLDOWN_SEC / AI_ENABLE_VISION_PROBE）
+
+12) AI_*（AI_CACHE_MAX_BYTES / AI_DAILY_LIMIT / AI_PER_IMAGE_COOLDOWN_SEC / AI_ENABLE_VISION_PROBE）
 - 作用：AI 缓存与配额/冷却
 - 默认值：268435456（生产建议）/ 200 / 60（开发较小）/ false
 - 取值/格式：字节数/次数/秒/true|false
 - 推荐修改场景：成本/流控管理
 - 风险：限制过严导致失败；过宽增加成本；开启视觉探测会额外发送一次轻量请求
 - 代码引用：workers/ai-worker.js、middleware/ai-rate-guard.js
-- 示例：AI_CACHE_MAX_BYTES=268435456
+- 示例：`AI_CACHE_MAX_BYTES=268435456`
+
 - 额外说明：`AI_ENABLE_VISION_PROBE=true` 时，未知模型会自动发送一张 1x1 png 进行视觉能力探测，仅在需要时额外消耗极少 token
 
-12) PERFORMANCE_MODE
+13) **PERFORMANCE_MODE**
 - 作用：全局性能模式（自适应提示）
 - 默认值：auto
 - 取值/格式：auto|low|medium|high
 - 推荐修改场景：初期大批量导入设为 low
 - 风险：高性能模式在低配可能过载
 - 代码引用：services/adaptive.service.js
-- 示例：PERFORMANCE_MODE=low
+- 示例：`PERFORMANCE_MODE=low`
+
 - 日志节流：`ADAPTIVE_LOG_THROTTLE_MS` 控制 `[自适应]` 调度日志的最小输出间隔（默认 300000ms ≈ 5 分钟），
   调大（如 600000-900000）可进一步降噪，调小可更频繁观测负载切换
 
-13) DETECTED_CPU_COUNT / DETECTED_MEMORY_GB
+14) **DETECTED_CPU_COUNT / DETECTED_MEMORY_GB**
 - 作用：
   - DETECTED_CPU_COUNT：服务器核心数，显式指定 CPU 核心数量
   - DETECTED_MEMORY_GB：服务器内存（GB），显式指定可用内存大小
@@ -494,12 +535,15 @@
 - 风险：设置过高会高估系统能力导致过载；设置过低会浪费硬件资源
 - 代码引用：backend/config/hardware.js、config/runtime.js、docker-compose.yml
 - 示例：
+  ```bash
   # 服务器核心数（同时限制 Docker 容器 CPU）
   DETECTED_CPU_COUNT=4
   # 服务器内存 GB（同时限制 Docker 容器内存）
   DETECTED_MEMORY_GB=8
+  ```
 
-14) ENABLE_APP_CSP
+
+15) **ENABLE_APP_CSP**
 - 作用：启用后端层面的 Content-Security-Policy
 - 默认值：false
 - 取值/格式：true|false
@@ -508,7 +552,7 @@
 - 代码引用：backend/app.js（helmet csp）
 - 示例：ENABLE_APP_CSP=true
 
-15) THUMB_ONDEMAND_RESERVE（按需预留机制）
+16) THUMB_ONDEMAND_RESERVE（按需预留机制）
 - 作用：检测到按需任务时，为按需生成预留 worker 槽位，防止批量补全占满所有并发
 - 默认值：1（检测到按需任务时，保留1个槽位）
 - 取值/格式：0-NUM_WORKERS 的整数
@@ -536,27 +580,30 @@
   ```
 - 风险：值过大拖慢批量补全；值为 0 时完全依赖 BUSY_THRESHOLD 机制
 - 代码引用：services/thumbnail.service.js（THUMB_ONDEMAND_RESERVE 常量）
-- 示例：THUMB_ONDEMAND_RESERVE=1
+- 示例：`THUMB_ONDEMAND_RESERVE=1`
 
-16) THUMB_ONDEMAND_QUEUE_MAX
+
+17) **THUMB_ONDEMAND_QUEUE_MAX**
 - 作用：缩略图按需生成队列最大长度
 - 默认值：2000
 - 取值/格式：>=1 的整数
 - 推荐修改场景：内存受限时降低队列长度
 - 风险：设置过小影响用户体验，设置过大占用内存
 - 代码引用：services/thumbnail.service.js
-- 示例：THUMB_ONDEMAND_QUEUE_MAX=2000
+- 示例：`THUMB_ONDEMAND_QUEUE_MAX=2000`
 
-17) THUMB_ONDEMAND_IDLE_DESTROY_MS
+
+18) **THUMB_ONDEMAND_IDLE_DESTROY_MS**
 - 作用：缩略图按需生成worker空闲销毁时间（毫秒）
 - 默认值：30000（30秒）
 - 取值/格式：毫秒整数
 - 推荐修改场景：内存紧张时调小，快速响应时调大
 - 风险：过小频繁创建销毁，过大占用内存
 - 代码引用：services/thumbnail.service.js
-- 示例：THUMB_ONDEMAND_IDLE_DESTROY_MS=30000
+- 示例：`THUMB_ONDEMAND_IDLE_DESTROY_MS=30000`
 
-18) THUMB_ONDEMAND_BUSY_THRESHOLD（批量补全自动让路阈值）
+
+19) THUMB_ONDEMAND_BUSY_THRESHOLD（批量补全自动让路阈值）
 - 作用：批量缩略图补全时，当按需任务数量超过此阈值时，自动暂停批量补全为前台让路
 - 默认值：5
 - 取值/格式：>=1 的整数
@@ -568,87 +615,92 @@
   - ✅ **自动恢复批量**：用户离开后按需任务清空，批量补全自动继续
   - ✅ **零配置友好**：默认值适合大多数场景，无需手动调整
 - 代码引用：services/orchestrator.js（isHeavy 函数）
-- 示例：THUMB_ONDEMAND_BUSY_THRESHOLD=5
+- 示例：`THUMB_ONDEMAND_BUSY_THRESHOLD=5`
 
-- THUMB_BATCH_COOLDOWN_MS
+
+20) **THUMB_BATCH_COOLDOWN_MS**
   - 作用：批量补全缩略图时每次派发后的冷却时间（毫秒），用于慢盘/高并发场景抑制数据库和 IO 峰值
   - 默认值：0（关闭冷却）
   - 取值/格式：0-60000 的整数毫秒（建议 0-5000）
   - 推荐修改场景：NFS 或低速存储批量补全时、SQLite 出现 BUSY 锁竞争时
   - 风险：设置过大会拉长补全时间；设置过小无法有效削峰
   - 代码引用：services/thumbnail.service.js
-  - 示例：THUMB_BATCH_COOLDOWN_MS=500
+  - 示例：`THUMB_BATCH_COOLDOWN_MS=500`
 
-- THUMB_TELEMETRY_LOG_INTERVAL_MS
+21) **THUMB_TELEMETRY_LOG_INTERVAL_MS**
   - 作用：缩略图批量补全的遥测日志最小间隔（毫秒），避免日志刷屏
   - 默认值：15000
   - 取值/格式：>=5000 的整数毫秒
   - 推荐修改场景：需要更频繁或更稀疏的批处理指标日志
   - 风险：过低增加日志量；过高则监控粒度下降
   - 代码引用：services/thumbnail.service.js
-  - 示例：THUMB_TELEMETRY_LOG_INTERVAL_MS=20000
-- THUMB_QUEUE_DEBUG_INTERVAL_MS
+  - 示例：`THUMB_TELEMETRY_LOG_INTERVAL_MS=20000`
+22) **THUMB_QUEUE_DEBUG_INTERVAL_MS**
   - 作用：当队列达到上限时，Debug 级别“任务推迟”日志的节流间隔（毫秒），避免 5000+ 条重复日志刷屏
   - 默认值：30000
   - 取值/格式：>=5000 的整数毫秒
   - 推荐修改场景：调试阶段想观察更多样本，可临时调小；生产环境建议保持默认或调大
   - 风险：过小仍可能输出大量日志；过大则只偶尔看到示例
   - 代码引用：services/thumbnail.service.js（THUMB_QUEUE_DEBUG_INTERVAL_MS 常量）
-  - 示例：THUMB_QUEUE_DEBUG_INTERVAL_MS=60000
+  - 示例：`THUMB_QUEUE_DEBUG_INTERVAL_MS=60000`
 
-- INDEX_PROGRESS_LOG_STEP
+23) **INDEX_PROGRESS_LOG_STEP**
   - 作用：索引重建时“已处理 X 个条目”日志的步长（条目数），降低全量导入时的日志噪声
   - 默认值：5000
   - 取值/格式：>=1000 的整数
   - 推荐修改场景：需要更细/更粗的进度粒度（例如调试单目录时调小）
   - 风险：过小仍会输出大量日志；过大会导致进度反馈不及时
   - 代码引用：workers/indexing-worker.js
-  - 示例：INDEX_PROGRESS_LOG_STEP=10000
+  - 示例：`INDEX_PROGRESS_LOG_STEP=10000`
 
-- INDEX_CACHE_LOG_INTERVAL_MS
+24) **INDEX_CACHE_LOG_INTERVAL_MS**
   - 作用：索引线程清理本地缓存时的日志节流间隔（毫秒）
   - 默认值：20000
   - 取值/格式：>=1000 的整数毫秒
   - 推荐修改场景：想更频繁地观察缓存命中/清理，或希望进一步降低日志噪声
   - 风险：过小会刷屏；过大会导致看不到缓存清理日志
   - 代码引用：workers/indexing-worker.js
-  - 示例：INDEX_CACHE_LOG_INTERVAL_MS=60000
+  - 示例：`INDEX_CACHE_LOG_INTERVAL_MS=60000`
 
-19) THUMB_IDLE_SHUTDOWN_MS
+25) **THUMB_IDLE_SHUTDOWN_MS**
 - 作用：缩略图worker空闲自动关闭时间（毫秒）
 - 默认值：600000（10分钟）
 - 取值/格式：毫秒整数
 - 推荐修改场景：长期运行时适当调小节省资源
 - 风险：过小频繁重启影响性能
 - 代码引用：services/worker.manager.js
-- 示例：THUMB_IDLE_SHUTDOWN_MS=600000
+- 示例：`THUMB_IDLE_SHUTDOWN_MS=600000`
 
-20) THUMB_CHECK_INTERVAL_MS
+
+26) **THUMB_CHECK_INTERVAL_MS**
 - 作用：缩略图worker状态检查间隔（毫秒）
 - 默认值：60000（1分钟）
 - 取值/格式：毫秒整数
 - 推荐修改场景：调试worker状态时调小
 - 风险：过小增加CPU开销
 - 代码引用：services/worker.manager.js
-- 示例：THUMB_CHECK_INTERVAL_MS=60000
+- 示例：`THUMB_CHECK_INTERVAL_MS=60000`
 
-21) API_BASE
+
+27) **API_BASE**
 - 作用：API 基础 URL（为空使用相对路径）
 - 默认值：空字符串
 - 取值/格式：URL 前缀
 - 推荐修改场景：前后端分离或反代前缀
 - 风险：错误前缀导致 404
 - 代码引用：backend/config/index.js
-- 示例：API_BASE=/api
+- 示例：`API_BASE=/api`
 
-22) ENABLE_REDIS
+
+28) **ENABLE_REDIS**
 - 作用：是否启用Redis连接（总开关）
 - 默认值：false
 - 取值/格式：true | false
 - 推荐修改场景：生产环境启用以提升性能和容错性
 - 风险：未启用时Redis相关功能自动降级为本地No-Op
 - 代码引用：backend/config/redis.js
-- 示例：ENABLE_REDIS=true
+- 示例：`ENABLE_REDIS=true`
+
 - 说明：启用后自动应用于以下功能（无需单独配置）：
   - API限流器（多实例共享限流）
   - 设置缓存（降低数据库压力）
@@ -657,16 +709,17 @@
   - RATE_LIMIT_REDIS_WAIT_MS（默认5000）：限流中间件在启动时等待 Redis 就绪的最大时长（毫秒），避免因握手延迟而降级到内存模式。超时仍会自动回退。
   - RATE_LIMIT_REDIS_POLL_INTERVAL_MS（默认200）：等待窗口内的检查间隔（毫秒）。增大可降低启动期间的 Redis 压力，减小可加快检测响应。
 
-23) METRICS_TOKEN
+29) **METRICS_TOKEN**
 - 作用：访问metrics端点的认证令牌
 - 默认值：空字符串（无认证）
 - 取值/格式：任意字符串
 - 推荐修改场景：生产环境启用metrics监控
 - 风险：空值时metrics端点公开访问
 - 代码引用：backend/routes/metrics.routes.js
-- 示例：METRICS_TOKEN=secure_metrics_token
+- 示例：`METRICS_TOKEN=secure_metrics_token`
 
-24) MEMORY_MONITOR_ENABLED / MEMORY_MONITOR_INTERVAL_MS / MEMORY_MONITOR_LOG_THROTTLE_MS / MEMORY_MONITOR_LOG_LEVEL
+
+30) MEMORY_MONITOR_ENABLED / MEMORY_MONITOR_INTERVAL_MS / MEMORY_MONITOR_LOG_THROTTLE_MS / MEMORY_MONITOR_LOG_LEVEL
 - 作用：控制缩略图服务内置的 Node 进程内存采样与日志输出频率，避免 `[内存监控]` 调试日志刷屏
 - 默认值：`MEMORY_MONITOR_ENABLED` 在 development 自动开启、production 关闭；`MEMORY_MONITOR_INTERVAL_MS=60000`；
   `MEMORY_MONITOR_LOG_THROTTLE_MS=300000`（5分钟）；`MEMORY_MONITOR_LOG_LEVEL=debug`
@@ -680,52 +733,57 @@
   MEMORY_MONITOR_LOG_THROTTLE_MS=900000
   MEMORY_MONITOR_LOG_LEVEL=info
 
-25) HEAVY_CACHE_TTL_MS
+31) **HEAVY_CACHE_TTL_MS**
 - 作用：重型缓存TTL时间（毫秒）
 - 默认值：3000（3秒）
 - 取值/格式：毫秒整数
 - 推荐修改场景：调整缓存过期时间
 - 风险：过小增加计算开销，过大缓存失效慢
 - 代码引用：backend/services/orchestrator.js
-- 示例：HEAVY_CACHE_TTL_MS=3000
+- 示例：`HEAVY_CACHE_TTL_MS=3000`
 
-26) EVENT_LOOP_SAMPLE_INTERVAL
+
+32) **EVENT_LOOP_SAMPLE_INTERVAL**
 - 作用：事件循环延迟采样间隔（毫秒）
 - 默认值：1000（1秒）
 - 取值/格式：毫秒整数
 - 推荐修改场景：性能监控调优
 - 风险：过小影响性能监控精度
 - 代码引用：backend/services/orchestrator.js
-- 示例：EVENT_LOOP_SAMPLE_INTERVAL=1000
+- 示例：`EVENT_LOOP_SAMPLE_INTERVAL=1000`
 
-27) DB_MAINT_INTERVAL_MS
+
+33) **DB_MAINT_INTERVAL_MS**
 - 作用：数据库维护任务执行间隔（毫秒）
 - 默认值：86400000（1天）
 - 取值/格式：毫秒整数
 - 推荐修改场景：调整数据库维护频率
 - 风险：过小增加维护开销
 - 代码引用：backend/services/orchestrator.js
-- 示例：DB_MAINT_INTERVAL_MS=86400000
+- 示例：`DB_MAINT_INTERVAL_MS=86400000`
 
-28) DB_MAINT_RETRY_MS
+
+34) **DB_MAINT_RETRY_MS**
 - 作用：数据库维护任务重试间隔（毫秒）
 - 默认值：21600000（6小时）
 - 取值/格式：毫秒整数
 - 推荐修改场景：维护任务失败时的重试频率
 - 风险：过小频繁重试影响性能
 - 代码引用：backend/services/orchestrator.js
-- 示例：DB_MAINT_RETRY_MS=21600000
+- 示例：`DB_MAINT_RETRY_MS=21600000`
 
-29) DB_MAINT_TIMEOUT_MS
+
+35) **DB_MAINT_TIMEOUT_MS**
 - 作用：数据库维护任务超时时间（毫秒）
 - 默认值：600000（10分钟）
 - 取值/格式：毫秒整数
 - 推荐修改场景：大型数据库的维护超时设置
 - 风险：过小可能导致维护任务被取消
 - 代码引用：backend/services/orchestrator.js
-- 示例：DB_MAINT_TIMEOUT_MS=600000
+- 示例：`DB_MAINT_TIMEOUT_MS=600000`
 
-30) ENABLE_MANUAL_GC
+
+36) **ENABLE_MANUAL_GC**
 - 作用：启用主进程空闲时自动垃圾回收
 - 默认值：true
 - 取值/格式：true | false
@@ -739,9 +797,10 @@
 - 前置条件：需要主进程使用 --expose-gc 启动（已在 ecosystem.config.js 配置）
 - 风险：关闭可能导致任务完成后内存不及时释放
 - 代码引用：backend/services/orchestrator.js
-- 示例：ENABLE_MANUAL_GC=true
+- 示例：`ENABLE_MANUAL_GC=true`
 
-31) AUTH_CACHE_TTL
+
+37) **AUTH_CACHE_TTL**
 - 作用：认证缓存 TTL（毫秒），控制 Token 验证结果缓存时间
 - 默认值：30000（30秒）
 - 取值/格式：5000-3600000（5秒-1小时）的整数毫秒
@@ -755,201 +814,302 @@
   - 超出范围会自动限制并记录警告
 - 风险：过短增加认证开销；过长可能导致 Token 失效后仍被缓存接受
 - 代码引用：backend/middleware/auth.js
-- 示例：AUTH_CACHE_TTL=30000
+- 示例：`AUTH_CACHE_TTL=30000`
 
-- SQLITE_BUSY_LOG_THRESHOLD / SQLITE_TIMEOUT_LOG_THRESHOLD / SQLITE_TELEMETRY_INTERVAL_MS
-  - 作用：控制 SQLite 忙重试与超时的遥测日志频率
-  - 默认值：10 / 5 / 30000
-  - 取值/格式：阈值为 >=1 的整数；间隔为 >=5000 的毫秒整数
-  - 推荐：在排障阶段可降低阈值或缩短间隔以更快捕捉问题；生产环境保持默认即可
-  - 风险：阈值过低或间隔过短可能导致日志量增加
-  - 引用：backend/db/multi-db.js（telemetry & counters）
+
+38) **SQLITE_BUSY_LOG_THRESHOLD / SQLITE_TIMEOUT_LOG_THRESHOLD / SQLITE_TELEMETRY_INTERVAL_MS**
+
+- 作用：控制 SQLite 忙重试与超时的遥测日志频率
+- 默认值：10 / 5 / 30000
+- 取值/格式：阈值为 >=1 的整数；间隔为 >=5000 的毫秒整数
+- 推荐：在排障阶段可降低阈值或缩短间隔以更快捕捉问题；生产环境保持默认即可
+- 风险：阈值过低或间隔过短可能导致日志量增加
+- 引用：backend/db/multi-db.js（telemetry & counters）
+- 示例：
+  ```bash
+  SQLITE_BUSY_LOG_THRESHOLD=10
+  ```
+
 
 **Orchestrator 锁控制（Redis 关闭时适用）**
-- LOCK_FALLBACK_STRATEGY
-  - 作用：当 Redis 不可用且 `.locks` 目录无法写入时的处理策略
-  - 默认值：warn（记录警告并退化为进程内锁）
-  - 取值/格式：warn | error
-  - 推荐：生产环境若需严格保障互斥，可设为 error 直接阻止启动
-  - 影响：warn 将继续运行但只能使用进程内锁；error 会抛出异常并终止
-  - 引用：backend/services/orchestrator.js
-- EXPECTED_INSTANCE_COUNT & LOCK_ABORT_ON_MULTI_INSTANCE
-  - 作用：在未启用 Redis 的情况下提示或阻止多实例同时运行
-  - 默认值：未设置 / false
-  - 推荐：多实例部署但临时关闭 Redis 时，设置 EXPECTED_INSTANCE_COUNT 并将 LOCK_ABORT_ON_MULTI_INSTANCE=true 以防任务重复
-  - 引用：backend/services/orchestrator.js
-- INSTANCE_TOKEN
-  - 作用：自定义锁文件写入的实例标识，便于诊断
-  - 默认值：HOSTNAME 或进程号
-  - 推荐：多实例排障时显式设置（例如 `INSTANCE_TOKEN=node-a`）
-  - 引用：backend/services/orchestrator.js
 
-32) WATCH_CUSTOM_IGNORES
+
+39) ****LOCK_FALLBACK_STRATEGY****
+
+- 作用：当 Redis 不可用且 `.locks` 目录无法写入时的处理策略
+- 默认值：warn（记录警告并退化为进程内锁）
+- 取值/格式：warn | error
+- 推荐：生产环境若需严格保障互斥，可设为 error 直接阻止启动
+- 影响：warn 将继续运行但只能使用进程内锁；error 会抛出异常并终止
+- 引用：backend/services/orchestrator.js
+- 示例：`LOCK_FALLBACK_STRATEGY=warn`
+
+40) **EXPECTED_INSTANCE_COUNT & LOCK_ABORT_ON_MULTI_INSTANCE**
+
+- 作用：在未启用 Redis 的情况下提示或阻止多实例同时运行
+- 默认值：未设置 / false
+- 推荐：多实例部署但临时关闭 Redis 时，设置 EXPECTED_INSTANCE_COUNT 并将 LOCK_ABORT_ON_MULTI_INSTANCE=true 以防任务重复
+- 引用：backend/services/orchestrator.js
+- 示例：`LOCK_ABORT_ON_MULTI_INSTANCE=false`
+
+
+41) **INSTANCE_TOKEN**
+- 作用：自定义锁文件写入的实例标识，便于诊断
+- 默认值：HOSTNAME 或进程号
+- 推荐：多实例排障时显式设置（例如 `INSTANCE_TOKEN=node-a`）
+- 引用：backend/services/orchestrator.js
+- 示例：`INSTANCE_TOKEN=my-node-1`
+
+
+42) **WATCH_CUSTOM_IGNORES**
 - 作用：文件监听自定义忽略模式
 - 默认值：空字符串
 - 取值/格式：glob模式字符串
 - 推荐修改场景：排除特定文件类型或目录
 - 风险：配置错误可能导致重要文件不被监听
 - 代码引用：backend/services/indexer.service.js
-- 示例：WATCH_CUSTOM_IGNORES=**/*.tmp,**/*.log
+- 示例：`WATCH_CUSTOM_IGNORES=**/*.tmp,**/*.log`
 
-33) WATCH_STABILITY_THRESHOLD
+
+43) **WATCH_STABILITY_THRESHOLD**
 - 作用：文件变更稳定性阈值（毫秒）
 - 默认值：2000（2秒）
 - 取值/格式：毫秒整数
 - 推荐修改场景：调整文件变更检测灵敏度
 - 风险：过小误报频繁变更，过大延迟变更检测
 - 代码引用：backend/services/indexer.service.js
-- 示例：WATCH_STABILITY_THRESHOLD=2000
+- 示例：`WATCH_STABILITY_THRESHOLD=2000`
 
-34) WATCHER_IDLE_STOP_MS
+
+44) **WATCHER_IDLE_STOP_MS**
 - 作用：文件监听器空闲停止时间（毫秒）
 - 默认值：120000（2分钟）
 - 取值/格式：毫秒整数
 - 推荐修改场景：调整监听器资源回收频率
 - 风险：过小频繁停止重启，过大占用资源
 - 代码引用：backend/services/indexer.service.js
-- 示例：WATCHER_IDLE_STOP_MS=120000
+- 示例：`WATCHER_IDLE_STOP_MS=120000`
 
-35) DIMENSION_CACHE_TTL
+
+45) **DIMENSION_CACHE_TTL**
 - 作用：图片尺寸信息缓存TTL（秒）
 - 默认值：2592000（30天）
 - 取值/格式：秒整数
 - 推荐修改场景：调整图片尺寸缓存过期时间
 - 风险：过小增加重复计算，过大占用缓存空间
 - 代码引用：backend/services/file.service.js
-- 示例：DIMENSION_CACHE_TTL=2592000
+- 示例：`DIMENSION_CACHE_TTL=2592000`
 
-36) FILE_CACHE_DURATION
+
+46) **FILE_CACHE_DURATION**
 - 作用：文件缓存持续时间（秒）
 - 默认值：604800（7天）
 - 取值/格式：秒整数
 - 推荐修改场景：调整文件缓存过期时间
 - 风险：过小增加文件读取，过大占用磁盘空间
 - 代码引用：backend/services/file.service.js
-- 示例：FILE_CACHE_DURATION=604800
+- 示例：`FILE_CACHE_DURATION=604800`
 
-37) CACHE_CLEANUP_DAYS
+
+47) **CACHE_CLEANUP_DAYS**
 - 作用：缓存清理天数阈值
 - 默认值：1（天）
 - 取值/格式：天数整数
 - 推荐修改场景：调整缓存清理频率
 - 风险：过小频繁清理，过大占用空间
 - 代码引用：backend/services/file.service.js
-- 示例：CACHE_CLEANUP_DAYS=1
+- 示例：`CACHE_CLEANUP_DAYS=1`
 
-38) BATCH_LOG_FLUSH_INTERVAL
+
+48) **BATCH_LOG_FLUSH_INTERVAL**
 - 作用：批量日志刷新间隔（毫秒）
 - 默认值：5000（5秒）
 - 取值/格式：毫秒整数
 - 推荐修改场景：调整日志批量处理频率
 - 风险：过小增加I/O开销，过大日志延迟
 - 代码引用：backend/services/file.service.js
-- 示例：BATCH_LOG_FLUSH_INTERVAL=5000
+- 示例：`BATCH_LOG_FLUSH_INTERVAL=5000`
 
-39) FILE_BATCH_SIZE
+
+49) **FILE_BATCH_SIZE**
 - 作用：文件处理批量大小
 - 默认值：200
 - 取值/格式：>=1 的整数
 - 推荐修改场景：调整批量文件处理效率
 - 风险：过小处理慢，过大占用内存
 - 代码引用：backend/services/file.service.js
-- 示例：FILE_BATCH_SIZE=200
+- 示例：`FILE_BATCH_SIZE=200`
 
-40) DIM_BACKFILL_BATCH
+
+50) **SLOW_LOG_SAMPLE_RATE / SLOW_LOG_INTERVAL_MS**
+- 作用：慢请求（响应 >2s 或状态码 >=500）的采样率与详细日志汇总间隔
+- 默认值：0.01 (1% 采样) / 60000 (1分钟)
+- 取值/格式：0-1 之间的小数 / >=1000 的毫秒整数
+- 注意：5xx 错误级别现在会执行 100% 采样记录，不受此参数限制
+- 代码引用：backend/app.js
+- 示例：`SLOW_LOG_SAMPLE_RATE=0.05`
+
+
+51) **SQLITE_SLOW_QUERY_MS / SQLITE_INTERRUPT_MS**
+- 作用：SQL 慢查询监控阈值与强制中断时长
+- 默认值：2000 / 0 (不中断)
+- 取值/格式：毫秒整数
+- 代码引用：backend/db/multi-db.js
+- 示例：`SQLITE_SLOW_QUERY_MS=3000`
+
+
+52) **HEALTH_CACHE_TTL_MS / HEALTH_REQUIRED_WORKERS**
+- 作用：健康检查结果缓存时间与必须运行的 worker 列表
+- 默认值：30000 / "indexing"
+- 取值/格式：毫秒整数 / 逗号分隔的 worker 名称（如 indexing,video,settings）
+- 代码引用：backend/services/health.service.js
+- 示例：`HEALTH_REQUIRED_WORKERS=indexing,video`
+
+
+53) **HLS_STATS_CACHE_MS**
+- 作用：HLS 状态统计接口的轻量缓存时间
+- 默认值：15000
+- 代码引用：backend/services/settings/maintenance.service.js
+- 示例：`HLS_STATS_CACHE_MS=30000`
+
+
+54) **VIDEO_THUMB_TIMEOUT_MS / VIDEO_DIMENSIONS_TIMEOUT_MS**
+- 作用：视频缩略图生成与尺寸探测的超时限制
+- 默认值：60000 / 15000
+- 推荐修改：NAS 或低速 I/O 环境建议调大
+- 代码引用：backend/workers/thumbnail-worker.js、backend/services/file.service.js
+- 示例：`VIDEO_THUMB_TIMEOUT_MS=120000`
+
+
+55) **AUTH_CACHE_MAX_SIZE**
+- 作用：认证验证结果 LRU 缓存的最大容量
+- 默认值：5000
+- 取值/格式：整数个数
+- 代码引用：backend/middleware/auth.js
+- 示例：`AUTH_CACHE_MAX_SIZE=10000`
+
+
+56) **JOB_STATE_MAX_AGE_MS / ROUTE_CACHE_BYPASS_MS**
+- 作用：内部任务状态过期时间与缓存绕过时长
+- 默认值：7200000 (2小时) / 3000
+- 代码引用：backend/services/orchestrator.js、backend/middleware/cache.js
+
+57) **THUMB_QUEUE_ENQUEUE_LOG_INTERVAL_MS / THUMB_QUEUE_ENQUEUE_LOG_STEP**
+- 作用：缩略图队列载入时的进度日志频率（间隔与步长）
+- 默认值：2000 / 100
+- 代码引用：backend/services/thumbnail.service.js
+
+58) **IS_LEAF_FULL_THRESHOLD**
+- 作用：前端同步逻辑中判断是否执行全量刷新的阈值
+- 默认值：500
+- 代码引用：frontend/js/settings/status/sync-actions.js
+
+
+
+59) **DIM_BACKFILL_BATCH**
 - 作用：图片尺寸回填批量大小
 - 默认值：500
 - 取值/格式：>=1 的整数
 - 推荐修改场景：调整数据库迁移效率
 - 风险：过小迁移慢，过大数据库压力大
 - 代码引用：backend/workers/indexing-worker.js
-- 示例：DIM_BACKFILL_BATCH=500
+- 示例：`DIM_BACKFILL_BATCH=500`
 
-41) DIM_BACKFILL_SLEEP_MS
+
+60) **DIM_BACKFILL_SLEEP_MS**
 - 作用：图片尺寸回填休眠时间（毫秒）
 - 默认值：200
 - 取值/格式：毫秒整数
 - 推荐修改场景：调整数据库迁移压力
 - 风险：过小压力大，过大迁移慢
 - 代码引用：backend/workers/indexing-worker.js
-- 示例：DIM_BACKFILL_SLEEP_MS=200
+- 示例：`DIM_BACKFILL_SLEEP_MS=200`
 
-42) MTIME_BACKFILL_BATCH
+
+61) **MTIME_BACKFILL_BATCH**
 - 作用：修改时间回填批量大小
 - 默认值：500
 - 取值/格式：>=1 的整数
 - 推荐修改场景：调整数据库迁移效率
 - 风险：过小迁移慢，过大数据库压力大
 - 代码引用：backend/workers/indexing-worker.js
-- 示例：MTIME_BACKFILL_BATCH=500
+- 示例：`MTIME_BACKFILL_BATCH=500`
 
-43) MTIME_BACKFILL_SLEEP_MS
+
+62) **MTIME_BACKFILL_SLEEP_MS**
 - 作用：修改时间回填休眠时间（毫秒）
 - 默认值：200
 - 取值/格式：毫秒整数
 - 推荐修改场景：调整数据库迁移压力
 - 风险：过小压力大，过大迁移慢
 - 代码引用：backend/workers/indexing-worker.js
-- 示例：MTIME_BACKFILL_SLEEP_MS=200
+- 示例：`MTIME_BACKFILL_SLEEP_MS=200`
 
-44) HLS_BATCH_TIMEOUT_MS
+
+63) **HLS_BATCH_TIMEOUT_MS**
 - 作用：HLS批量处理超时时间（毫秒）
 - 默认值：600000（10分钟）
 - 取值/格式：毫秒整数
 - 推荐修改场景：调整视频处理超时
 - 风险：过小视频处理失败，过大占用资源
 - 代码引用：backend/services/video.service.js
-- 示例：HLS_BATCH_TIMEOUT_MS=600000
+- 示例：`HLS_BATCH_TIMEOUT_MS=600000`
 
-45) DISABLE_STARTUP_INDEX
+
+64) **DISABLE_STARTUP_INDEX**
 - 作用：是否禁用启动时索引
 - 默认值：false
 - 取值/格式：true | false
 - 推荐修改场景：启动时间优化或调试
 - 风险：禁用后需手动触发索引
 - 代码引用：backend/server.js
-- 示例：DISABLE_STARTUP_INDEX=false
+- 示例：`DISABLE_STARTUP_INDEX=false`
 
-46) INDEX_START_DELAY_MS
+
+65) **INDEX_START_DELAY_MS**
 - 作用：索引启动延迟时间（毫秒）
 - 默认值：5000（5秒）
 - 取值/格式：毫秒整数
 - 推荐修改场景：调整启动顺序
 - 风险：过小可能与其他初始化冲突
 - 代码引用：backend/server.js
-- 示例：INDEX_START_DELAY_MS=5000
+- 示例：`INDEX_START_DELAY_MS=5000`
 
-47) INDEX_RETRY_INTERVAL_MS
+
+66) **INDEX_RETRY_INTERVAL_MS**
 - 作用：索引重试间隔（毫秒）
 - 默认值：60000（1分钟）
 - 取值/格式：毫秒整数
 - 推荐修改场景：调整索引失败重试频率
 - 风险：过小频繁重试，过大恢复慢
 - 代码引用：backend/server.js
-- 示例：INDEX_RETRY_INTERVAL_MS=60000
+- 示例：`INDEX_RETRY_INTERVAL_MS=60000`
 
-48) INDEX_TIMEOUT_MS
+
+67) **INDEX_TIMEOUT_MS**
 - 作用：索引超时时间（毫秒）
 - 默认值：timeUtils.minutes(20)（20分钟）
 - 取值/格式：毫秒整数
 - 推荐修改场景：大型相册的索引超时设置
 - 风险：过小索引中断，过大占用资源
 - 代码引用：backend/server.js
-- 示例：INDEX_TIMEOUT_MS=1200000
+- 示例：`INDEX_TIMEOUT_MS=1200000`
 
-49) INDEX_LOCK_TTL_SEC
+
+68) **INDEX_LOCK_TTL_SEC**
 - 作用：索引锁TTL时间（秒）
 - 默认值：7200（2小时）
 - 取值/格式：秒整数
 - 推荐修改场景：调整索引并发控制
 - 风险：过小锁竞争激烈，过大锁占用时间长
 - 代码引用：backend/server.js
-- 示例：INDEX_LOCK_TTL_SEC=7200
+- 示例：`INDEX_LOCK_TTL_SEC=7200`
+
 - 关联参数：
   - INDEX_WORKER_REDIS_WAIT_MS（默认5000）：索引工作线程在初始化尺寸缓存时等待 Redis 就绪的最大时长（毫秒），防止因握手延迟退化为本地缓存。
   - INDEX_WORKER_REDIS_POLL_INTERVAL_MS（默认200）：等待期间的轮询间隔（毫秒），根据 Redis 启动速度和资源情况调节。
 
-12) NUM_WORKERS（智能自动计算，通常无需配置）
+69) NUM_WORKERS（智能自动计算，通常无需配置）
 - 作用：缩略图处理worker进程数量，影响并发处理能力
 - 默认值：**智能计算**（根据CPU和内存自动优化，考虑I/O密集型任务特性）
 - 取值/格式：1-64的整数（留空则自动计算）
@@ -996,7 +1156,7 @@
 - 代码引用：backend/config/runtime.js、services/worker.manager.js、services/thumbnail.service.js
 - 示例：`# 留空自动计算（推荐）或 NUM_WORKERS=4（手动覆盖）`
 
-13) INDEX_BATCH_SIZE
+70) **INDEX_BATCH_SIZE**
 - 作用：索引处理时每批处理的项目数量，影响内存使用和处理效率
 - 默认值：1000
 - 取值/格式：100-10000的整数
@@ -1008,9 +1168,10 @@
   - 16GB+内存：2000-5000（最大化效率）
 - 风险：过小处理慢；过大内存溢出
 - 代码引用：backend/config/runtime.js、workers/indexing-worker.js
-- 示例：INDEX_BATCH_SIZE=1000
+- 示例：`INDEX_BATCH_SIZE=1000`
 
-14) INDEX_CONCURRENCY（已自动化，通常无需配置）
+
+71) INDEX_CONCURRENCY（已自动化，通常无需配置）
 - 作用：索引处理的并发线程数基准值（已启用实时负载感知动态调整）
 - 默认值：8（自动根据 CPU 核数计算）
 - **智能特性（v2.0+）**：
@@ -1028,9 +1189,10 @@
   - 重建索引 + 无前台任务 → 16 并发（+100%）
 - 风险：手动设置会禁用智能调整，降低性能
 - 代码引用：backend/services/adaptive.service.js（动态计算）、workers/indexing-worker.js（实时应用）
-- 示例（不推荐）：INDEX_CONCURRENCY=8
+- 示例（不推荐）：`INDEX_CONCURRENCY=8`
 
-15) SHARP_CONCURRENCY
+
+72) **SHARP_CONCURRENCY**
 - 作用：Sharp图片处理库的并发线程数，影响图片处理速度
 - 默认值：**硬件自适应**（单核或≤2GB=1；≤4核或≤6GB=2；更高=min(4,floor(cpu/2))），可用环境变量手动覆盖
 - 取值/格式：1-16的整数
@@ -1040,16 +1202,18 @@
   - 高配：3-4
 - 风险：过高CPU使用率过高；过低处理慢
 - 代码引用：backend/config/runtime.js（动态默认）、workers/indexing-worker.js、workers/thumbnail-worker.js
-- 示例：SHARP_CONCURRENCY=3
+- 示例：`SHARP_CONCURRENCY=3`
 
-12) VIDEO_TASK_DELAY_MS / INDEX_STABILIZE_DELAY_MS
+
+73) **VIDEO_TASK_DELAY_MS / INDEX_STABILIZE_DELAY_MS**
 - 作用：视频任务间延迟、索引稳定化延迟（ms）
 - 默认值：1000 / 2000
 - 取值/格式：毫秒整数
 - 推荐修改场景：慢盘或抖动较大时调大
 - 风险：过大降低吞吐；过小易过载
 - 代码引用：backend/config/index.js
-- 示例：INDEX_STABILIZE_DELAY_MS=3000
+- 示例：`INDEX_STABILIZE_DELAY_MS=3000`
+
 
 ---
 
@@ -1250,7 +1414,7 @@ $env:PORT="13001"; $env:NODE_ENV="production"; node backend/server.js
 - [ ] PHOTOS_DIR / DATA_DIR 均已持久化挂载
 - [ ] 安全参数已配置（MAX_PATH_LENGTH=1024, MAX_PATH_DEPTH=20）
 - [ ] Worker内存根据图片分辨率配置（THUMB_WORKER_MEMORY_MB，处理8K图建议≥512MB）
-- [ ] Sharp像素限制符合业务需求（SHARP_MAX_PIXELS，默认50M像素支持8K）
+- [ ] Sharp像素限制符合业务需求（SHARP_MAX_PIXELS，默认268M像素支持16K）
 - [ ] 限流策略符合预期（RATE_LIMIT_* / REFRESH_RATE_*）
 - [ ] 首日观察 CPU/内存/IO，按需微调 SHARP_CONCURRENCY / FFMPEG_THREADS / UV_THREADPOOL_SIZE
 - [ ] ENABLE_REDIS=true 时自动启用Redis缓存和共享限流

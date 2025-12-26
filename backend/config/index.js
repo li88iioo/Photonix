@@ -24,7 +24,7 @@ function resolveDir(envKey, dockerDefault, projectFallback) {
     if (envVal && envVal.trim() !== '') return envVal;
     try { if (require('fs').existsSync(dockerDefault)) return dockerDefault; }
     catch (error) {
-        logger.silly(formatLog(LOG_PREFIXES.CONFIG, `检测默认目录失败，使用项目内路径: ${error && error.message}`));
+        logger.debug(formatLog(LOG_PREFIXES.CONFIG, `检测默认目录失败，使用项目内路径: ${error && error.message}`));
     }
     return path.resolve(__dirname, '..', projectFallback);
 }

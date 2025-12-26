@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { getAllSettings } = require('../services/settings.service');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { redis } = require('../config/redis');
 const { safeRedisIncr, safeRedisExpire, safeRedisSet, safeRedisGet, safeRedisDel, safeRedisTtl } = require('../utils/helpers');
 const { getDirectoryContents } = require('../services/file.service');
@@ -250,7 +251,7 @@ function createLoginGuard() {
     const redisAvailable = redis && !redis.isNoRedis;
     if (!redisAvailable) {
         if (!localGuardWarned) {
-            logger.warn('Redis 未启用或不可用，登录防爆破降级为进程内内存锁，仅适用于单实例部署。');
+            logger.warn(`${LOG_PREFIXES.AUTH} Redis 未启用或不可用，登录防爆破降级为进程内内存锁，仅适用于单实例部署。`);
             localGuardWarned = true;
         }
         return localLoginGuard;
@@ -264,16 +265,18 @@ function createLoginGuard() {
  */
 exports.getAuthStatus = async (req, res) => {
     try {
-        const { PASSWORD_ENABLED } = await getAllSettings({ preferFreshSensitive: true });
+        const settings = await getAllSettings({ preferFreshSensitive: true });
         res.json({
-            passwordEnabled: PASSWORD_ENABLED === 'true'
+            passwordEnabled: settings.PASSWORD_ENABLED === 'true',
+            systemId: settings.SYSTEM_ID || null
         });
     } catch (error) {
         // 如果数据库未初始化或查询失败，默认返回密码未启用
         // 这样可以确保首次部署时不会显示登录页
         logger.debug('获取认证状态失败，返回默认值（密码未启用）:', error && error.message);
         res.json({
-            passwordEnabled: false
+            passwordEnabled: false,
+            systemId: null
         });
     }
 };
@@ -314,7 +317,7 @@ exports.login = async (req, res) => {
     const isAdminSecretMatch = process.env.ADMIN_SECRET && password === process.env.ADMIN_SECRET;
 
     if (isAdminSecretMatch) {
-        logger.info(`[${req.requestId || '-'}] 使用管理员密钥 (ADMIN_SECRET) 登录成功`);
+        logger.info(`${LOG_PREFIXES.AUTH} 使用管理员密钥 (ADMIN_SECRET) 登录成功`);
     } else {
         // 2. 常规用户密码登录流程
 
@@ -382,7 +385,7 @@ exports.login = async (req, res) => {
             /^\$2[aybx]\$/.test(PASSWORD_HASH);
 
         if (!isValidHashFormat) {
-            logger.warn(`[${req.requestId || '-'}] 密码哈希格式无效，拒绝登录`);
+            logger.warn(`${LOG_PREFIXES.AUTH} 密码哈希格式无效，拒绝登录`);
             let failureStats = { fails: 0, lockSec: 0 };
             try {
                 failureStats = await guard.recordFailure(base, '登录失败计数(密码哈希格式无效)');
@@ -404,7 +407,7 @@ exports.login = async (req, res) => {
         try {
             isMatch = await bcrypt.compare(password, PASSWORD_HASH);
         } catch (bcryptError) {
-            logger.error(`[${req.requestId || '-'}] 密码验证过程出错:`, bcryptError && bcryptError.message);
+            logger.error(`${LOG_PREFIXES.AUTH} 密码验证过程出错:`, bcryptError && bcryptError.message);
             // bcrypt.compare 失败，视为密码不匹配
             isMatch = false;
         }
@@ -464,7 +467,7 @@ exports.login = async (req, res) => {
         userId: 'download_admin',  // 添加用户标识
         type: 'download'
     }, JWT_SECRET, { expiresIn: '7d' });
-    logger.info('用户登录成功，已签发 Token。');
+    logger.info(`${LOG_PREFIXES.AUTH} 用户登录成功，已签发 Token。`);
 
     // 清除失败计数与锁定
     try {
@@ -488,7 +491,7 @@ exports.login = async (req, res) => {
         setTimeout(async () => {
             try {
                 await getDirectoryContents('', 1, 50, null, 'smart');
-                logger.info('后台缓存预热任务已触发。');
+                logger.info(`${LOG_PREFIXES.CACHE} 后台缓存预热任务已触发。`);
             } catch (e) {
                 logger.debug('后台缓存预热任务执行失败（已忽略）:', e && e.message);
             }

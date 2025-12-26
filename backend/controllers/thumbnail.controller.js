@@ -5,7 +5,7 @@
 const path = require('path');
 const { promises: fs } = require('fs');
 const logger = require('../config/logger');
-const { LOG_PREFIXES } = logger;
+const { LOG_PREFIXES, throttledLog } = logger;
 const { PHOTOS_DIR, THUMBS_DIR } = require('../config');
 const { ensureThumbnailExists, batchGenerateMissingThumbnails } = require('../services/thumbnail.service');
 const { getThumbStatusStats, getCount } = require('../repositories/stats.repo');
@@ -348,11 +348,14 @@ async function batchGenerateThumbnails(req, res) {
         // limit校验
         const processLimit = Math.min(Math.max(1, parseInt(limit) || 1000), 5000);
 
-        // 日志调试信息
-        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 收到请求参数: limit=${limit}, loop=${req.body?.loop}, mode=${req.body?.mode}`);
-        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 请求体: ${JSON.stringify(req.body)}`);
-        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 请求体类型: ${typeof req.body}, 键: ${Object.keys(req.body || {})}`);
-        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} req.body.loop 类型: ${typeof req.body?.loop}, 值: ${req.body?.loop}`);
+        // 合并请求参数日志为单条（仅在开发环境输出详细信息）
+        if (process.env.NODE_ENV !== 'production') {
+            logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 收到请求`, {
+                limit: processLimit,
+                loop: req.body?.loop,
+                mode: req.body?.mode
+            });
+        }
 
         /**
          * 检查是否需要循环补全
@@ -364,10 +367,8 @@ async function batchGenerateThumbnails(req, res) {
             String(req.body?.mode ?? '').toLowerCase() === 'loop'
         );
 
-        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 循环标志判断结果: loopFlag=${loopFlag}`);
-
         if (loopFlag) {
-            logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 自动循环模式启动：单批限制 ${processLimit}`);
+            logger.info(`${LOG_PREFIXES.BATCH_BACKFILL} 自动循环模式启动`, { limit: processLimit });
             // 启动循环标记，防止任务池提前销毁
             state.thumbnail.setBatchLoopActive(true);
             setImmediate(async () => {
@@ -375,25 +376,32 @@ async function batchGenerateThumbnails(req, res) {
                     let rounds = 0;
                     let totalProcessed = 0, totalQueued = 0, totalSkipped = 0;
                     while (true) {
-                        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 开始第${rounds + 1}轮处理`);
                         const r = await batchGenerateMissingThumbnails(processLimit);
                         rounds++;
                         totalProcessed += r?.processed || 0;
                         totalQueued += r?.queued || 0;
                         totalSkipped += r?.skipped || 0;
-                        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 第${rounds}轮完成: processed=${r?.processed || 0}, queued=${r?.queued || 0}, skipped=${r?.skipped || 0}, foundMissing=${r?.foundMissing || 0}`);
-                        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 累计统计: totalProcessed=${totalProcessed}, totalQueued=${totalQueued}, totalSkipped=${totalSkipped}`);
+
+                        // 使用节流日志，每10秒最多输出一次循环进度
+                        throttledLog('debug', 'batch-backfill-loop',
+                            `${LOG_PREFIXES.BATCH_BACKFILL} 循环进度`,
+                            { round: rounds, processed: r?.processed || 0, queued: r?.queued || 0, foundMissing: r?.foundMissing || 0 },
+                            10000
+                        );
+
                         if (!r || (r.foundMissing || 0) === 0) {
-                            logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 检测到无更多缺失任务，第${rounds}轮后退出循环`);
-                            logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 退出时状态: r=${!!r}, foundMissing=${r?.foundMissing || 0}, queued=${r?.queued || 0}`);
                             break;
                         }
-                        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 第${rounds}轮后继续下一轮处理，等待2秒...`);
                         await new Promise(resolve => setTimeout(resolve, 2000));
                     }
-                    logger.info(`${LOG_PREFIXES.BATCH_BACKFILL} 自动循环完成：轮次=${rounds} processed=${totalProcessed} queued=${totalQueued} skipped=${totalSkipped}`);
+                    logger.info(`${LOG_PREFIXES.BATCH_BACKFILL} 自动循环完成`, {
+                        rounds,
+                        totalProcessed,
+                        totalQueued,
+                        totalSkipped
+                    });
                 } catch (e) {
-                    logger.error('自动循环批量补全失败:', e);
+                    logger.error(`${LOG_PREFIXES.BATCH_BACKFILL} 自动循环失败`, { error: e.message });
                 } finally {
                     state.thumbnail.setBatchLoopActive(false);
                 }
@@ -405,7 +413,7 @@ async function batchGenerateThumbnails(req, res) {
             });
         }
 
-        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 开始批量生成缩略图，限制: ${processLimit}`);
+        logger.debug(`${LOG_PREFIXES.BATCH_BACKFILL} 开始批量生成缩略图`, { limit: processLimit });
 
         const result = await batchGenerateMissingThumbnails(processLimit);
 

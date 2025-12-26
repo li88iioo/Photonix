@@ -1,5 +1,6 @@
 const os = require('os');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { NUM_WORKERS } = require('../config');
 const { redis } = require('../config/redis');
 const { safeRedisSet, safeRedisDel } = require('../utils/helpers');
@@ -75,6 +76,7 @@ let currentMode = resolveModeFromMetrics({
 let currentProfile = deriveProfile(currentMode, cpuInfo.cpus);
 let lastLogSnapshot = '';
 let lastLogTime = 0;
+let lastLoggedMode = null; // 新增：记录上次输出日志的模式，用于检测模式变化
 
 function resourceSnapshot() {
     const mem = detectMemoryBudget();
@@ -115,12 +117,21 @@ async function startAdaptiveScheduler() {
         currentProfile = plan.profile;
         const snapshotStr = plan.snapshotStr;
         const snap = plan.snap;
-        const shouldLog = snapshotStr !== lastLogSnapshot || (Date.now() - lastLogTime) >= LOG_THROTTLE_MS;
+
+        // 优化日志策略：状态变化时必输出 + 10分钟兜底
+        const modeChanged = lastLoggedMode !== null && lastLoggedMode !== currentMode;
+        const intervalElapsed = (Date.now() - lastLogTime) >= LOG_THROTTLE_MS;
+        const shouldLog = modeChanged || snapshotStr !== lastLogSnapshot || intervalElapsed;
 
         if (shouldLog) {
-            logger.debug(`[自适应] ${snapshotStr}`);
+            if (modeChanged) {
+                logger.info(`${LOG_PREFIXES.ADAPTIVE} 模式切换: ${lastLoggedMode} → ${currentMode} | ${snapshotStr}`);
+            } else {
+                logger.debug(`${LOG_PREFIXES.ADAPTIVE} ${snapshotStr}`);
+            }
             lastLogSnapshot = snapshotStr;
             lastLogTime = Date.now();
+            lastLoggedMode = currentMode;
         }
 
         // 发布配置到 Redis 供 Worker 读取（无 Redis 时降级为仅本进程生效）
@@ -135,10 +146,10 @@ async function startAdaptiveScheduler() {
                     await safeRedisDel(redis, 'adaptive:disable_hls_backfill', '清除HLS禁用标记');
                 }
             } catch (e) {
-                logger.debug(`[Adaptive] 发布配置失败: ${e.message}`);
+                logger.debug(`${LOG_PREFIXES.ADAPTIVE} 发布配置失败: ${e.message}`);
             }
         } else if (!noRedisLogged) {
-            logger.debug('[Adaptive] Redis 不可用，使用本地模式（worker 侧无法读取自适应配置）');
+            logger.debug(`${LOG_PREFIXES.ADAPTIVE} Redis 不可用，使用本地模式（worker 侧无法读取自适应配置）`);
             noRedisLogged = true;
         }
     };

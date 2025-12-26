@@ -4,6 +4,7 @@
  */
 const { dbAll, dbGet } = require('../db/multi-db');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { RetryManager } = require('../utils/retry');
 
 /**
@@ -39,7 +40,7 @@ async function getCount(tableName, dbType = 'main', condition = '', params = [])
         const row = await dbGet(dbType, sql, params);
         return row ? Number(row.count) || 0 : 0;
     } catch (error) {
-        logger.warn(`获取${tableName}表记录数失败:`, error.message);
+        logger.debug(`获取${tableName}表记录数失败:`, error.message);
         return 0;
     }
 }
@@ -72,7 +73,7 @@ async function getStatsByField(tableName, fieldName, values, dbType = 'main') {
 
         return stats;
     } catch (error) {
-        logger.warn(`获取${tableName}表${fieldName}字段统计失败:`, error.message);
+        logger.debug(`获取${tableName}表${fieldName}字段统计失败:`, error.message);
         return {};
     }
 }
@@ -92,7 +93,7 @@ async function getGroupStats(tableName, groupField, dbType = 'main', condition =
         const rows = await dbAll(dbType, sql, params);
         return rows || [];
     } catch (error) {
-        logger.warn(`获取${tableName}表分组统计失败:`, error.message);
+        logger.debug(`获取${tableName}表分组统计失败:`, error.message);
         return [];
     }
 }
@@ -123,7 +124,7 @@ async function getMediaStats(types = ['photo', 'video']) {
 
         return stats;
     } catch (error) {
-        logger.warn('获取媒体文件统计失败:', error.message);
+        logger.debug('获取媒体文件统计失败:', error.message);
         return {};
     }
 }
@@ -136,7 +137,7 @@ async function getThumbStatusStats() {
     try {
         return await getStatsByField('thumb_status', 'status', ['exists', 'missing', 'failed', 'pending', 'processing', 'permanent_failed']);
     } catch (error) {
-        logger.warn('获取缩略图状态统计失败:', error.message);
+        logger.debug('获取缩略图状态统计失败:', error.message);
         return {};
     }
 }
@@ -188,7 +189,7 @@ async function getThumbProcessingStats() {
         return count;
     } catch (error) {
         // 查询失败时返回缓存的旧值（降级策略）
-        logger.warn(`获取缩略图处理状态统计失败，返回缓存值 (${thumbStatsCache.count}):`, error.message);
+        logger.debug(`获取缩略图处理状态统计失败，返回缓存值 (${thumbStatsCache.count}):`, error.message);
         return thumbStatsCache.count;
     }
 }
@@ -211,7 +212,7 @@ async function getDataIntegrityStats() {
 
         return stats;
     } catch (error) {
-        logger.warn('获取数据完整性统计失败:', error.message);
+        logger.debug('获取数据完整性统计失败:', error.message);
         return { missingMtime: 0, missingDimensions: 0 };
     }
 }

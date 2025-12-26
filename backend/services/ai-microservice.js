@@ -10,6 +10,7 @@ const axiosRetry = require('axios-retry');
 const sharp = require('sharp');
 const { PHOTOS_DIR } = require('../config');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const {
     getVisionModelMeta,
     isVisionModelWhitelisted,
@@ -110,7 +111,7 @@ function buildOpenAIEndpoint(baseUrl, resourcePath) {
         return new URL(endpointPath, normalized).toString();
     } catch (openaiEndpointErr) {
         const normalized = normalizeBaseUrl(baseUrl);
-        logger.debug('[AI-MICROSERVICE] 构建 OpenAI 端点失败，使用回退路径:', openaiEndpointErr && openaiEndpointErr.message);
+        logger.debug(`${LOG_PREFIXES.AI_SERVICE} 构建 OpenAI 端点失败，使用回退路径`, { error: openaiEndpointErr && openaiEndpointErr.message });
         return `${normalized}${resourcePath}`;
     }
 }
@@ -129,7 +130,7 @@ function buildGeminiEndpoint(baseUrl, resourcePath) {
         }
         return new URL(endpointPath, normalized).toString();
     } catch (geminiEndpointErr) {
-        logger.debug('[AI-MICROSERVICE] 构建 Gemini 端点失败，使用回退路径:', geminiEndpointErr && geminiEndpointErr.message);
+        logger.debug(`${LOG_PREFIXES.AI_SERVICE} 构建 Gemini 端点失败，使用回退路径`, { error: geminiEndpointErr && geminiEndpointErr.message });
         return `${normalized}${endpointPath}`;
     }
 }
@@ -144,7 +145,7 @@ function isGeminiEndpoint(url = '') {
         const parsed = new URL(url);
         return GEMINI_HOST_PATTERN.test(parsed.hostname);
     } catch (endpointCheckErr) {
-        logger.debug('[AI-MICROSERVICE] 解析 Endpoint 失败，按非 Gemini 处理:', endpointCheckErr && endpointCheckErr.message);
+        logger.debug(`${LOG_PREFIXES.AI_SERVICE} 解析 Endpoint 失败，按非 Gemini 处理`, { error: endpointCheckErr && endpointCheckErr.message });
         return false;
     }
 }
@@ -234,7 +235,7 @@ class AIMicroservice {
                 return Math.min(3, suggested);
             }
         } catch (budgetErr) {
-            logger.debug('[AI-MICROSERVICE] 读取资源预算失败，使用默认并发:', budgetErr && budgetErr.message);
+            logger.debug(`${LOG_PREFIXES.AI_SERVICE} 读取资源预算失败，使用默认并发`, { error: budgetErr && budgetErr.message });
         }
 
         // 🔧 平衡修复：默认并发2（平衡性能和安全）
@@ -326,7 +327,7 @@ class AIMicroservice {
         // 开始处理任务
         const abortController = new AbortController();
         const timeoutTimer = setTimeout(() => {
-            try { abortController.abort(); } catch (e) { logger.debug(`操作失败: ${e.message}`); }
+            try { abortController.abort(); } catch (e) { logger.debug(`${LOG_PREFIXES.AI_SERVICE} 操作失败: ${e.message}`); }
         }, this.taskTimeoutMs);
         this.activeTasks.set(taskKey, { taskId, startTime: Date.now(), abortController, timeoutTimer });
 
@@ -413,7 +414,7 @@ class AIMicroservice {
                     try {
                         transformer.destroy(new Error('AI_TASK_ABORTED'));
                     } catch (destroyErr) {
-                        logger.debug('[AI-MICROSERVICE] 取消任务时销毁转换器失败（忽略）:', destroyErr && destroyErr.message);
+                        logger.debug(`${LOG_PREFIXES.AI_SERVICE} 取消任务时销毁转换器失败（忽略）`, { error: destroyErr && destroyErr.message });
                     }
                 };
 
@@ -444,7 +445,7 @@ class AIMicroservice {
                 const { BusinessLogicError } = require('../utils/errors');
                 throw new BusinessLogicError('AI任务已取消', 'AI_TASK_ABORTED');
             }
-            logger.error(`[AI微服务] 图片处理失败: ${imagePath}, 错误: ${error.message}`);
+            logger.error(`${LOG_PREFIXES.AI_SERVICE} 图片处理失败: ${imagePath}, 错误: ${error.message}`);
             const { FileSystemError } = require('../utils/errors');
             throw new FileSystemError(`图片处理失败: ${path.basename(imagePath)}`, { path: imagePath, originalError: error.message });
         }
@@ -560,7 +561,7 @@ class AIMicroservice {
                         }
                     }
                 } catch (bodyParseErr) {
-                    logger.debug('[AI-MICROSERVICE] 解析 OpenAI 错误响应失败（忽略）:', bodyParseErr && bodyParseErr.message);
+                    logger.debug(`${LOG_PREFIXES.AI_SERVICE} 解析 OpenAI 错误响应失败（忽略）`, { error: bodyParseErr && bodyParseErr.message });
                 }
 
                 const { AuthenticationError, TooManyRequestsError, TimeoutError, ExternalServiceError } = require('../utils/errors');
@@ -649,7 +650,7 @@ class AIMicroservice {
                         errorMessage = JSON.stringify(body).slice(0, 300);
                     }
                 } catch (bodyParseErr) {
-                    logger.debug('[AI-MICROSERVICE] 解析 Gemini 错误响应失败（忽略）:', bodyParseErr && bodyParseErr.message);
+                    logger.debug(`${LOG_PREFIXES.AI_SERVICE} 解析 Gemini 错误响应失败（忽略）`, { error: bodyParseErr && bodyParseErr.message });
                 }
 
                 const { AuthenticationError, TooManyRequestsError, TimeoutError, ExternalServiceError } = require('../utils/errors');
@@ -746,7 +747,7 @@ class AIMicroservice {
                 this.visionProbeCache.set(cacheKey, false);
                 return false;
             }
-            logger.debug(`[AI-MICROSERVICE] 视觉能力探测失败 (${modelId}): ${message || status}`);
+            logger.debug(`${LOG_PREFIXES.AI_SERVICE} 视觉能力探测失败 (${modelId}): ${message || status}`);
             this.visionProbeCache.set(cacheKey, false);
             return false;
         }
@@ -759,14 +760,14 @@ class AIMicroservice {
         try {
             candidates.push(buildOpenAIEndpoint(aiConfig.url, 'models'));
         } catch (e) {
-            logger.debug('[AI] 构建模型端点失败，尝试回退', { error: e?.message });
+            logger.debug(`${LOG_PREFIXES.AI_SERVICE} 构建模型端点失败，尝试回退`, { error: e?.message });
         }
 
         try {
             const normalizedBase = normalizeBaseUrl(aiConfig.url);
             candidates.push(new URL('models', normalizedBase).toString());
         } catch (modelEndpointErr) {
-            logger.debug('[AI-MICROSERVICE] 构建模型列表端点失败，使用拼接方式:', modelEndpointErr && modelEndpointErr.message);
+            logger.debug(`${LOG_PREFIXES.AI_SERVICE} 构建模型列表端点失败，使用拼接方式`, { error: modelEndpointErr && modelEndpointErr.message });
             candidates.push(`${normalizeBaseUrl(aiConfig.url)}models`);
         }
 

@@ -6,6 +6,7 @@
 const path = require('path');
 const fs = require('fs').promises;
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { THUMBS_DIR } = require('../config');
 
 /**
@@ -40,7 +41,7 @@ class TempFileManager {
         try {
             await fs.mkdir(targetDir, { recursive: true });
         } catch (error) {
-            logger.warn(`[TempFileManager] 创建临时目录失败: ${targetDir}`, error.message);
+            logger.warn(`${LOG_PREFIXES.TEMP_FILE_MANAGER} 创建临时目录失败: ${targetDir}`, error.message);
         }
     }
 
@@ -51,11 +52,11 @@ class TempFileManager {
     async cleanupTempFile(filePath) {
         try {
             await fs.unlink(filePath);
-            logger.debug(`[TempFileManager] 已清理临时文件: ${path.basename(filePath)}`);
+            logger.debug(`${LOG_PREFIXES.TEMP_FILE_MANAGER} 已清理临时文件: ${path.basename(filePath)}`);
         } catch (error) {
             // 只在非"文件不存在"错误时记录
             if (error.code !== 'ENOENT') {
-                logger.debug(`[TempFileManager] 清理临时文件失败: ${path.basename(filePath)}`, error.message);
+                logger.debug(`${LOG_PREFIXES.TEMP_FILE_MANAGER} 清理临时文件失败: ${path.basename(filePath)}`, error.message);
             }
         }
     }
@@ -69,11 +70,11 @@ class TempFileManager {
             const entries = await fs.readdir(dirPath);
             if (entries.length === 0) {
                 await fs.rmdir(dirPath);
-                logger.debug(`[TempFileManager] 已清理空临时目录: ${path.basename(dirPath)}`);
+                logger.debug(`${LOG_PREFIXES.TEMP_FILE_MANAGER} 已清理空临时目录: ${path.basename(dirPath)}`);
             }
         } catch (error) {
             if (error.code !== 'ENOENT') {
-                logger.debug(`[TempFileManager] 清理临时目录失败: ${path.basename(dirPath)}`, error.message);
+                logger.debug(`${LOG_PREFIXES.TEMP_FILE_MANAGER} 清理临时目录失败: ${path.basename(dirPath)}`, error.message);
             }
         }
     }
@@ -101,7 +102,7 @@ class TempFileManager {
                         await this.cleanupTempFile(entryPath);
                     }
                 } catch (error) {
-                    logger.debug(`[TempFileManager] 扫描临时文件失败（忽略）: ${entryPath}`, error && error.message);
+                    logger.debug(`${LOG_PREFIXES.TEMP_FILE_MANAGER} 扫描临时文件失败（忽略）: ${entryPath}`, error && error.message);
                 }
             });
 
@@ -111,7 +112,7 @@ class TempFileManager {
             await this.cleanupEmptyTempDir(tempDir);
         } catch (error) {
             if (error.code !== 'ENOENT') {
-                logger.debug(`[TempFileManager] 批量清理失败: ${relativePath}`, error.message);
+                logger.debug(`${LOG_PREFIXES.TEMP_FILE_MANAGER} 批量清理失败: ${relativePath}`, error.message);
             }
         }
     }

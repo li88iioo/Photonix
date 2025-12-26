@@ -1,4 +1,5 @@
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { redis } = require('../config/redis');
 const crypto = require('crypto');
 const { safeRedisIncr, safeRedisExpire, safeRedisGet, safeRedisSet } = require('../utils/helpers');
@@ -101,7 +102,7 @@ module.exports = async function aiRateGuard(req, res, next) {
     return next();
   } catch (error) {
     // 出现异常时降级放行，并打印调试信息
-    logger.debug('[AI Rate Guard] 降级放行，遇到异常:', error && error.message ? { message: error.message } : error);
+    logger.debug(`${LOG_PREFIXES.AI_RATE_GUARD} 降级放行，遇到异常`, error && error.message ? { message: error.message } : { error });
     return next();
   }
 };

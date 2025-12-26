@@ -1,5 +1,4 @@
 const { parentPort } = require('worker_threads');
-const winston = require('winston');
 const { TraceManager } = require('../utils/trace');
 const { initializeConnections, getDB, runPreparedBatch } = require('../db/multi-db');
 const { withTransaction } = require('../services/tx.manager');
@@ -13,21 +12,8 @@ const maintenanceService = require('../services/settings/maintenance.service');
     await initializeConnections();
     // --- 日志配置 ---
     const loggerModule = require('../config/logger');
-    const { formatLog, LOG_PREFIXES, normalizeMessagePrefix } = loggerModule;
-    const logger = winston.createLogger({
-        level: process.env.LOG_LEVEL || 'info',
-        format: winston.format.combine(
-            winston.format.colorize(),
-            winston.format.timestamp(),
-            winston.format.printf(info => {
-                const date = new Date(info.timestamp);
-                const time = date.toTimeString().split(' ')[0];
-                const normalized = normalizeMessagePrefix(info.message);
-                return `[${time}] ${info.level}: ${LOG_PREFIXES.SETTINGS_WORKER || '设置线程'} ${normalized}`;
-            })
-        ),
-        transports: [new winston.transports.Console()]
-    });
+    const { LOG_PREFIXES } = loggerModule;
+    const logger = loggerModule.createPrefixedLogger(LOG_PREFIXES.SETTINGS_WORKER);
     // --- 数据库配置 ---
     const db = getDB('settings');
 
@@ -62,7 +48,7 @@ const maintenanceService = require('../services/settings/maintenance.service');
                     await runPreparedBatch('settings', sql, rows, { chunkSize: 500 });
                 }, { mode: 'IMMEDIATE' });
 
-                logger.info(`配置更新成功: ${Object.keys(settingsToUpdate).join(', ')}`);
+                logger.debug(`配置更新成功: ${Object.keys(settingsToUpdate).join(', ')}`);
 
                 // 清理 Redis 中的 settings_cache_v1 (如果存在)
                 await safeRedisDel(redis, 'settings_cache_v1', '删除设置缓存');
@@ -100,17 +86,17 @@ const maintenanceService = require('../services/settings/maintenance.service');
             }
         }
         ,
-        async thumbnail_reconcile({ limit } = {}) {
+        async thumbnail_reconcile(payload = {}) {
             try {
-                const result = await maintenanceService.performThumbnailReconcileLocal({ limit });
+                const result = await maintenanceService.performThumbnailReconcileLocal(payload);
                 parentPort && parentPort.postMessage(createWorkerResult({ type: 'thumbnail_reconcile', result }));
             } catch (error) {
                 parentPort && parentPort.postMessage(createWorkerError({ type: 'thumbnail_reconcile', error }));
             }
         },
-        async hls_reconcile({ limit } = {}) {
+        async hls_reconcile(payload = {}) {
             try {
-                const result = await maintenanceService.performHlsReconcileOnceLocal(limit);
+                const result = await maintenanceService.performHlsReconcileOnceLocal(payload);
                 parentPort && parentPort.postMessage(createWorkerResult({ type: 'hls_reconcile', result }));
             } catch (error) {
                 parentPort && parentPort.postMessage(createWorkerError({ type: 'hls_reconcile', error }));

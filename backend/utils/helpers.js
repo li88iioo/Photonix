@@ -4,6 +4,7 @@
  */
 
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 // 注意：不在此处导入 RetryManager，避免与 retry.js 形成循环依赖
 // RetryManager 在 retry() 函数内动态加载
 
@@ -75,7 +76,7 @@ async function executeIgnoringErrors(fn, ignoredErrors = []) {
     try {
         return await fn();
     } catch (error) {
-        const shouldIgnore = ignoredErrors.some(pattern => 
+        const shouldIgnore = ignoredErrors.some(pattern =>
             new RegExp(pattern, 'i').test(error.message)
         );
         if (!shouldIgnore) {
@@ -119,7 +120,7 @@ async function safeRedisSet(redis, key, value, mode = 'EX', ttl = 3600, context 
     if (!redis || redis.isNoRedis) {
         return false;
     }
-    
+
     let result;
     if (extraFlag) {
         // 支持 NX/XX 等额外标志
@@ -315,7 +316,7 @@ module.exports = {
     safeExecute,
     safeExecuteSync,
     executeIgnoringErrors,
-    
+
     // Redis助手
     safeRedisGet,
     safeRedisSet,
@@ -324,7 +325,7 @@ module.exports = {
     safeRedisExpire,
     safeRedisTtl,
     safeBatchRedisGet,
-    
+
     // 工具函数
     sleep,
     withTimeout,

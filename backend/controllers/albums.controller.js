@@ -2,6 +2,7 @@ const path = require('path');
 const fsNative = require('fs');
 const { promises: fs } = fsNative;
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const settingsService = require('../services/settings.service');
 const albumManagementService = require('../services/albumManagement.service');
 const { enqueueManualChanges, processManualChanges } = require('../services/indexer.service');

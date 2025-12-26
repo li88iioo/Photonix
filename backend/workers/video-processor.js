@@ -7,9 +7,8 @@ const util = require('util');
 const os = require('os');
 const { redis } = require('../config/redis');
 const { safeRedisGet, safeRedisSet } = require('../utils/helpers');
-const winston = require('winston');
 const baseLogger = require('../config/logger');
-const { LOG_PREFIXES, formatLog, normalizeMessagePrefix } = baseLogger;
+const { LOG_PREFIXES } = baseLogger;
 const { initializeConnections, dbAll, runAsync } = require('../db/multi-db');
 const { THUMBS_DIR, PHOTOS_DIR, VIDEO_MAX_CONCURRENCY, VIDEO_TASK_DELAY_MS } = require('../config');
 const { tempFileManager } = require('../utils/tempFileManager');
@@ -19,20 +18,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
     await initializeConnections();
 
     // --- 日志和配置 ---
-    const logger = winston.createLogger({
-        level: process.env.LOG_LEVEL || 'info',
-        format: winston.format.combine(
-            winston.format.colorize(),
-            winston.format.timestamp(),
-            winston.format.printf(info => {
-                const date = new Date(info.timestamp);
-                const time = date.toTimeString().split(' ')[0];
-                const normalized = normalizeMessagePrefix(info.message);
-                return `[${time}] ${info.level}: ${LOG_PREFIXES.VIDEO_WORKER || '视频线程'} ${normalized}`;
-            })
-        ),
-        transports: [new winston.transports.Console()]
-    });
+    const logger = baseLogger.createPrefixedLogger(LOG_PREFIXES.VIDEO_WORKER);
 
     /** 使用统一的 Redis 客户端（来自 config/redis） **/
     const execFilePromise = util.promisify(execFile);
@@ -60,6 +46,7 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
     let isShuttingDown = false;
     let idleNotified = false;
     let lastMemoryWarningTime = 0;
+    let lastQueueWarningTime = 0;  // 队列积压警告节流
 
     // 注意：不要用 Promise.race “伪超时”提前释放并发。
     // 若 handleTask 内部仍在执行 ffmpeg/ffprobe，这会造成后台进程继续运行、并发统计失真与重复消息。
@@ -125,7 +112,12 @@ const { createWorkerResult, createWorkerError } = require('../utils/workerMessag
         if (severeBacklog) {
             logger.error(`${LOG_PREFIXES.VIDEO_PROCESSOR} 任务队列严重积压: ${queueSize} 个任务 - 可能需要重启服务`);
         } else if (moderateBacklog) {
-            logger.warn(`${LOG_PREFIXES.VIDEO_PROCESSOR} 任务队列积压: ${queueSize} 个任务`);
+            // 节流：中度队列积压警告每分钟最多记录一次
+            const now = Date.now();
+            if (now - lastQueueWarningTime > 60000) {
+                logger.warn(`${LOG_PREFIXES.VIDEO_PROCESSOR} 任务队列积压: ${queueSize} 个任务`);
+                lastQueueWarningTime = now;
+            }
         }
 
         // 定期内存报告

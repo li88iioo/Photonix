@@ -161,11 +161,13 @@ function detectAuthChanges(settingsToUpdate = {}) {
 function buildAuditContext(req, extra = {}) {
   const headerUserId = req.headers['x-user-id'] || req.headers['x-userid'] || req.headers['x-user'];
   const userId = (req.user && req.user.id) ? String(req.user.id) : (headerUserId ? String(headerUserId) : 'anonymous');
+  const { reason, ...restExtra } = extra || {};
   return {
+    ...(reason ? { reason } : {}),
     requestId: req.requestId || '-',
     ip: req.ip,
     userId,
-    ...extra
+    ...restExtra
   };
 }
 
@@ -275,7 +277,7 @@ async function verifySensitiveOperations(isSensitiveOperation, adminSecret, audi
   const result = await verifyAdminSecret(adminSecret);
   if (!result.ok) {
     // 记录拒绝的审计日志
-    logger.warn(JSON.stringify(auditContextBuilder({
+    logger.warn(`${LOG_PREFIXES.AUTH} 管理员验证被拒绝`, translateAuditLog(auditContextBuilder({
       action: 'update_settings',
       sensitive: true,
       status: 'denied',
@@ -361,13 +363,13 @@ function buildUpdateResponse(dispatchResult, hasAuthChanges, settingsToUpdate, b
 
   // 如果有认证更改，返回202状态码表示已接受处理
   if (hasAuthChanges) {
-    logger.info('检测到认证相关设置变更，任务已提交到后台处理...');
-    logger.info(JSON.stringify(translateAuditLog(buildAuditContext({
+    logger.info(`${LOG_PREFIXES.AUTH} 检测到认证相关设置变更，任务已提交到后台处理...`);
+    logger.info(`${LOG_PREFIXES.AUTH} 认证设置更新已提交`, translateAuditLog(buildAuditContext({
       action: 'update_settings',
       sensitive: true,
       status: 'submitted',
       updatedKeys: Object.keys(settingsToUpdate)
-    }))));
+    })));
 
     return {
       statusCode: 202,
@@ -381,13 +383,13 @@ function buildUpdateResponse(dispatchResult, hasAuthChanges, settingsToUpdate, b
   }
 
   // 非认证相关更改，返回200状态码
-  logger.info('非认证相关设置变更，立即返回成功');
-  logger.info(JSON.stringify(translateAuditLog(buildAuditContext({
+  logger.info(`${LOG_PREFIXES.SETTINGS_UPDATE} 非认证相关设置变更，立即返回成功`);
+  logger.info(`${LOG_PREFIXES.SETTINGS_UPDATE} 设置更新已提交`, translateAuditLog(buildAuditContext({
     action: 'update_settings',
     sensitive: false,
     status: 'submitted',
     updatedKeys: Object.keys(settingsToUpdate)
-  }))));
+  })));
 
   return {
     statusCode: 200,

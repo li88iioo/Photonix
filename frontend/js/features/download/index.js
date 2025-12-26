@@ -334,6 +334,8 @@ function startAutoRefresh() {
 }
 
 async function ensureAdminSecret(forcePrompt = false) {
+  // 密码状态检查已在 showDownloadPage 入口处处理，此处仅验证管理员密钥
+
   // 优先使用当前会话状态（内存）且在有效期内
   if (!forcePrompt && downloadState.adminSecret && isVerificationFresh(downloadState.lastVerifiedAt)) {
     if (downloadState.adminSecret === 'TOKEN_AUTH') {
@@ -974,6 +976,22 @@ export function isDownloadRoute(hash) {
 }
 
 export async function showDownloadPage() {
+  // 首先检查密码功能是否启用 - 未启用则静默跳回首页
+  try {
+    const settingsResponse = await fetch('/api/settings');
+    if (settingsResponse.ok) {
+      const settingsData = await settingsResponse.json();
+      const settings = settingsData?.data || settingsData;
+      if (settings?.PASSWORD_ENABLED !== 'true') {
+        // 密码未启用，静默跳回首页，不显示任何内容
+        window.location.hash = '#/';
+        return;
+      }
+    }
+  } catch {
+    // 检查失败则继续正常流程
+  }
+
   ensureDownloadRoot();
   initializeInteractions();
   setRootVisible(true);

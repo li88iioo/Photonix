@@ -5,6 +5,7 @@
  */
 const { dbGet, dbRun } = require('../db/multi-db');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 
 async function getIndexStatus() {
   // 返回 index_status.status 或 null
@@ -12,7 +13,7 @@ async function getIndexStatus() {
     const row = await dbGet('index', "SELECT status FROM index_status WHERE id = 1");
     return row ? row.status : null;
   } catch (error) {
-    logger.debug(`[IndexStatusRepo] 读取索引状态失败: ${error && error.message}`);
+    logger.debug(`${LOG_PREFIXES.INDEX_STATUS_REPO} 读取索引状态失败: ${error && error.message}`);
     return null;
   }
 }
@@ -21,7 +22,7 @@ async function setIndexStatus(status) {
   try {
     await dbRun('index', "INSERT INTO index_status(id, status, last_updated) VALUES(1, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET status=excluded.status, last_updated=CURRENT_TIMESTAMP", [String(status || '')]);
   } catch (err) {
-    logger.debug(`[IndexStatusRepo] 设置索引状态失败 (status=${status}): ${err.message}`);
+    logger.debug(`${LOG_PREFIXES.INDEX_STATUS_REPO} 设置索引状态失败 (status=${status}): ${err.message}`);
   }
 }
 
@@ -31,7 +32,7 @@ async function getProcessedFiles() {
     const row = await dbGet('index', "SELECT processed_files FROM index_status WHERE id = 1");
     return row ? Number(row.processed_files || 0) : 0;
   } catch (error) {
-    logger.debug(`[IndexStatusRepo] 读取已处理文件数失败: ${error && error.message}`);
+    logger.debug(`${LOG_PREFIXES.INDEX_STATUS_REPO} 读取已处理文件数失败: ${error && error.message}`);
     return 0;
   }
 }
@@ -53,7 +54,7 @@ async function setProcessedFiles(count) {
       );
     }
   } catch (err) {
-    logger.debug(`[IndexStatusRepo] 设置已处理文件数失败 (count=${count}): ${err.message}`);
+    logger.debug(`${LOG_PREFIXES.INDEX_STATUS_REPO} 设置已处理文件数失败 (count=${count}): ${err.message}`);
   }
 }
 
@@ -72,7 +73,7 @@ async function setTotalFiles(count) {
       );
     }
   } catch (err) {
-    logger.debug(`[IndexStatusRepo] 设置总文件数失败 (count=${count}): ${err.message}`);
+    logger.debug(`${LOG_PREFIXES.INDEX_STATUS_REPO} 设置总文件数失败 (count=${count}): ${err.message}`);
   }
 }
 
@@ -81,7 +82,7 @@ async function getResumeValue(key) {
     const row = await dbGet('index', "SELECT value FROM index_progress WHERE key = ?", [String(key || '')]);
     return row ? row.value : null;
   } catch (error) {
-    logger.debug(`[IndexStatusRepo] 读取断点续传值失败 (key=${key}): ${error && error.message}`);
+    logger.debug(`${LOG_PREFIXES.INDEX_STATUS_REPO} 读取断点续传值失败 (key=${key}): ${error && error.message}`);
     return null;
   }
 }
@@ -90,7 +91,7 @@ async function setResumeValue(key, value) {
   try {
     await dbRun('index', "INSERT INTO index_progress(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [String(key || ''), String(value || '')]);
   } catch (err) {
-    logger.debug(`[IndexStatusRepo] 设置断点续传值失败 (key=${key}): ${err.message}`);
+    logger.debug(`${LOG_PREFIXES.INDEX_STATUS_REPO} 设置断点续传值失败 (key=${key}): ${err.message}`);
   }
 }
 
@@ -98,7 +99,7 @@ async function deleteResumeKey(key) {
   try {
     await dbRun('index', "DELETE FROM index_progress WHERE key = ?", [String(key || '')]);
   } catch (err) {
-    logger.debug(`[IndexStatusRepo] 删除断点续传键失败 (key=${key}): ${err.message}`);
+    logger.debug(`${LOG_PREFIXES.INDEX_STATUS_REPO} 删除断点续传键失败 (key=${key}): ${err.message}`);
   }
 }
 
@@ -107,7 +108,7 @@ async function getIndexStatusRow() {
     const row = await dbGet('index', "SELECT status, processed_files, total_files, last_updated FROM index_status WHERE id = 1");
     return row || null;
   } catch (error) {
-    logger.debug(`[IndexStatusRepo] 读取索引状态行失败: ${error && error.message}`);
+    logger.debug(`${LOG_PREFIXES.INDEX_STATUS_REPO} 读取索引状态行失败: ${error && error.message}`);
     return null;
   }
 }

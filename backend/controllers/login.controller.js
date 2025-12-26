@@ -8,6 +8,7 @@ const { promises: fs } = require('fs');
 const mime = require('mime-types');
 const { redis } = require('../config/redis');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { safeRedisGet, safeRedisSet } = require('../utils/helpers');
 const { THUMBS_DIR } = require('../config');
 
@@ -81,10 +82,10 @@ async function pickRandomThumb() {
   }
   if (candidates.length === 0) return null;
   const chosen = candidates[Math.floor(Math.random() * candidates.length)];
-  
+
   // 尝试缓存选择结果
   await safeRedisSet(redis, CACHE_KEY, chosen, 'EX', CACHE_TTL_SECONDS, '登录背景缓存写入');
-  
+
   return chosen;
 }
 
@@ -108,7 +109,7 @@ exports.serveLoginBackground = async (req, res) => {
     } catch (error) {
       // 缓存失效：目标文件不存在，清除缓存并可选重试
       logger.warn(`[LoginBG] 缓存命中但文件缺失，刷新缓存: ${abs} -> ${error && error.message}`);
-      await redis.del(CACHE_KEY).catch(() => {});
+      await redis.del(CACHE_KEY).catch(() => { });
       if (allowRetry) {
         const nextRel = await pickRandomThumb();
         return respondWithRel(nextRel, false);
@@ -121,7 +122,7 @@ exports.serveLoginBackground = async (req, res) => {
     return res.sendFile(abs, (err) => {
       if (err) {
         logger.warn(`[LoginBG] 发送背景图失败，清除缓存: ${abs} -> ${err && err.message}`);
-        redis.del(CACHE_KEY).catch(() => {});
+        redis.del(CACHE_KEY).catch(() => { });
         if (!res.headersSent) {
           res.status(404).json({ code: 'LOGIN_BG_NOT_FOUND', message: '暂无可用的背景图片', requestId: req.requestId });
         }

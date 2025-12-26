@@ -5,6 +5,7 @@ const {
     hasTable
 } = require('./multi-db');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 
 // 主数据库迁移（图片/视频索引）
 const initializeMainDB = async () => {

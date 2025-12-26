@@ -5,6 +5,7 @@ const {
     INDEX_DB_FILE
 } = require('../config');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { initializeConnections } = require('./multi-db');
 const { initializeAllDBs } = require('./migrations');
 const fs = require('fs');

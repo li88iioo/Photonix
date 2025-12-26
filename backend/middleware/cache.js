@@ -1,5 +1,6 @@
 const { redis } = require('../config/redis');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { safeRedisGet, safeRedisSet } = require('../utils/helpers');
 const { addTagsToKey } = require('../services/cache.service.js');
 
@@ -195,7 +196,7 @@ function attachWritersWithCache(res, key, ttlSeconds) {
         try {
             // 新增：如果响应标记为不缓存（如封面未就绪），则跳过缓存
             if (res.get('X-No-Cache') === 'true') {
-                logger.debug(`[CACHE] 响应标记为不缓存，跳过: ${key}`);
+                logger.debug(`${LOG_PREFIXES.CACHE} 响应标记为不缓存，跳过: ${key}`);
                 return;
             }
             if (!streamingWritten && res.statusCode >= 200 && res.statusCode < 300 && res.req && res.req.method === 'GET') {
@@ -266,7 +267,6 @@ function cache(duration) {
             if (cachedData) {
                 // 缓存命中处理
                 cacheStats.hits++;
-                logger.debug(`成功命中路由缓存: ${key}`);
                 res.setHeader('X-Cache', 'HIT');
                 try {
                     const parsed = JSON.parse(cachedData);
@@ -275,7 +275,7 @@ function cache(duration) {
                         return replayEnvelope(res, parsed);
                     }
                 } catch (error) {
-                    logger.debug(`[CACHE] 解析缓存条目失败，降级为未命中: ${error && error.message}`);
+                    logger.debug(`${LOG_PREFIXES.CACHE} 解析缓存条目失败，降级为未命中: ${error && error.message}`);
                 }
                 res.setHeader('Content-Type', 'application/json; charset=utf-8');
                 res.setHeader('Cache-Control', cacheControlValue);
@@ -301,8 +301,8 @@ function cache(duration) {
                         const reason = err && err.message ? err.message : 'unknown';
                         const logLevel = reason === 'response_aborted' ? 'debug' : 'error';
                         const logMessage = reason === 'response_aborted'
-                            ? `[CACHE] SingleFlight 领导者响应在构建缓存时中断（客户端主动断开）: ${req.originalUrl}`
-                            : `[CACHE] SingleFlight 领导者执行异常: ${req.originalUrl} -> ${reason}`;
+                            ? `${LOG_PREFIXES.CACHE} SingleFlight 领导者响应在构建缓存时中断（客户端主动断开）: ${req.originalUrl}`
+                            : `${LOG_PREFIXES.CACHE} SingleFlight 领导者执行异常: ${req.originalUrl} -> ${reason}`;
                         logger[logLevel](logMessage);
                         if (flightOwner?.entry) {
                             rejectSingleFlight(key, flightOwner.entry, err);
@@ -340,7 +340,7 @@ function cache(duration) {
                         return true;
                     }
                 } catch (error) {
-                    logger.debug(`[CACHE] follower 解析缓存失败 ${key}: ${error && error.message}`);
+                    logger.debug(`${LOG_PREFIXES.CACHE} follower 解析缓存失败 ${key}: ${error && error.message}`);
                 }
                 res.setHeader('Content-Type', 'application/json; charset=utf-8');
                 res.setHeader('Cache-Control', cacheControlValue);
@@ -354,7 +354,7 @@ function cache(duration) {
                     await waitWithTimeout(flightPromise, SINGLE_FLIGHT_WAIT_TIMEOUT_MS);
                     return await serveFromCache();
                 } catch (waitError) {
-                    logger.debug(`[CACHE] SingleFlight follower 等待失败 ${key}: ${waitError && waitError.message}`);
+                    logger.debug(`${LOG_PREFIXES.CACHE} SingleFlight follower 等待失败 ${key}: ${waitError && waitError.message}`);
                     return false;
                 }
             };
@@ -371,7 +371,7 @@ function cache(duration) {
                 const retryFlight = acquireSingleFlight(key);
                 if (!retryFlight.isLeader) {
                     // 极少数情况下仍无法成为领导者，直接放弃SingleFlight以保证可用性
-                    logger.debug(`[CACHE] SingleFlight follower 重试仍非领导者，直接回源 ${key}`);
+                    logger.debug(`${LOG_PREFIXES.CACHE} SingleFlight follower 重试仍非领导者，直接回源 ${key}`);
                     handleLeaderResponse(null);
                     return;
                 }

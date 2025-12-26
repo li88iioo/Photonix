@@ -23,6 +23,7 @@ const requestId = require('./middleware/requestId');
 const { traceMiddleware } = require('./utils/trace');
 const mainRouter = require('./routes');
 const logger = require('./config/logger');
+const { LOG_PREFIXES } = logger;
 const { getHealthSummary } = require('./services/health.service');
 const authMiddleware = require('./middleware/auth');
 const authRouter = require('./routes/auth.routes');
@@ -101,7 +102,7 @@ app.use((req, res, next) => {
             res.removeHeader('Origin-Agent-Cluster');
         }
     } catch (error) {
-        logger.debug('设置安全头失败', { error: error.message });
+        logger.warn('设置安全头失败', { error: error.message });
     }
     next();
 });
@@ -111,6 +112,46 @@ app.use((req, res, next) => {
  */
 app.use(requestId());
 app.use(traceMiddleware);
+
+/**
+ * 慢请求检测（轻量级性能监控）
+ * 采样策略：1% 慢请求输出详细日志，每分钟汇总一次
+ */
+let slowRequestCount = 0;
+let lastSlowLogTime = 0;
+const rawSlowLogSampleRate = Number(process.env.SLOW_LOG_SAMPLE_RATE);
+const SLOW_LOG_SAMPLE_RATE = Number.isFinite(rawSlowLogSampleRate)
+    ? Math.max(0, Math.min(1, rawSlowLogSampleRate))
+    : 0.01; // 默认 1% 采样
+const rawSlowLogIntervalMs = Number(process.env.SLOW_LOG_INTERVAL_MS);
+const SLOW_LOG_INTERVAL_MS = Number.isFinite(rawSlowLogIntervalMs)
+    ? Math.max(1000, rawSlowLogIntervalMs)
+    : 60000; // 默认 1分钟汇总
+
+app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+        const duration = Date.now() - start;
+        if (duration > 2000 || res.statusCode >= 500) {
+            slowRequestCount++;
+            const now = Date.now();
+            const shouldLog = res.statusCode >= 500 || Math.random() < SLOW_LOG_SAMPLE_RATE || (now - lastSlowLogTime) > SLOW_LOG_INTERVAL_MS;
+
+            if (shouldLog) {
+                logger.warn(`${LOG_PREFIXES.SLOW_REQUEST} 性能监控`, {
+                    method: req.method,
+                    path: req.path,
+                    statusCode: res.statusCode,
+                    duration,
+                    totalSlowRequests: slowRequestCount,
+                    requestId: req.requestId
+                });
+                lastSlowLogTime = now;
+            }
+        }
+    });
+    next();
+});
 
 /**
  * JSON 请求体解析，限制体积 1MB。

@@ -5,6 +5,7 @@
 const { performSearch } = require('../services/search.service');
 const { getCount } = require('../repositories/stats.repo');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 
 /**
  * 搜索文件和相册
@@ -35,7 +36,7 @@ exports.searchItems = async (req, res) => {
 
     // 调用服务层执行搜索
     const searchResult = await performSearch(query, page, limit);
-    
+
     // 返回服务层处理好的结果
     res.json(searchResult);
 };

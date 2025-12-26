@@ -4,6 +4,7 @@
  */
 const path = require('path');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { TraceManager } = require('../utils/trace');
 const { normalizeWorkerMessage } = require('../utils/workerMessage');
 const { PHOTOS_DIR, THUMBS_DIR, HLS_BATCH_TIMEOUT_MS } = require('../config');

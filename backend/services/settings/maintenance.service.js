@@ -154,6 +154,9 @@ class ThumbnailSyncService {
     let syncedCount = 0;
     let existsCount = 0;
     let missingCount = 0;
+    let errorCount = 0;
+    const errorSamples = [];
+    const total = Array.isArray(mediaFiles) ? mediaFiles.length : 0;
 
     // 遍历所有媒体文件，检查缩略图状态
     for (const file of mediaFiles) {
@@ -166,8 +169,15 @@ class ThumbnailSyncService {
           missingCount++;
         }
       } catch (error) {
-        logger.debug(`处理文件失败 ${file.path}: ${error.message}`);
+        errorCount++;
+        if (errorSamples.length < 5) {
+          errorSamples.push({ path: file && file.path, error: error && error.message });
+        }
       }
+    }
+
+    if (errorCount > 0) {
+      logger.warn(`${LOG_PREFIXES.THUMBNAIL_SYNC} 处理文件失败（已跳过）`, { errors: errorCount, sample: errorSamples });
     }
 
     return { syncedCount, existsCount, missingCount };
@@ -363,7 +373,20 @@ class ThumbnailSyncService {
       await this.fs.access(thumbFullPath);
       status = 'exists';
     } catch (accessErr) {
-      logger.silly(`${LOG_PREFIXES.THUMBNAIL_SYNC} 检查缩略图 ${thumbPath} 失败，标记为缺失: ${accessErr && accessErr.message}`);
+      // ENOENT 是正常情况：缩略图缺失时将标记为 missing，无需逐文件刷日志
+      if (accessErr && accessErr.code && accessErr.code !== 'ENOENT') {
+        if (typeof logger.throttledLog === 'function') {
+          logger.throttledLog(
+            'debug',
+            `thumbnail-sync:access:${accessErr.code}`,
+            `${LOG_PREFIXES.THUMBNAIL_SYNC} 检查缩略图失败（降级为 missing）`,
+            { code: accessErr.code, thumbPath, error: accessErr.message },
+            60000
+          );
+        } else {
+          logger.debug(`${LOG_PREFIXES.THUMBNAIL_SYNC} 检查缩略图失败（降级为 missing）`, { code: accessErr.code, thumbPath, error: accessErr.message });
+        }
+      }
     }
 
     // 更新缩略图状态表
@@ -555,6 +578,17 @@ async function getIndexStatus() {
  * @returns {Object} HLS文件统计信息
  */
 async function getHlsFileStats() {
+  // 轻量缓存：避免状态轮询时频繁扫描磁盘/Redis
+  const rawCacheMs = Number(process.env.HLS_STATS_CACHE_MS);
+  const cacheMs = Number.isFinite(rawCacheMs) ? Math.max(1000, rawCacheMs) : 15000;
+  if (!getHlsFileStats._cache) {
+    getHlsFileStats._cache = { at: 0, val: null };
+  }
+  const now = Date.now();
+  if (getHlsFileStats._cache.val && (now - getHlsFileStats._cache.at) < cacheMs) {
+    return getHlsFileStats._cache.val;
+  }
+
   try {
     // 使用Repository获取所有视频文件
     const ItemsRepository = require('../../repositories/items.repo');
@@ -564,6 +598,8 @@ async function getHlsFileStats() {
     const toCheck = videos.map((v) => v.path);
     let processed = 0;
     let skip = 0;
+    let missingMasters = 0;
+    const missingSamples = [];
 
     // 检查每个视频的HLS文件是否存在
     for (const videoPath of toCheck) {
@@ -579,7 +615,10 @@ async function getHlsFileStats() {
         await fs.access(master);
         processed++;
       } catch (hlsAccessErr) {
-        logger.silly(`${LOG_PREFIXES.SYSTEM_MAINTENANCE} 无法访问 HLS master (${master})，标记为未处理: ${hlsAccessErr && hlsAccessErr.message}`);
+        missingMasters++;
+        if (missingSamples.length < 5) {
+          missingSamples.push(master);
+        }
       }
     }
 
@@ -594,7 +633,17 @@ async function getHlsFileStats() {
 
     // pending = 未处理的视频（不包括路径验证失败的 skip）
     const pending = Math.max(0, totalVideos - processed - failed - skip);
-    return {
+    if (missingMasters > 0 && typeof logger.throttledLog === 'function') {
+      logger.throttledLog(
+        'debug',
+        'hls:missing-master',
+        `${LOG_PREFIXES.SYSTEM_MAINTENANCE} HLS master 缺失，标记为未处理`,
+        { missing: missingMasters, sample: missingSamples, cacheMs },
+        60000
+      );
+    }
+
+    const result = {
       total: totalVideos,
       processed,
       failed,
@@ -602,8 +651,12 @@ async function getHlsFileStats() {
       pending,        // 待处理的
       totalProcessed: processed + failed  // 只计算真正处理过的
     };
+    getHlsFileStats._cache = { at: now, val: result };
+    return result;
   } catch (error) {
-    return { total: 0, processed: 0, failed: 0, skipped: 0, pending: 0, totalProcessed: 0 };
+    const fallback = { total: 0, processed: 0, failed: 0, skipped: 0, pending: 0, totalProcessed: 0 };
+    getHlsFileStats._cache = { at: now, val: fallback };
+    return fallback;
   }
 }
 
@@ -664,82 +717,219 @@ async function getHlsStatus() {
 }
 
 async function performThumbnailReconcileLocal(options = {}) {
-  const { limit = 1000 } = options;
-  return runWithLock('thumbnail_reconcile_local', async () => {
+  const { limit = 1000, loop = false } = options;
+  const maxRounds = Math.max(1, Number(options.maxRounds) || (loop ? 60 : 1));
+  const detached = options.detached === true;
+  const lockKey = 'thumbnail_reconcile_local';
+
+  const runLoop = async () => {
     const ThumbStatusRepository = require('../../repositories/thumbStatus.repo');
+    const { batchGenerateMissingThumbnails } = require('../thumbnail.service');
     const thumbStatusRepo = new ThumbStatusRepository();
 
-    const missingFiles = await thumbStatusRepo.getByStatus('missing', limit);
+    let totalChanged = 0;
+    let queuedTotal = 0;
+    let skippedTotal = 0;
+    let processedTotal = 0;
+    let round = 0;
+    let noProgressRounds = 0;
+    let lastFoundMissing = 0;
+    let lastQueued = 0;
 
-    if (!missingFiles || missingFiles.length === 0) {
-      logger.debug('缩略图补全检查完成：没有发现需要补全的缩略图');
-      return;
-    }
+    while (round < maxRounds) {
+      round++;
+      const missingFiles = await thumbStatusRepo.getByStatus(['missing', 'failed', 'pending'], limit);
 
-    let changed = 0;
-    let skipped = 0;
-
-    let processed = 0;
-    const YIELD_EVERY = 200;
-    const yieldIfNeeded = async () => {
-      processed += 1;
-      if (processed % YIELD_EVERY === 0) {
-        await Promise.resolve();
+      if (!missingFiles || missingFiles.length === 0) {
+        if (round === 1) {
+          logger.debug('缩略图补全检查完成：没有发现需要补全的缩略图');
+        } else {
+          logger.info(`缩略图补全循环完成，共处理 ${round - 1} 轮`);
+        }
+        return {
+          rounds: round - 1,
+          queued: queuedTotal,
+          skipped: skippedTotal,
+          processed: processedTotal,
+          changed: totalChanged,
+          foundMissing: 0
+        };
       }
-    };
 
-    for (const row of missingFiles) {
-      try {
-        const sanitizedPath = sanitizePath(row.path || '');
-        if (!sanitizedPath || !isPathSafe(sanitizedPath)) {
+      let changed = 0;
+      let skipped = 0;
+      let processed = 0;
+      const YIELD_EVERY = 200;
+
+      for (const row of missingFiles) {
+        try {
+          const sanitizedPath = sanitizePath(row.path || '');
+          if (!sanitizedPath || !isPathSafe(sanitizedPath)) {
+            skipped++;
+            continue;
+          }
+
+          // 如果已经是 pending，不需要重复更新数据库，但需要加入本轮处理
+          if (row.status !== 'pending') {
+            await runAsync('main', `
+              UPDATE thumb_status
+              SET status = 'pending', last_checked = strftime('%s','now')*1000
+              WHERE path = ?
+            `, [sanitizedPath]);
+            changed++;
+          }
+        } catch (resyncErr) {
           skipped++;
-          await yieldIfNeeded();
-          continue;
+          logger.debug(`${LOG_PREFIXES.SYSTEM_MAINTENANCE} 缩略图补全标记失败，已跳过: ${row.path} -> ${resyncErr && resyncErr.message}`);
         }
 
-        const sourceAbsPath = path.resolve(PHOTOS_DIR, sanitizedPath);
-        await fs.access(sourceAbsPath);
-
-        await runAsync('main', `
-          UPDATE thumb_status
-          SET status = 'pending', last_checked = strftime('%s','now')*1000
-          WHERE path = ?
-        `, [sanitizedPath]);
-        changed++;
-      } catch (resyncErr) {
-        skipped++;
-        logger.debug(`${LOG_PREFIXES.SYSTEM_MAINTENANCE} 缩略图补全标记失败，已跳过: ${sanitizedPath || row.path} -> ${resyncErr && resyncErr.message}`);
+        processed++;
+        if (processed % YIELD_EVERY === 0) await Promise.resolve();
       }
 
-      await yieldIfNeeded();
+      totalChanged += changed;
+
+      // 启动本轮生成
+      try {
+        const result = await batchGenerateMissingThumbnails(limit);
+
+        // 进度日志：循环模式下每 5 轮或首轮输出一次
+        if (loop && (round === 1 || round % 5 === 0)) {
+          logger.info(`${LOG_PREFIXES.THUMB_BACKFILL_DISPATCH} 缩略图补全进度`, {
+            round: `${round}/${maxRounds}`,
+            queued: queuedTotal + (result?.queued || 0),
+            skipped: skippedTotal + (result?.skipped || 0),
+            processed: processedTotal + (result?.processed || 0),
+            foundMissing: result?.foundMissing || 0,
+          });
+        } else {
+          logger.debug(`${LOG_PREFIXES.THUMB_BACKFILL_DISPATCH} 第 ${round} 轮已启动: queued=${result.queued}, skipped=${result.skipped}, processed=${result.processed}`);
+        }
+
+        lastFoundMissing = Number(result?.foundMissing || 0);
+        lastQueued = Number(result?.queued || 0);
+        queuedTotal += lastQueued;
+        skippedTotal += Number(result?.skipped || 0);
+        processedTotal += Number(result?.processed || 0);
+
+        // 非循环模式：只跑一轮即可
+        if (!loop) {
+          return {
+            rounds: round,
+            queued: queuedTotal,
+            skipped: skippedTotal,
+            processed: processedTotal,
+            changed: totalChanged,
+            foundMissing: lastFoundMissing
+          };
+        }
+
+        if (lastFoundMissing === 0) {
+          return {
+            rounds: round,
+            queued: queuedTotal,
+            skipped: skippedTotal,
+            processed: processedTotal,
+            changed: totalChanged,
+            foundMissing: 0
+          };
+        }
+
+        const noProgress = lastQueued === 0 && changed === 0;
+        noProgressRounds = noProgress ? (noProgressRounds + 1) : 0;
+        if (noProgressRounds >= 3) {
+          logger.info(`${LOG_PREFIXES.THUMB_BACKFILL_DISPATCH} 连续 ${noProgressRounds} 轮无进展，停止循环补全`, {
+            rounds: round,
+            foundMissing: lastFoundMissing,
+            queued: lastQueued
+          });
+          return {
+            rounds: round,
+            queued: queuedTotal,
+            skipped: skippedTotal,
+            processed: processedTotal,
+            changed: totalChanged,
+            foundMissing: lastFoundMissing,
+            noProgress: true
+          };
+        }
+
+        // 循环模式短暂停顿，给系统喘息机会
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } catch (dispatchErr) {
+        logger.warn(`${LOG_PREFIXES.THUMB_BACKFILL_DISPATCH} 第 ${round} 轮启动失败：${dispatchErr && dispatchErr.message}`);
+        return {
+          rounds: round,
+          queued: queuedTotal,
+          skipped: skippedTotal,
+          processed: processedTotal,
+          changed: totalChanged,
+          foundMissing: lastFoundMissing,
+          error: dispatchErr && dispatchErr.message
+        };
+      }
     }
 
-    logger.debug(`缩略图补全检查完成：发现 ${changed} 个文件需要补全缩略图，跳过 ${skipped} 个无效或缺失的记录`);
+    logger.warn(`${LOG_PREFIXES.THUMB_BACKFILL_DISPATCH} 已达到最大循环轮次限制，停止补全`, {
+      maxRounds,
+      rounds: round,
+      foundMissing: lastFoundMissing
+    });
+    return {
+      rounds: round,
+      queued: queuedTotal,
+      skipped: skippedTotal,
+      processed: processedTotal,
+      changed: totalChanged,
+      foundMissing: lastFoundMissing,
+      maxRoundsReached: true
+    };
+  };
 
-    try {
-      const { batchGenerateMissingThumbnails } = require('../thumbnail.service');
-      const result = await batchGenerateMissingThumbnails(1000);
-      logger.debug(`${LOG_PREFIXES.THUMB_BACKFILL_DISPATCH} 已启动: queued=${result.queued}, skipped=${result.skipped}, processed=${result.processed}`);
-    } catch (dispatchErr) {
-      logger.warn(`${LOG_PREFIXES.THUMB_BACKFILL_DISPATCH} 启动失败（不影响状态更新）：${dispatchErr && dispatchErr.message}`);
-    }
-  }).catch((error) => {
-    logger.error('缩略图补全检查失败:', error);
-    throw error;
-  });
+  if (!detached) {
+    return runWithLock(lockKey, runLoop).catch((error) => {
+      logger.error('缩略图补全检查失败:', error);
+      throw error;
+    });
+  }
+
+  if (isTaskRunning(lockKey)) {
+    return { skipped: true, running: true, task: lockKey };
+  }
+
+  lockState.set(lockKey, true);
+  runLoop()
+    .catch((error) => {
+      logger.error('缩略图补全检查失败:', error);
+    })
+    .finally(() => {
+      lockState.set(lockKey, false);
+    });
+
+  return { started: true, detached: true, loop, limit, maxRounds };
 }
 
-async function performHlsReconcileOnceLocal(limit = 1000) {
-  return runWithLock('hls_reconcile_local', async () => {
+async function performHlsReconcileOnceLocal(limitOrOptions = 1000) {
+  const options = (limitOrOptions && typeof limitOrOptions === 'object')
+    ? limitOrOptions
+    : { limit: limitOrOptions };
+
+  const pageSize = Math.max(50, Number(options.pageSize || options.limit) || 1000);
+  const batchSize = Math.max(10, Number(options.batchSize || process.env.HLS_RECONCILE_BATCH_SIZE) || 100);
+  const detached = options.detached === true;
+  const lockKey = 'hls_reconcile_local';
+
+  const runOnce = async () => {
     const ItemsRepository = require('../../repositories/items.repo');
     const itemsRepo = new ItemsRepository();
-    const pageSize = Math.max(100, Number(limit) || 1000);
 
     let offset = 0;
     let success = 0;
     let failed = 0;
     let skipped = 0;
     let total = 0;
+    let missing = 0;
+    let batches = 0;
 
     // 分页扫描，确保上千视频也能补全
     while (true) {
@@ -749,6 +939,10 @@ async function performHlsReconcileOnceLocal(limit = 1000) {
       total += videos.length;
       const toProcess = [];
       let pageSkip = 0;
+      let pageMissing = 0;
+      const pageMissingSamples = [];
+      let pageCheckErrors = 0;
+      const pageCheckErrorSamples = [];
 
       for (const v of videos) {
         try {
@@ -764,28 +958,87 @@ async function performHlsReconcileOnceLocal(limit = 1000) {
             pageSkip++;
             continue;
           } catch (missingHlsErr) {
-            logger.silly(`${LOG_PREFIXES.SYSTEM_MAINTENANCE} 视频 ${sanitizedRelative} 缺少 HLS master（继续补全）: ${missingHlsErr && missingHlsErr.message}`);
+            pageMissing++;
+            if (pageMissingSamples.length < 5) {
+              pageMissingSamples.push({ path: sanitizedRelative, error: missingHlsErr && missingHlsErr.message });
+            }
           }
 
           const sourceAbsPath = path.resolve(PHOTOS_DIR, sanitizedRelative);
           await fs.access(sourceAbsPath);
           toProcess.push({ absolute: sourceAbsPath, relative: sanitizedRelative });
         } catch (e) {
-          logger.debug(`HLS补全检查视频失败: ${v.path}, ${e.message}`);
+          pageCheckErrors++;
+          if (pageCheckErrorSamples.length < 5) {
+            pageCheckErrorSamples.push({ path: v && v.path, error: e && e.message });
+          }
           pageSkip++;
         }
+      }
+
+      missing += pageMissing;
+
+      if (pageMissing > 0) {
+        logger.debug(`${LOG_PREFIXES.SYSTEM_MAINTENANCE} 本页缺少 HLS master（继续补全）`, {
+          missing: pageMissing,
+          sample: pageMissingSamples,
+          offset,
+          pageSize,
+        });
+      }
+      if (pageCheckErrors > 0) {
+        logger.debug(`${LOG_PREFIXES.SYSTEM_MAINTENANCE} 本页 HLS 补全检查失败（已跳过）`, {
+          errors: pageCheckErrors,
+          sample: pageCheckErrorSamples,
+          offset,
+          pageSize,
+        });
       }
 
       try {
         if (toProcess.length > 0) {
           const absoluteList = toProcess.map((item) => item.absolute);
-          const batch = await runHlsBatch(absoluteList, { timeoutMs: process.env.HLS_BATCH_TIMEOUT_MS });
-          success += batch.success || 0;
-          failed += batch.failed || 0;
-          skipped += batch.skipped || 0;
+          const totalBatchesInPage = Math.ceil(absoluteList.length / batchSize);
+          for (let i = 0; i < absoluteList.length; i += batchSize) {
+            const chunk = absoluteList.slice(i, i + batchSize);
+            const batchIndex = Math.floor(i / batchSize) + 1;
+            try {
+              const batch = await runHlsBatch(chunk, { timeoutMs: process.env.HLS_BATCH_TIMEOUT_MS });
+              batches += 1;
+              success += batch.success || 0;
+              failed += batch.failed || 0;
+              skipped += batch.skipped || 0;
+
+              // 进度日志：每 5 批或最后一批输出一次
+              if (batchIndex % 5 === 0 || batchIndex === totalBatchesInPage) {
+                logger.info(`${LOG_PREFIXES.SYSTEM_MAINTENANCE} HLS 补全进度`, {
+                  page: Math.floor(offset / pageSize) + 1,
+                  batch: `${batchIndex}/${totalBatchesInPage}`,
+                  totalProcessed: total,
+                  success,
+                  failed,
+                  skipped: skipped + pageSkip,
+                });
+              }
+            } catch (batchErr) {
+              // 批次级错误恢复：单批失败不阻断整体流程
+              logger.warn(`${LOG_PREFIXES.SYSTEM_MAINTENANCE} HLS 批次失败（继续下一批）`, {
+                batch: `${batchIndex}/${totalBatchesInPage}`,
+                error: batchErr?.message || String(batchErr),
+                chunkSize: chunk.length,
+              });
+              failed += chunk.length;
+            }
+            // 每批之间短暂让出事件循环，降低内存压力
+            await new Promise(resolve => setImmediate(resolve));
+          }
         }
       } catch (e) {
-        logger.warn('HLS一次性批处理执行失败（忽略其余流程）:', e && e.message);
+        logger.error(`${LOG_PREFIXES.SYSTEM_MAINTENANCE} HLS 页级处理失败`, {
+          offset,
+          pageSize,
+          error: e?.message || String(e),
+        });
         failed += toProcess.length;
       }
 
@@ -799,14 +1052,37 @@ async function performHlsReconcileOnceLocal(limit = 1000) {
 
     return {
       total,
+      missing,
       success,
       failed,
-      skipped
+      skipped,
+      batches,
+      pageSize,
+      batchSize
     };
-  }).catch((error) => {
-    logger.error('HLS补全检查失败:', error);
-    throw error;
-  });
+  };
+
+  if (!detached) {
+    return runWithLock(lockKey, runOnce).catch((error) => {
+      logger.error('HLS补全检查失败:', error);
+      throw error;
+    });
+  }
+
+  if (isTaskRunning(lockKey)) {
+    return { skipped: true, running: true, task: lockKey };
+  }
+
+  lockState.set(lockKey, true);
+  runOnce()
+    .catch((error) => {
+      logger.error('HLS补全检查失败:', error);
+    })
+    .finally(() => {
+      lockState.set(lockKey, false);
+    });
+
+  return { started: true, detached: true, pageSize, batchSize };
 }
 
 async function performThumbnailCleanupLocal() {
@@ -1091,8 +1367,11 @@ async function performThumbnailReconcile(options = {}) {
   return runMaintenanceInWorker('thumbnail_reconcile', options, () => performThumbnailReconcileLocal(options));
 }
 
-async function performHlsReconcileOnce(limit = 1000) {
-  return runMaintenanceInWorker('hls_reconcile', { limit }, () => performHlsReconcileOnceLocal(limit));
+async function performHlsReconcileOnce(limitOrOptions = 1000) {
+  const payload = (limitOrOptions && typeof limitOrOptions === 'object')
+    ? limitOrOptions
+    : { limit: limitOrOptions };
+  return runMaintenanceInWorker('hls_reconcile', payload, () => performHlsReconcileOnceLocal(payload));
 }
 
 async function performThumbnailCleanup() {
@@ -1213,7 +1492,7 @@ function getTypeDisplayName(type) {
  * @param {string} type - 补全类型
  * @returns {Object} 补全操作结果
  */
-async function triggerSyncOperation(type) {
+async function triggerSyncOperation(type, options = {}) {
   const { getIndexingWorker } = require('../worker.manager');
 
   switch (type) {
@@ -1223,23 +1502,26 @@ async function triggerSyncOperation(type) {
       return { message: '已启动索引补全任务' };
     }
     case 'thumbnail':
-      const thumbResult = await performThumbnailReconcile();
+      const thumbResult = await performThumbnailReconcile(options);
       if (thumbResult?.skipped) {
         return { message: '缩略图补全已在运行，跳过本次请求', result: thumbResult, skipped: true };
       }
       return { message: '已启动缩略图补全任务', result: thumbResult };
     case 'hls': {
-      const batch = await performHlsReconcileOnce();
+      const batch = await performHlsReconcileOnce(options);
       if (batch?.skipped) {
         return { message: 'HLS补全已在运行，跳过本次请求', result: batch, skipped: true };
+      }
+      if (batch?.started || batch?.detached) {
+        return { message: '已启动HLS补全任务', result: batch };
       }
       return { message: `HLS补全完成：total=${batch.total}, success=${batch.success}, failed=${batch.failed}, skipped=${batch.skipped}`, result: batch };
     }
     case 'all': {
       const message = TraceManager.injectToWorkerMessage({ type: 'rebuild_index', payload: { photosDir: PHOTOS_DIR, syncThumbnails: true } });
       getIndexingWorker().postMessage(message);
-      const thumbResult = await performThumbnailReconcile();
-      const batchAll = await performHlsReconcileOnce();
+      const thumbResult = await performThumbnailReconcile(options);
+      const batchAll = await performHlsReconcileOnce(options);
       return {
         message: `已完成补全任务`,
         result: { thumbnail: thumbResult, hls: batchAll }

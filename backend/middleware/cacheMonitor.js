@@ -4,6 +4,7 @@
  */
 
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { redis } = require('../config/redis');
 const { QueryCacheOptimizer } = require('../services/queryOptimizer.service');
 
@@ -246,13 +247,13 @@ function cacheMonitoring(options = {}) {
         };
 
         // 包裹send，使之调用时自动记录缓存统计
-        res.send = function(body) {
+        res.send = function (body) {
             recordResponse();
             return originalSend.call(this, body);
         };
 
         // 包裹json
-        res.json = function(body) {
+        res.json = function (body) {
             recordResponse();
             return originalJson.call(this, body);
         };

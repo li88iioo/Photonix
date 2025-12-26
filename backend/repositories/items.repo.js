@@ -6,6 +6,7 @@
 const { dbGet, dbAll, dbRun, runAsync } = require('../db/multi-db');
 const { withTransaction } = require('../services/tx.manager');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 
 class ItemsRepository {
     /**
@@ -20,7 +21,7 @@ class ItemsRepository {
             if (row && row.id != null) return Number(row.id) || null;
             return null;
         } catch (error) {
-            logger.debug(`[ItemsRepo] 读取item ID失败 (path=${path}): ${error && error.message}`);
+            logger.debug(`${LOG_PREFIXES.ITEMS_REPO} 读取item ID失败 (path=${path}): ${error && error.message}`);
             return null;
         }
     }
@@ -35,7 +36,7 @@ class ItemsRepository {
             const row = await dbGet('main', 'SELECT * FROM items WHERE path = ?', [String(path || '')]);
             return row || null;
         } catch (error) {
-            logger.warn(`[ItemsRepo] 获取item失败 (path=${path}):`, error.message);
+            logger.debug(`${LOG_PREFIXES.ITEMS_REPO} 获取item失败 (path=${path})`, { error: error && error.message });
             return null;
         }
     }
@@ -50,7 +51,7 @@ class ItemsRepository {
             const row = await dbGet('main', 'SELECT * FROM items WHERE id = ?', [id]);
             return row || null;
         } catch (error) {
-            logger.warn(`[ItemsRepo] 获取item失败 (id=${id}):`, error.message);
+            logger.debug(`${LOG_PREFIXES.ITEMS_REPO} 获取item失败 (id=${id})`, { error: error && error.message });
             return null;
         }
     }
@@ -68,7 +69,7 @@ class ItemsRepository {
             const rows = await dbAll('main', `SELECT * FROM items WHERE path IN (${placeholders})`, paths);
             return rows || [];
         } catch (error) {
-            logger.warn(`[ItemsRepo] 批量获取items失败:`, error.message);
+            logger.debug(`${LOG_PREFIXES.ITEMS_REPO} 批量获取items失败`, { error: error && error.message });
             return [];
         }
     }
@@ -83,7 +84,7 @@ class ItemsRepository {
             await dbRun('main', 'DELETE FROM items WHERE path = ?', [String(path || '')]);
             return true;
         } catch (error) {
-            logger.warn(`[ItemsRepo] 删除item失败 (path=${path}):`, error.message);
+            logger.debug(`${LOG_PREFIXES.ITEMS_REPO} 删除item失败 (path=${path})`, { error: error && error.message });
             return false;
         }
     }
@@ -103,17 +104,17 @@ class ItemsRepository {
             let params = [...paths];
 
             if (includeSubpaths) {
-                const likeConditions = paths.map(() => `path LIKE ?`).join(' OR ');
+                const likeConditions = paths.map(() => 'path LIKE ?').join(' OR ');
                 const likeParams = paths.map(p => `${p}/%`);
                 sql = `DELETE FROM items WHERE path IN (${placeholders}) OR ${likeConditions}`;
                 params = [...paths, ...likeParams];
             }
 
             await dbRun('main', sql, params);
-            logger.debug(`[ItemsRepo] 批量删除items完成: ${paths.length}个路径`);
+            logger.debug(`${LOG_PREFIXES.ITEMS_REPO} 批量删除items完成: ${paths.length}个路径`);
             return paths.length;
         } catch (error) {
-            logger.error(`[ItemsRepo] 批量删除items失败:`, error.message);
+            logger.error(`${LOG_PREFIXES.ITEMS_REPO} 批量删除items失败`, { error: error && error.message });
             throw error;
         }
     }
@@ -126,7 +127,7 @@ class ItemsRepository {
      */
     async deleteWithRelations(path) {
         if (!path) {
-            logger.warn(`[ItemsRepo] deleteWithRelations: 路径为空`);
+            logger.debug(`${LOG_PREFIXES.ITEMS_REPO} deleteWithRelations: 路径为空`);
             return false;
         }
 
@@ -150,7 +151,7 @@ class ItemsRepository {
                 return true;
             });
         } catch (error) {
-            logger.error(`[ItemsRepo] 删除item及关联数据失败 (path=${path}):`, error.message);
+            logger.error(`${LOG_PREFIXES.ITEMS_REPO} 删除item及关联数据失败 (path=${path})`, { error: error && error.message });
             return false;
         }
     }
@@ -172,7 +173,7 @@ class ItemsRepository {
                 // 1. 删除items表记录
                 let itemsSql = `DELETE FROM items WHERE path IN (${placeholders})`;
                 if (includeSubpaths) {
-                    const likeConditions = paths.map(() => `path LIKE ?`).join(' OR ');
+                    const likeConditions = paths.map(() => 'path LIKE ?').join(' OR ');
                     const likeParams = paths.map(p => `${p}/%`);
                     itemsSql = `DELETE FROM items WHERE path IN (${placeholders}) OR ${likeConditions}`;
                     params = [...paths, ...likeParams];
@@ -183,7 +184,7 @@ class ItemsRepository {
                 let thumbSql = `DELETE FROM thumb_status WHERE path IN (${placeholders})`;
                 let thumbParams = [...paths];
                 if (includeSubpaths) {
-                    const likeConditions = paths.map(() => `path LIKE ?`).join(' OR ');
+                    const likeConditions = paths.map(() => 'path LIKE ?').join(' OR ');
                     const likeParams = paths.map(p => `${p}/%`);
                     thumbSql = `DELETE FROM thumb_status WHERE path IN (${placeholders}) OR ${likeConditions}`;
                     thumbParams = [...paths, ...likeParams];
@@ -194,18 +195,18 @@ class ItemsRepository {
                 let albumSql = `DELETE FROM album_covers WHERE album_path IN (${placeholders})`;
                 let albumParams = [...paths];
                 if (includeSubpaths) {
-                    const likeConditions = paths.map(() => `album_path LIKE ?`).join(' OR ');
+                    const likeConditions = paths.map(() => 'album_path LIKE ?').join(' OR ');
                     const likeParams = paths.map(p => `${p}/%`);
                     albumSql = `DELETE FROM album_covers WHERE album_path IN (${placeholders}) OR ${likeConditions}`;
                     albumParams = [...paths, ...likeParams];
                 }
                 await dbRun('main', albumSql, albumParams);
 
-                logger.debug(`[ItemsRepo] 批量删除items及关联数据成功: ${paths.length}个路径`);
+                logger.debug(`${LOG_PREFIXES.ITEMS_REPO} 批量删除items及关联数据成功: ${paths.length}个路径`);
                 return paths.length;
             });
         } catch (error) {
-            logger.error(`[ItemsRepo] 批量删除items及关联数据失败:`, error.message);
+            logger.error(`${LOG_PREFIXES.ITEMS_REPO} 批量删除items及关联数据失败`, { error: error && error.message });
             throw error;
         }
     }
@@ -222,7 +223,7 @@ class ItemsRepository {
             await dbRun('main', 'UPDATE items SET width = ?, height = ? WHERE path = ?', [width, height, path]);
             return true;
         } catch (error) {
-            logger.warn(`[ItemsRepo] 更新尺寸失败 (path=${path}):`, error.message);
+            logger.debug(`${LOG_PREFIXES.ITEMS_REPO} 更新尺寸失败 (path=${path})`, { error: error && error.message });
             return false;
         }
     }
@@ -238,7 +239,7 @@ class ItemsRepository {
             await dbRun('main', 'UPDATE items SET mtime = ? WHERE path = ?', [mtime, path]);
             return true;
         } catch (error) {
-            logger.warn(`[ItemsRepo] 更新mtime失败 (path=${path}):`, error.message);
+            logger.debug(`${LOG_PREFIXES.ITEMS_REPO} 更新mtime失败 (path=${path})`, { error: error && error.message });
             return false;
         }
     }
@@ -257,7 +258,7 @@ class ItemsRepository {
             const rows = await dbAll('main', sql, params);
             return rows || [];
         } catch (error) {
-            logger.warn(`[ItemsRepo] 获取视频列表失败:`, error.message);
+            logger.debug(`${LOG_PREFIXES.ITEMS_REPO} 获取视频列表失败`, { error: error && error.message });
             return [];
         }
     }
@@ -282,72 +283,8 @@ class ItemsRepository {
             const row = await dbGet('main', sql, params);
             return row ? Number(row.count) || 0 : 0;
         } catch (error) {
-            logger.warn(`[ItemsRepo] 统计items失败:`, error.message);
+            logger.debug(`${LOG_PREFIXES.ITEMS_REPO} 统计items失败`, { error: error && error.message });
             return 0;
-        }
-    }
-
-    /**
-     * 删除item及其所有关联数据（事务保护）
-     * @param {string} path - 文件路径
-     * @returns {Promise<boolean>}
-     */
-    async deleteWithRelatedData(path) {
-        try {
-            await withTransaction('main', async () => {
-                // 导入其他Repository（延迟加载，避免循环依赖）
-                const ThumbStatusRepository = require('./thumbStatus.repo');
-                const AlbumCoversRepository = require('./albumCovers.repo');
-
-                const thumbStatusRepo = new ThumbStatusRepository();
-                const albumCoversRepo = new AlbumCoversRepository();
-
-                // 1. 删除item
-                await this.deleteByPath(path);
-
-                // 2. 删除缩略图状态
-                await thumbStatusRepo.deleteByPath(path);
-
-                // 3. 删除相册封面（如果是目录）
-                await albumCoversRepo.deleteByAlbumPath(path);
-            });
-
-            logger.debug(`[ItemsRepo] 已删除item及关联数据: ${path}`);
-            return true;
-        } catch (error) {
-            logger.error(`[ItemsRepo] 删除item及关联数据失败 (path=${path}):`, error.message);
-            throw error;
-        }
-    }
-
-    /**
-     * 批量删除items及其关联数据（事务保护）
-     * @param {Array<string>} paths - 文件路径数组
-     * @param {boolean} includeSubpaths - 是否包含子路径
-     * @returns {Promise<number>}
-     */
-    async deleteBatchWithRelatedData(paths, includeSubpaths = false) {
-        if (!Array.isArray(paths) || paths.length === 0) return 0;
-
-        try {
-            let deletedCount = 0;
-
-            await withTransaction('main', async () => {
-                const ThumbStatusRepository = require('./thumbStatus.repo');
-                const thumbStatusRepo = new ThumbStatusRepository();
-
-                // 1. 删除items
-                deletedCount = await this.deleteBatch(paths, includeSubpaths);
-
-                // 2. 删除对应的thumb_status记录
-                await thumbStatusRepo.deleteBatch(paths, false);
-            });
-
-            logger.debug(`[ItemsRepo] 批量删除items及关联数据完成: ${deletedCount}条`);
-            return deletedCount;
-        } catch (error) {
-            logger.error(`[ItemsRepo] 批量删除items及关联数据失败:`, error.message);
-            throw error;
         }
     }
 }

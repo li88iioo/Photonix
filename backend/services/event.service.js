@@ -1,6 +1,7 @@
 const EventEmitter = require('events');
 const { redis, createWorkerRedis } = require('../config/redis');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 // 显式开关：仅当 ENABLE_REDIS=true 且 Redis 可用时开启订阅
 const WANT_REDIS = (process.env.ENABLE_REDIS || 'false').toLowerCase() === 'true';
 
@@ -21,41 +22,41 @@ let redisSubscriber = null;
 function setupRedisSubscriber() {
 	if (redisSubscriber) return;
 	if (!WANT_REDIS || !redis || redis.isNoRedis) {
-		if (isDevelopment) logger.info('[SSE] 使用本地事件总线（未启用 Redis 订阅）');
+		if (isDevelopment) logger.info(`${LOG_PREFIXES.SSE} 使用本地事件总线（未启用 Redis 订阅）`);
 		return;
 	}
 
 	try {
-		redisSubscriber = createWorkerRedis();
-		redisSubscriber.subscribe('thumbnail-generated', (err) => {
-			if (err) {
-				logger.error('[SSE] Redis订阅失败:', err);
-				return;
-			}
-			logger.debug('[SSE] 已订阅 thumbnail-generated 频道');
-		});
+			redisSubscriber = createWorkerRedis();
+			redisSubscriber.subscribe('thumbnail-generated', (err) => {
+				if (err) {
+					logger.error(`${LOG_PREFIXES.SSE} Redis订阅失败`, { error: err && err.message ? err.message : err });
+					return;
+				}
+				logger.debug(`${LOG_PREFIXES.SSE} 已订阅 thumbnail-generated 频道`);
+			});
 
 		redisSubscriber.on('message', (channel, message) => {
 			if (channel === 'thumbnail-generated') {
 				try {
-					const data = JSON.parse(message);
-					if (isDevelopment) {
-						logger.silly(`[SSE] 收到跨进程事件: ${data.path || ''}`);
+						const data = JSON.parse(message);
+						if (isDevelopment) {
+							logger.debug(`${LOG_PREFIXES.SSE} 收到跨进程事件`, { path: data.path || '' });
+						}
+						eventBus.emit('thumbnail-generated', data);
+					} catch (error) {
+						logger.error(`${LOG_PREFIXES.SSE} 解析跨进程消息失败`, { error: error && error.message ? error.message : error });
 					}
-					eventBus.emit('thumbnail-generated', data);
-				} catch (error) {
-					logger.error('[SSE] 解析跨进程消息失败:', error);
 				}
-			}
-		});
+			});
 
-		if (isDevelopment) {
-			logger.info('[SSE] Redis订阅器已启动');
+			if (isDevelopment) {
+				logger.info(`${LOG_PREFIXES.SSE} Redis订阅器已启动`);
+			}
+		} catch (error) {
+			logger.error(`${LOG_PREFIXES.SSE} 启动Redis订阅器失败`, { error: error && error.message ? error.message : error });
 		}
-	} catch (error) {
-		logger.error('[SSE] 启动Redis订阅器失败:', error);
 	}
-}
 
 // 启动Redis订阅器
 setupRedisSubscriber();

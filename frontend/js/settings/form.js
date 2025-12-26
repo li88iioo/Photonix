@@ -358,10 +358,7 @@ function setupDailyLimitControls() {
       onConfirm: async (adminSecret) => {
         setLoading(true);
         try {
-          await saveSettings({
-            AI_DAILY_LIMIT: normalized,
-            adminSecret
-          });
+          await saveSettings({ AI_DAILY_LIMIT: normalized }, adminSecret);
           initialSettings.AI_DAILY_LIMIT = normalized;
           input.value = normalized;
           showNotification('AI 每日配额已更新', 'success');
@@ -750,9 +747,6 @@ async function executeSave(adminSecret = null, options = {}) {
   if (newPasswordValue) {
     settingsToSend.newPassword = newPasswordValue;
   }
-  if (adminSecret) {
-    settingsToSend.adminSecret = adminSecret;
-  }
 
   const passwordStateChanged = String(isPasswordEnabled) !== String(initialSettings.PASSWORD_ENABLED === 'true');
   const newPassProvided = !!newPasswordValue.trim();
@@ -793,7 +787,7 @@ async function executeSave(adminSecret = null, options = {}) {
   }
 
   try {
-    const result = await saveSettings(settingsToSend);
+    const result = await saveSettings(settingsToSend, adminSecret);
 
     const prevPasswordEnabled = String(initialSettings.PASSWORD_ENABLED) === 'true';
     const nextPasswordEnabled = isPasswordEnabled;

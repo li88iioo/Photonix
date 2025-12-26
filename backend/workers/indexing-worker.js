@@ -1,9 +1,8 @@
 const { parentPort } = require('worker_threads');
 const path = require('path');
 const os = require('os');
-const winston = require('winston');
 const baseLogger = require('../config/logger');
-const { LOG_PREFIXES, formatLog, normalizeMessagePrefix } = baseLogger;
+const { LOG_PREFIXES } = baseLogger;
 const sharp = require('sharp');
 const { TraceManager } = require('../utils/trace');
 // 控制 sharp 缓存与并行，避免首扫堆积内存
@@ -34,20 +33,7 @@ const INDEX_CACHE_LOG_INTERVAL_MS = Math.max(1000, Number(process.env.INDEX_CACH
 
 (async () => {
     await initializeConnections();
-    const logger = winston.createLogger({
-        level: process.env.LOG_LEVEL || 'debug',
-        format: winston.format.combine(
-            winston.format.colorize(),
-            winston.format.timestamp(),
-            winston.format.printf(info => {
-                const date = new Date(info.timestamp);
-                const time = date.toTimeString().split(' ')[0];
-                const normalized = normalizeMessagePrefix(info.message);
-                return `[${time}] ${info.level}: ${LOG_PREFIXES.INDEXING_WORKER || '索引线程'} ${normalized}`;
-            })
-        ),
-        transports: [new winston.transports.Console()]
-    });
+    const logger = baseLogger.createPrefixedLogger(LOG_PREFIXES.INDEXING_WORKER);
     const { dbAll } = require('../db/multi-db');
     const { promises: fs } = require('fs');
 
@@ -67,9 +53,9 @@ const INDEX_CACHE_LOG_INTERVAL_MS = Math.max(1000, Number(process.env.INDEX_CACH
             // 检测并发数变化，输出提示日志
             if (lastIndexConcurrency !== null && lastIndexConcurrency !== concurrency) {
                 if (concurrency > lastIndexConcurrency) {
-                    logger.info(`[索引并发] ⚡ 检测到前台空闲，加速索引: ${lastIndexConcurrency} → ${concurrency} 并发`);
+                    logger.info(`${LOG_PREFIXES.INDEX_CONCURRENCY} ⚡ 检测到前台空闲，加速索引: ${lastIndexConcurrency} → ${concurrency} 并发`);
                 } else {
-                    logger.info(`[索引并发] 🎯 检测到前台任务，降低索引并发为前台让路: ${lastIndexConcurrency} → ${concurrency} 并发`);
+                    logger.info(`${LOG_PREFIXES.INDEX_CONCURRENCY} 🎯 检测到前台任务，降低索引并发为前台让路: ${lastIndexConcurrency} → ${concurrency} 并发`);
                 }
             }
 
@@ -77,7 +63,7 @@ const INDEX_CACHE_LOG_INTERVAL_MS = Math.max(1000, Number(process.env.INDEX_CACH
             return concurrency;
         } catch (error) {
             // 降级：使用静态配置
-            logger.debug(`[索引并发] 动态获取失败，使用静态配置: ${error.message}`);
+            logger.debug(`${LOG_PREFIXES.INDEX_CONCURRENCY} 动态获取失败，使用静态配置: ${error.message}`);
             return require('../config').INDEX_CONCURRENCY || 8;
         }
     }
@@ -542,7 +528,7 @@ const INDEX_CACHE_LOG_INTERVAL_MS = Math.max(1000, Number(process.env.INDEX_CACH
         // 只在状态变化时输出 debug 日志（降噪）
         const currentLogState = `${scenario}:${concurrency}:${foregroundStatus}`;
         if (lastDebugLogState !== currentLogState) {
-            logger.debug(`[索引并发] scenario=${scenario}, concurrency=${concurrency}, items=${items.length}, 前台=${foregroundStatus}`);
+            logger.debug(`${LOG_PREFIXES.INDEX_CONCURRENCY} scenario=${scenario}, concurrency=${concurrency}, items=${items.length}, 前台=${foregroundStatus}`);
             lastDebugLogState = currentLogState;
         }
 
@@ -897,22 +883,17 @@ const INDEX_CACHE_LOG_INTERVAL_MS = Math.max(1000, Number(process.env.INDEX_CACH
 
                     if (deletePaths.length > 0) {
                         const ItemsRepository = require('../repositories/items.repo');
-                        const ThumbStatusRepository = require('../repositories/thumbStatus.repo');
-
                         const itemsRepo = new ItemsRepository();
-                        const thumbStatusRepo = new ThumbStatusRepository();
 
                         const CHUNK = 500;
                         for (let i = 0; i < deletePaths.length; i += CHUNK) {
                             const slice = deletePaths.slice(i, i + CHUNK);
 
-                            // 使用Repository层进行事务保护的批量删除
-                            await withTransaction('main', async () => {
-                                await itemsRepo.deleteBatch(slice, true); // includeSubpaths=true
-                                await thumbStatusRepo.deleteBatch(slice, false);
-                            });
+                            // 使用统一的关联删除方法，确保原子性清理 items/thumb_status/album_covers 及其子路径
+                            await itemsRepo.deleteBatchWithRelations(slice, true);
                         }
                     }
+
 
                     if (addOperations.length > 0) {
                         const itemsStmt = getDB('main').prepare("INSERT OR IGNORE INTO items (name, path, type, mtime, width, height) VALUES (?, ?, ?, ?, ?, ?)");
@@ -1113,7 +1094,7 @@ const INDEX_CACHE_LOG_INTERVAL_MS = Math.max(1000, Number(process.env.INDEX_CACH
                             const mtime = Number(stats.mtimeMs) || Date.now();
                             updates.push([mtime, r.path]);
                         } catch (statErr) {
-                            logger.silly(`[INDEXING-WORKER] 更新 album_covers 时跳过缺失文件 ${r.path}: ${statErr && statErr.message}`);
+                            logger.debug(`[INDEXING-WORKER] mtime 回填时跳过缺失文件 ${r.path}: ${statErr && statErr.message}`);
                         }
                     }
                     if (updates.length > 0) {

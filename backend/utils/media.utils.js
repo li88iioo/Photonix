@@ -3,6 +3,7 @@
  */
 const { execFile } = require('child_process');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 
 const VIDEO_DIMENSIONS_TIMEOUT_MS = Math.max(1000, Number(process.env.VIDEO_DIMENSIONS_TIMEOUT_MS || 15000));
 const VIDEO_DIMENSIONS_MAX_BUFFER = 1024 * 1024;
@@ -33,7 +34,7 @@ function getMediaTypesCondition(types) {
     if (!Array.isArray(types) || types.length === 0) {
         return "('photo', 'video')"; // 默认值
     }
-    const escapedTypes = types.map(type => `'${type}'`);
+    const escapedTypes = types.map(type => "'" + String(type).replace(/'/g, "''") + "'");
     return `(${escapedTypes.join(', ')})`;
 }
 

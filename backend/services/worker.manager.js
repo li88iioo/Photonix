@@ -1,6 +1,7 @@
 const { Worker } = require('worker_threads');
 const path = require('path');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const Piscina = require('piscina');
 const state = require('./state.manager');
 const { NUM_WORKERS } = require('../config');
@@ -64,11 +65,20 @@ const workerScripts = {
 
 function attachCoreWorkerLogging(worker, name) {
     worker.on('error', (error) => {
-        logger.error(`[工作线程管理] ${name} worker 发生错误:`, error);
+        logger.error(`${LOG_PREFIXES.WORKER_MANAGER} Worker 发生错误`, {
+            workerName: name,
+            error: error?.message || String(error),
+            stack: error?.stack,
+            threadId: worker?.threadId
+        });
     });
     worker.once('exit', (code) => {
         if (code !== 0 && !worker.__expectedTermination) {
-            logger.warn(`[工作线程管理] ${name} worker 非正常退出，代码=${code}`);
+            logger.warn(`${LOG_PREFIXES.WORKER_MANAGER} Worker 非正常退出`, {
+                workerName: name,
+                exitCode: code,
+                threadId: worker?.threadId
+            });
         }
         coreWorkerRegistry.clear(name);
     });
@@ -139,8 +149,11 @@ function createPiscinaPool(size) {
         idleTimeout: Number(process.env.THUMB_POOL_IDLE_TIMEOUT_MS || 30000),
         concurrentTasksPerWorker: 1,
     });
-    pool.on('error', (error) => logger.warn(`[工作线程管理] 缩略图池错误: ${error && error.message}`));
-    logger.info(`[工作线程管理] 已启动 ${threads} 个缩略图 Piscina worker`);
+    pool.on('error', (error) => logger.warn(`${LOG_PREFIXES.WORKER_MANAGER} 缩略图池错误`, {
+        error: error?.message,
+        poolThreads: threads
+    }));
+    logger.debug(`${LOG_PREFIXES.WORKER_MANAGER} 已启动 ${threads} 个缩略图 Piscina worker`);
     return pool;
 }
 
@@ -155,8 +168,14 @@ function ensureThumbnailWorkerPool(size = desiredThumbnailSize) {
         return thumbnailPool;
     }
     if (thumbnailPool.options.maxThreads !== target) {
-        thumbnailPool.destroy().catch((error) => logger.debug(`[工作线程管理] 销毁旧缩略图池失败: ${error && error.message}`));
+        const oldSize = thumbnailPool.options.maxThreads;
+        thumbnailPool.destroy().catch((error) => logger.debug(`${LOG_PREFIXES.WORKER_MANAGER} 销毁旧缩略图池失败: ${error && error.message}`));
         thumbnailPool = createPiscinaPool(target);
+        logger.info(`${LOG_PREFIXES.WORKER_MANAGER} 缩略图池已扩缩容`, {
+            oldSize,
+            newSize: target,
+            action: target > oldSize ? 'scale-up' : 'scale-down'
+        });
     }
     return thumbnailPool;
 }
@@ -176,9 +195,9 @@ function destroyThumbnailWorkerPool(options = {}) {
     if (thumbnailPool) {
         const pool = thumbnailPool;
         thumbnailPool = null;
-        pool.destroy().catch((error) => logger.debug(`[工作线程管理] 销毁缩略图池失败: ${error && error.message}`));
+        pool.destroy().catch((error) => logger.debug(`${LOG_PREFIXES.WORKER_MANAGER} 销毁缩略图池失败: ${error && error.message}`));
     }
-    logger.info('[工作线程管理] 缩略图 worker 池已销毁');
+    logger.debug(`${LOG_PREFIXES.WORKER_MANAGER} 缩略图 worker 池已销毁`);
 }
 
 function noteThumbnailUse() {

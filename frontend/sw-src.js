@@ -310,7 +310,14 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const { request } = event;
   const url = new URL(request.url);
-  const hasAuth = request.headers && (request.headers.get('Authorization') || request.headers.get('authorization'));
+  const hasAuth = !!(request.headers && (
+    request.headers.get('Authorization') ||
+    request.headers.get('authorization') ||
+    request.headers.get('X-Admin-Secret') ||
+    request.headers.get('x-admin-secret') ||
+    request.headers.get('X-Photonix-Admin-Secret') ||
+    request.headers.get('x-photonix-admin-secret')
+  ));
 
   // 优先处理页面导航：使用网络优先，失败回退缓存，避免部署后白屏
   if (request.mode === 'navigate') {
@@ -655,5 +662,4 @@ self.addEventListener('message', event => {
     );
   }
 });
-
 

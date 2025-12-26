@@ -6,6 +6,7 @@
 const path = require('path');
 const { promises: fs } = require('fs');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { THUMBS_DIR } = require('../config');
 const { safeRedisGet, safeRedisSet, safeRedisDel } = require('./helpers');
 

@@ -5,6 +5,7 @@
 
 const jwt = require('jsonwebtoken');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -28,7 +29,7 @@ module.exports = async function optionalAuth(req, res, next) {
         const token = authHeader.replace('Bearer ', '');
         
         if (!JWT_SECRET) {
-            logger.error('[OptionalAuth] JWT_SECRET未配置');
+            logger.error(`${LOG_PREFIXES.AUTH} OptionalAuth JWT_SECRET 未配置`);
             req.user = null;
             return next();
         }
@@ -36,32 +37,27 @@ module.exports = async function optionalAuth(req, res, next) {
         try {
             // 验证Token
             const decoded = jwt.verify(token, JWT_SECRET);
-            
+
             // Token有效，标记为已认证
             req.user = {
                 ...decoded,
                 authenticated: true,
                 authMethod: 'jwt'
             };
-            
-            // 只在详细调试模式下记录，避免刷屏
-            // logger.debug(`[OptionalAuth] JWT认证成功: ${decoded.sub || decoded.userId || 'download_user'}`);
         } catch (error) {
             if (error.name === 'TokenExpiredError') {
-                // logger.debug('[OptionalAuth] Token已过期');
+                req.user = null;
             } else if (error.name === 'JsonWebTokenError') {
-                // logger.debug('[OptionalAuth] Token无效');
+                req.user = null;
             } else {
-                logger.error('[OptionalAuth] Token验证错误:', error);
+                logger.error(`${LOG_PREFIXES.AUTH} OptionalAuth Token 验证错误`, { error: error && error.message });
+                req.user = null;
             }
-            
-            // Token无效，但不阻止请求（可能使用密钥）
-            req.user = null;
         }
         
         next();
     } catch (error) {
-        logger.error('[OptionalAuth] 中间件错误:', error);
+        logger.error(`${LOG_PREFIXES.AUTH} OptionalAuth 中间件错误`, { error: error && error.message });
         req.user = null;
         next();
     }

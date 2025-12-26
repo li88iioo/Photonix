@@ -10,6 +10,7 @@
 const { dbRun } = require('../db/multi-db');
 const { AsyncLocalStorage } = require('async_hooks');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 
 const als = new AsyncLocalStorage(); // store: { stacks: Map<dbName, string[]|null[]> }
 

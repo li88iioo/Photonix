@@ -6,6 +6,7 @@
 
 const { sanitizePath, isPathSafe } = require('../utils/path.utils');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 
 /**
  * @const {number} MAX_PATH_LENGTH

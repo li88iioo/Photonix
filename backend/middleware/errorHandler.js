@@ -67,6 +67,9 @@ function errorHandler(err, req, res, next) {
  * @returns {void}
  */
 function logError(error, req) {
+    if (shouldSkipAuditedAdminSecretError(error)) {
+        return;
+    }
     const logContext = {
         requestId: req.requestId,
         method: req.method,
@@ -76,20 +79,28 @@ function logError(error, req) {
         statusCode: error.statusCode
     };
 
+    const { LOG_PREFIXES } = logger;
+
     if (error.statusCode >= 500) {
         // 服务端错误 - 记录为 ERROR
-        logger.error(`[${req.requestId}] ${error.message}`, {
+        logger.error(LOG_PREFIXES.SYSTEM_ERROR + ` ${error.message}`, {
             ...logContext,
             stack: error.stack,
             details: error.details
         });
     } else if (error.statusCode >= 400) {
         // 客户端错误 - 记录为 WARN
-        logger.warn(`[${req.requestId}] ${error.message}`, logContext);
+        logger.warn(LOG_PREFIXES.REQUEST_ERROR + ` ${error.message}`, logContext);
     } else {
         // 其他 - INFO 级别
-        logger.info(`[${req.requestId}] ${error.message}`, logContext);
+        logger.info(LOG_PREFIXES.REQUEST + ` ${error.message}`, logContext);
     }
+}
+
+function shouldSkipAuditedAdminSecretError(error) {
+    return error?.errorCode === 'AUTHORIZATION_ERROR'
+        && error?.details?.audited
+        && error?.details?.auditReason === '管理员密钥错误';
 }
 
 /**

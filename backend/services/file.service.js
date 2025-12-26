@@ -8,6 +8,7 @@ const { promises: fs } = require('fs');
 const path = require('path');
 const sharp = require('sharp');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 // 限制 file.service 中偶发 metadata 读取的缓存影响
 try {
     const memMb = Number(process.env.SHARP_CACHE_MEMORY_MB || 16);
@@ -15,7 +16,7 @@ try {
     const files = Number(process.env.SHARP_CACHE_FILES || 0);
     sharp.cache({ memory: memMb, items, files });
 } catch (error) {
-    logger.silly(`[FileService] Sharp 缓存配置失败，使用默认值: ${error && error.message}`);
+    logger.debug(`${LOG_PREFIXES.FILE_SERVICE} Sharp 缓存配置失败，使用默认值`, { error: error && error.message });
 }
 const { redis } = require('../config/redis');
 const { safeRedisSet, safeRedisDel, safeRedisGet } = require('../utils/helpers');
@@ -160,7 +161,7 @@ async function hydrateCoversFromCache(safeRels, relToAbs, coversMap) {
                     }
                 }
             } catch (error) {
-                logger.debug(`[FileService] 尝试使用相册封面缓存失败，忽略: ${error && error.message}`);
+                logger.debug(`${LOG_PREFIXES.FILE_SERVICE} 尝试使用相册封面缓存失败，忽略`, { error: error && error.message });
             }
         }
         missing.push(rel);
@@ -224,7 +225,7 @@ async function recoverInvalidAlbumEntries(invalidAlbumRels, coversMap, recovered
         const placeholders = invalidAlbumRels.map(() => '?').join(',');
         await runAsync('main', `DELETE FROM album_covers WHERE album_path IN (${placeholders})`, invalidAlbumRels);
     } catch (e) {
-        logger.debug(`[FileService] 删除失效 album_covers 记录失败（忽略）: ${e && e.message}`);
+        logger.debug(`${LOG_PREFIXES.FILE_SERVICE} 删除失效 album_covers 记录失败（忽略）`, { error: e && e.message });
     }
     safeRedisDel(redis, invalidAlbumRels.map(rel => `cover_info:/${rel}`), '封面信息缓存清理').catch(() => { });
     await fallbackComputeCovers(invalidAlbumRels, coversMap);
@@ -237,7 +238,7 @@ async function recoverStaleCacheAlbums(staleCacheRels, coversMap, recoveredAlbum
     try {
         await safeRedisDel(redis, staleCacheRels.map(rel => `cover_info:/${rel}`), '封面缓存清理');
     } catch (e) {
-        logger.debug('[FileService] 清理失效封面缓存失败（忽略）: ' + (e && e.message));
+        logger.debug(`${LOG_PREFIXES.FILE_SERVICE} 清理失效封面缓存失败（忽略）`, { error: e && e.message });
     }
     await fallbackComputeCovers(staleCacheRels, coversMap);
     invalidateTags(buildAlbumTagKeys(staleCacheRels)).catch(() => { });

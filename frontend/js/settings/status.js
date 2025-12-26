@@ -16,6 +16,7 @@ import { showNotification, resolveMessage } from '../shared/utils.js';
 import { safeSetInnerHTML } from '../shared/dom-utils.js';
 import { showPasswordPrompt } from './password-prompt.js';
 import { getAuthToken } from '../app/auth.js';
+import { applyAdminSecretHeader } from '../shared/admin-secret.js';
 
 // 导入子模块
 import { fetchStatusTables, showPodLoading, showProgressUpdate, getStatusClass, getStatusDisplayName } from './status/shared.js';
@@ -193,16 +194,16 @@ async function handleIndexRebuildWithAuth(type, action) {
  * @returns {Promise<Object>} 响应对象
  */
 async function triggerSyncWithAuth(type, action, adminSecret) {
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${getAuthToken()}`,
+  };
+  applyAdminSecretHeader(headers, adminSecret);
   const response = await fetch(`/api/settings/sync/${type}`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getAuthToken()}`,
-      'X-Admin-Secret': adminSecret
-    },
+    headers,
     body: JSON.stringify({
-      action,
-      adminSecret
+      action
     })
   });
 
@@ -281,10 +282,11 @@ async function handleStatusButtonClick(event) {
               onConfirm: async (adminSecret) => {
                 try {
                   if (isThumbnailSync) {
-                    await triggerThumbnailBatchSync({
+                    // 注意：必须使用 triggerSync 来走管理员密钥验证流程
+                    await triggerSync(type, {
                       loop: true,
                       silent: false
-                    });
+                    }, adminSecret);
                   } else if (type === 'index') {
                     await handleIndexRebuildWithAuth(type, action);
                   } else {
@@ -294,11 +296,12 @@ async function handleStatusButtonClick(event) {
                     }, adminSecret);
                   }
                   resolve(true);
+
                 } catch (err) {
                   settingsLogger.error('补全操作失败:', err);
+                  // 必须 re-throw 错误，让 password-prompt 弹窗捕获并显示
                   const errorMessage = err?.message || '操作失败，请稍后重试';
-                  showNotification(errorMessage, 'error');
-                  resolve(false);
+                  throw new Error(errorMessage);
                 }
               },
               onCancel: () => {
@@ -325,12 +328,6 @@ async function handleStatusButtonClick(event) {
         const cleanupOriginalDisabled = button.disabled;
         const cleanupOriginalHTML = button.innerHTML;
         const cleanupLabel = button.querySelector('span')?.textContent?.trim() || '清理';
-        const isAdminSecretConfigured = settingsContext.initialSettings?.isAdminSecretConfigured || false;
-
-        if (!isAdminSecretConfigured) {
-          showNotification('权限不足，无法执行清理操作', 'error');
-          return;
-        }
 
         if (!cleanupOriginalDisabled) {
           button.disabled = true;
@@ -339,26 +336,12 @@ async function handleStatusButtonClick(event) {
         }
 
         try {
-          await new Promise((resolve) => {
-            showPasswordPrompt({
-              useAdminSecret: true,
-              onConfirm: async (adminSecret) => {
-                try {
-                  await triggerCleanup(type, adminSecret);
-                  resolve(true);
-                } catch (err) {
-                  settingsLogger.error('清理操作失败:', err);
-                  const errorMessage = err?.message || '清理失败，请稍后重试';
-                  showNotification(errorMessage, 'error');
-                  resolve(false);
-                }
-              },
-              onCancel: () => {
-                showNotification('操作已取消', 'info');
-                resolve(false);
-              }
-            });
-          });
+          // 清理操作不需要管理员密钥验证，直接执行
+          await triggerCleanup(type);
+        } catch (err) {
+          settingsLogger.error('清理操作失败:', err);
+          const errorMessage = err?.message || '清理失败，请稍后重试';
+          showNotification(errorMessage, 'error');
         } finally {
           button.classList.remove('loading');
           button.disabled = false;

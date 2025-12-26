@@ -4,6 +4,7 @@
  */
 
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 
 /**
  * 用户角色常量枚举

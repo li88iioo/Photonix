@@ -7,6 +7,16 @@
  */
 
 const winston = require('winston');
+const util = require('util');
+
+// 显式设置颜色映射，确保 INFO/DEBUG 在不同终端主题下也可区分
+winston.addColors({
+    error: 'red',
+    warn: 'yellow',
+    info: 'green',
+    debug: 'cyan',
+    silly: 'magenta'
+});
 
 const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 const LOG_JSON = (process.env.LOG_JSON || 'false').toLowerCase() === 'true';
@@ -22,18 +32,77 @@ const baseFormats = [
 ];
 
 /**
+ * 日志级别显示宽度对齐映射
+ */
+const LEVEL_DISPLAY = {
+    error: 'ERROR',
+    warn: 'WARN ',
+    info: 'INFO ',
+    debug: 'DEBUG',
+    silly: 'SILLY'
+};
+
+/**
  * 美化日志行格式（文本模式）
+ * 格式: [MM-DD HH:mm:ss] LEVEL [前缀] 消息 | key=value | trace=xxx
  * @param {object} info - 日志信息对象
  * @returns {string} 格式化日志字符串
  */
 const prettyFormat = winston.format.printf((info) => {
     const date = new Date(info.timestamp);
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
     const time = date.toTimeString().split(' ')[0];
-    const traceSegment = info.traceId ? `[Trace:${info.traceId.slice(0, 8)}] ` : '';
+    const dateTime = `${month}-${day} ${time}`;
+
+    // 级别对齐显示（去除 colorize 添加的 ANSI 码后的原始级别）
+    const rawLevel = typeof info.level === 'string'
+        ? info.level.replace(/\x1b\[[0-9;]*m/g, '')
+        : String(info.level || '');
+    const levelDisplayRaw = LEVEL_DISPLAY[rawLevel] || rawLevel.toUpperCase().padEnd(5);
+    const colorizer = winston.format.colorize();
+    const levelDisplay = colorizer.colorize(rawLevel, levelDisplayRaw);
+
     const normalizedMessage = normalizeMessagePrefix(info.message || '');
-    const metaStr = info.meta && Object.keys(info.meta).length ? ` ${JSON.stringify(info.meta)}` : '';
+
+    // 构建元数据字符串（key=value 格式）
+    let metaParts = [];
+    const formatMetaValue = (value) => {
+        if (value === undefined || value === null) return '';
+        if (value instanceof Error) return value.stack || value.message || 'Error';
+        if (typeof value === 'bigint') return value.toString();
+        if (typeof value === 'object') {
+            try {
+                return JSON.stringify(value);
+            } catch (e) {
+                return util.inspect(value, { depth: 2, breakLength: Infinity });
+            }
+        }
+        try {
+            return String(value);
+        } catch (e) {
+            return '[Unstringifiable]';
+        }
+    };
+    if (info.meta && Object.keys(info.meta).length) {
+        for (const [key, value] of Object.entries(info.meta)) {
+            if (value !== undefined && value !== null) {
+                // 过滤冗余的请求ID（Pretty模式下已有 traceId 覆盖）
+                if (key === 'requestId' || key === '请求ID') continue;
+                metaParts.push(`${key}=${formatMetaValue(value)}`);
+            }
+        }
+    }
+
+    // TraceId 放在末尾
+    if (info.traceId) {
+        metaParts.push(`trace=${info.traceId.slice(0, 8)}`);
+    }
+
+    const metaStr = metaParts.length > 0 ? ` | ${metaParts.join(' | ')}` : '';
     const stackStr = info.stack ? `\n${info.stack}` : '';
-    return `[${time}] ${info.level}: ${traceSegment}${normalizedMessage}${metaStr}${stackStr}`;
+
+    return `[${dateTime}] ${levelDisplay} ${normalizedMessage}${metaStr}${stackStr}`;
 });
 
 /**
@@ -117,13 +186,50 @@ const LOG_PREFIXES = {
     AUTO_SYNC: '[自动同步]',
     THUMBNAIL_SYNC: '[缩略图同步]',
     THUMB_STATUS_REPO: '[缩略图状态仓库]',
-    VIDEO_PROCESSOR: '[视频处理器]',
     ALBUM_COVERS_REPO: '[相册封面]',
     STARTUP_BACKFILL: '启动回填',
     DB_MAINTENANCE: '数据库维护',
     SYSTEM_MAINTENANCE: '[系统维护]',
     HLS_CLEANUP: '[HLS清理]',
     SETTINGS_UPDATE: '[设置更新]',
+    WORKER_MANAGER: '[工作线程管理]',
+    SQLITE: '[SQLite]',
+    REDIS: '[Redis]',
+    AUTH: '[认证]',
+    RETRY_MANAGER: '[重试管理]',
+    METRICS: '[指标]',
+    RATE_LIMITER: '[限流器]',
+    AI_SERVICE: '[AI服务]',
+    AI_RATE_GUARD: '[AI限流]',
+    ITEMS_REPO: '[媒体仓库]',
+    INDEX_STATUS_REPO: '[索引状态]',
+    FILE_SERVICE: '[文件服务]',
+    INDEXER_SERVICE: '[索引服务]',
+    VIDEO_QUEUE: '[视频队列]',
+    MANUAL_INDEX: '[手动索引]',
+    THUMB_METRICS: '[缩略图指标]',
+    SLOW_REQUEST: '[慢请求]',
+    INDEX_CONCURRENCY: '[索引并发]',
+    BATCH_GENERATE: '[批量生成]',
+    THUMBNAIL_WORKER: '[缩略图线程]',
+    VIDEO_PROCESSOR: '[视频处理]',
+    SYSTEM_ERROR: '[系统错误]',
+    REQUEST_ERROR: '[请求异常]',
+    REQUEST: '[请求]',
+    ALBUM: '[相册]',
+    ALBUM_MGMT: '[相册管理]',
+    LOGIN_BG: '[登录背景]',
+    TX_MANAGER: '[事务]',
+    MIGRATION: '[数据库迁移]',
+    STARTUP: '[启动]',
+    WATCHER: '[监听器]',
+    INDEX: '[索引]',
+    WORKER: '[线程]',
+    PERMISSIONS: '[权限]',
+    PATH_VALIDATOR: '[路径校验]',
+    BROWSE: '[浏览]',
+    HLS: '[HLS]',
+    VIDEO_SERVICE: '[视频服务]',
 };
 
 /**
@@ -141,6 +247,42 @@ const LOG_TABLE_LABELS = {
  */
 function formatLog(prefix, message) {
     return `${prefix} ${message}`;
+}
+
+/**
+ * 创建一个带默认前缀的 logger（常用于 worker 线程）。
+ * - 若 message 已以 `[` 开头（已包含前缀），则不重复添加
+ * - 复用当前进程 logger 的统一格式与结构化 meta 支持
+ * @param {string} prefix
+ * @returns {{error:Function,warn:Function,info:Function,debug:Function,silly:Function,log:Function}}
+ */
+function createPrefixedLogger(prefix) {
+    const safePrefix = String(prefix || '').trim();
+
+    const withPrefix = (message) => {
+        if (!safePrefix) return message;
+        if (typeof message !== 'string') return message;
+        const trimmed = message.trimStart();
+        if (trimmed.startsWith('[')) return message;
+        return `${safePrefix} ${message}`;
+    };
+
+    const wrap = (level) => (message, ...args) => tracedLogger[level](withPrefix(message), ...args);
+
+    return {
+        error: wrap('error'),
+        warn: wrap('warn'),
+        info: wrap('info'),
+        debug: wrap('debug'),
+        silly: wrap('silly'),
+        log(levelOrEntry, ...args) {
+            if (typeof levelOrEntry === 'string') {
+                const [message, ...rest] = args;
+                return tracedLogger.log(levelOrEntry, withPrefix(message), ...rest);
+            }
+            return tracedLogger.log(levelOrEntry, ...args);
+        }
+    };
 }
 
 /**
@@ -163,22 +305,40 @@ const LEGACY_PREFIX_MAP = {
     '[SSE]': LOG_PREFIXES.SSE,
     '[SERVER]': LOG_PREFIXES.SERVER,
     '[Orchestrator]': LOG_PREFIXES.ORCHESTRATOR,
-    '[MIGRATIONS]': '[数据库迁移]',
+    '[MIGRATIONS]': LOG_PREFIXES.MIGRATION,
     '[TempFileManager]': LOG_PREFIXES.TEMP_FILE_MANAGER,
     '[DbTimeoutManager]': LOG_PREFIXES.DB_TIMEOUT_MANAGER,
-    '[RateLimiter]': '[限流器]',
-    '[Startup]': '[启动]',
+    '[RateLimiter]': LOG_PREFIXES.RATE_LIMITER,
+    '[Startup]': LOG_PREFIXES.STARTUP,
     '[Startup-Index]': '[启动索引]',
-    '[Watcher]': '[监听器]',
-    '[Auth]': '[认证]',
-    '[ThumbMetrics]': '[缩略图指标]',
-    '[Index]': '[索引]',
+    '[Watcher]': LOG_PREFIXES.WATCHER,
+    '[Auth]': LOG_PREFIXES.AUTH,
+    '[Index]': LOG_PREFIXES.INDEX,
     '[MAIN MIGRATION]': '[主库迁移]',
     '[SETTINGS MIGRATION]': '[设置库迁移]',
     '[HISTORY MIGRATION]': '[历史库迁移]',
     '[INDEX MIGRATION]': '[索引库迁移]',
-    '[AI]': '[AI服务]',
-    '[WORKER]': '[线程]'
+    '[AI]': LOG_PREFIXES.AI_SERVICE,
+    '[WORKER]': LOG_PREFIXES.WORKER,
+    '[FileService]': LOG_PREFIXES.FILE_SERVICE,
+    '[IndexerService]': LOG_PREFIXES.INDEXER_SERVICE,
+    '[VideoQueue]': LOG_PREFIXES.VIDEO_QUEUE,
+    '[ManualIndex]': LOG_PREFIXES.MANUAL_INDEX,
+    '[ThumbMetrics]': LOG_PREFIXES.THUMB_METRICS,
+    '[OptionalAuth]': LOG_PREFIXES.AUTH,
+    '[AlbumCoversRepo]': LOG_PREFIXES.ALBUM_COVERS_REPO,
+    '[Album]': LOG_PREFIXES.ALBUM,
+    '[AlbumMgmt]': LOG_PREFIXES.ALBUM_MGMT,
+    '[LoginBG]': LOG_PREFIXES.LOGIN_BG,
+    '[LogManager]': LOG_PREFIXES.DOWNLOADER,
+    '[SettingsStatus]': '[设置状态]',
+    '[TxManager]': LOG_PREFIXES.TX_MANAGER,
+    '[HLS_CACHE_CLEANUP]': LOG_PREFIXES.HLS_CLEANUP,
+    '[慢请求]': LOG_PREFIXES.SLOW_REQUEST,
+    '[索引并发]': LOG_PREFIXES.INDEX_CONCURRENCY,
+    '[批量生成]': LOG_PREFIXES.BATCH_GENERATE,
+    '[VIDEO-SERVICE]': LOG_PREFIXES.VIDEO_SERVICE,
+    '[HLS]': LOG_PREFIXES.HLS,
 };
 
 /**
@@ -224,9 +384,72 @@ function normalizeMessagePrefix(message) {
 }
 
 /**
+ * 节流日志状态存储
+ * key -> { lastTime: number, count: number }
+ */
+const throttleState = new Map();
+const THROTTLE_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5分钟清理一次
+const THROTTLE_ENTRY_TTL_MS = 10 * 60 * 1000; // 条目10分钟过期
+
+/**
+ * 节流日志输出
+ * 在指定时间间隔内，相同 key 的日志只输出一次，并统计被抑制的次数
+ * @param {string} level - 日志级别 (info/warn/error/debug)
+ * @param {string} key - 节流键（相同 key 的日志会被合并）
+ * @param {string} message - 日志消息
+ * @param {object} [meta] - 元数据对象
+ * @param {number} [intervalMs=5000] - 节流间隔（毫秒）
+ * @returns {boolean} 是否实际输出了日志
+ */
+function throttledLog(level, key, message, meta = {}, intervalMs = 5000) {
+    const now = Date.now();
+    const state = throttleState.get(key);
+
+    if (state && (now - state.lastTime) < intervalMs) {
+        // 在节流期内，只计数不输出
+        state.count += 1;
+        return false;
+    }
+
+    // 超过节流期或首次调用，输出日志
+    const suppressedCount = state ? state.count : 0;
+    const enrichedMeta = { ...meta };
+
+    // 如果有被抑制的日志，添加计数信息
+    if (suppressedCount > 0) {
+        enrichedMeta.suppressed = suppressedCount;
+    }
+
+    throttleState.set(key, { lastTime: now, count: 0 });
+
+    // 调用实际的日志方法
+    if (typeof tracedLogger[level] === 'function') {
+        tracedLogger[level](message, Object.keys(enrichedMeta).length > 0 ? enrichedMeta : undefined);
+    }
+
+    return true;
+}
+
+/**
+ * 定期清理过期的节流状态条目
+ */
+const throttleCleanupTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [key, state] of throttleState.entries()) {
+        if ((now - state.lastTime) > THROTTLE_ENTRY_TTL_MS) {
+            throttleState.delete(key);
+        }
+    }
+}, THROTTLE_CLEANUP_INTERVAL_MS);
+// 允许进程退出
+if (typeof throttleCleanupTimer.unref === 'function') throttleCleanupTimer.unref();
+
+/**
  * 导出日志前缀、格式化、归一化工具
  */
 module.exports.LOG_PREFIXES = LOG_PREFIXES;
 module.exports.formatLog = formatLog;
 module.exports.normalizeMessagePrefix = normalizeMessagePrefix;
 module.exports.LOG_TABLE_LABELS = LOG_TABLE_LABELS;
+module.exports.throttledLog = throttledLog;
+module.exports.createPrefixedLogger = createPrefixedLogger;

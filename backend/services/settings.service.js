@@ -4,8 +4,10 @@
  */
 const { dbAll, dbRun, getDB } = require('../db/multi-db'); // 使用多数据库管理器
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { redis } = require('../config/redis');
 const { safeRedisDel, safeRedisGet, safeRedisSet } = require('../utils/helpers');
+const crypto = require('crypto');
 
 // --- 内存缓存配置 ---
 let settingsCache = null;           // 设置缓存对象
@@ -18,6 +20,11 @@ const REDIS_CACHE_KEY = 'settings_cache_v1';
 const DEFAULT_SYNC_SCHEDULE = 'off';
 let lastSettingsLoadError = null;
 let lastSettingsLoadAt = 0;
+
+function generateSystemId() {
+    if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    return crypto.randomBytes(16).toString('hex');
+}
 
 function applyDefaultSettings(settings = {}) {
     if (typeof settings.ALLOW_PUBLIC_ACCESS === 'undefined') {
@@ -89,6 +96,21 @@ async function getAllSettings(options = {}) {
         for (const row of rows) {
             settings[row.key] = row.value;
         }
+
+        // 4) 确保 SYSTEM_ID 存在（用于前端缓存失效检测）
+        if (!settings.SYSTEM_ID) {
+            const candidateSystemId = generateSystemId();
+            try {
+                const db = getDB('settings');
+                db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)').run('SYSTEM_ID', candidateSystemId);
+                const stored = db.prepare('SELECT value FROM settings WHERE key = ?').get('SYSTEM_ID');
+                settings.SYSTEM_ID = stored?.value || candidateSystemId;
+                logger.info('已生成新的 SYSTEM_ID:', settings.SYSTEM_ID);
+            } catch (e) {
+                logger.warn('生成 SYSTEM_ID 时写入数据库失败（已忽略）:', e && e.message);
+            }
+        }
+
         settingsCache = applyDefaultSettings(settings);
         cacheTimestamp = Date.now();
 

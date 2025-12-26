@@ -13,7 +13,7 @@ let redisClient = null;
 try {
     ({ redis: redisClient } = require('../config/redis'));
 } catch (error) {
-    logger.debug('[Orchestrator] Redis模块在加载时不可用，仅使用本地锁');
+    logger.debug(`${LOG_PREFIXES.ORCHESTRATOR} Redis模块在加载时不可用，仅使用本地锁`);
 }
 const { safeRedisSet, safeRedisDel } = require('../utils/helpers');
 const { hasResourceBudget } = require('./adaptive.service');
@@ -92,11 +92,11 @@ const jobStateCleanupTimer = setInterval(() => {
         const age = now - (state.createdAt || now);
         if (state.settled || state.stale) {
             jobStates.delete(jobName);
-            logger.debug(`[Orchestrator] 清理已完成/过期的任务状态: ${jobName}`);
+            logger.debug(`${LOG_PREFIXES.ORCHESTRATOR} 清理已完成/过期的任务状态: ${jobName}`);
             continue;
         }
         if (age > JOB_STATE_MAX_AGE_MS && !state.warned) {
-            logger.warn(`[Orchestrator] 任务状态运行超时，标记为 stale 以允许重排: ${jobName}（> ${Math.round(JOB_STATE_MAX_AGE_MS / 60000)} 分钟）`);
+            logger.warn(`${LOG_PREFIXES.ORCHESTRATOR} 任务状态运行超时，标记为 stale 以允许重排: ${jobName}（> ${Math.round(JOB_STATE_MAX_AGE_MS / 60000)} 分钟）`);
             state.warned = true;
             state.stale = true;
         }
@@ -107,12 +107,12 @@ if (typeof jobStateCleanupTimer.unref === 'function') jobStateCleanupTimer.unref
 
 /**
  * 柔性日志忽略（用于抑制冗余日志）
- * @param {string} scope 
- * @param {Error} error 
+ * @param {string} scope
+ * @param {Error} error
  */
 function logSoftIgnore(scope, error) {
     if (!error) return;
-    logger.silly(`[Orchestrator] ${scope} 忽略错误: ${error.message}`);
+    logger.debug(`${LOG_PREFIXES.ORCHESTRATOR} ${scope} 忽略错误: ${error.message}`);
 }
 
 /**
@@ -181,7 +181,7 @@ async function runWhenIdle(jobName, fn, opts = {}) {
     const existing = jobStates.get(jobName);
     // 如果任务已存在且未完成/未过期，则跳过重复安排
     if (existing && !existing.settled && !existing.stale) {
-        logger.debug(`[Orchestrator] 任务 "${jobName}" 已在队列中或正在执行，跳过重复安排`);
+        logger.debug(`${LOG_PREFIXES.ORCHESTRATOR} 任务 "${jobName}" 已在队列中或正在执行，跳过重复安排`);
         return existing.promise;
     }
 
@@ -207,7 +207,7 @@ async function runWhenIdle(jobName, fn, opts = {}) {
         if (state && state.promise === trackedPromise) {
             state.settled = true;
             jobStates.delete(jobName);
-            logger.debug(`[Orchestrator] 任务完成，已清理状态: ${jobName}`);
+            logger.debug(`${LOG_PREFIXES.ORCHESTRATOR} 任务完成，已清理状态: ${jobName}`);
         }
     });
 
@@ -230,24 +230,31 @@ async function executeIdleJob(jobName, fn, opts) {
             maxIdleWaitMs: opts.maxIdleWaitMs,
         });
         if (!ready) {
-            logger.debug(`[Orchestrator] 任务 "${jobName}" 等待空闲超时，${opts.retryIntervalMs}ms后重试`);
+            logger.debug(`${LOG_PREFIXES.ORCHESTRATOR} 任务 "${jobName}" 等待空闲超时，${opts.retryIntervalMs}ms后重试`);
             await sleep(opts.retryIntervalMs);
             continue;
         }
 
         const lockSource = await acquireJobLock(opts.lockKey, opts.lockTtlSec);
         if (!lockSource) {
-            logger.debug(`[Orchestrator] 任务 "${jobName}" 获取锁失败，${opts.retryIntervalMs}ms后重试`);
+            logger.debug(`${LOG_PREFIXES.ORCHESTRATOR} 任务 "${jobName}" 获取锁失败，${opts.retryIntervalMs}ms后重试`);
             await sleep(opts.retryIntervalMs);
             continue;
         }
 
         try {
-            logger.debug(`[Orchestrator] 正在执行任务 "${jobName}"`);
+            logger.info(`${LOG_PREFIXES.ORCHESTRATOR} 正在执行任务 "${jobName}"`);
             await fn();
+            logger.info(`${LOG_PREFIXES.ORCHESTRATOR} 任务完成 "${jobName}"`);
             return;
         } catch (error) {
-            logger.error(`[Orchestrator] 任务 "${jobName}" 执行失败: ${error && error.message}`);
+            logger.error(`${LOG_PREFIXES.ORCHESTRATOR} 任务执行失败`, {
+                jobName,
+                error: error?.message || String(error),
+                stack: error?.stack,
+                lockKey: opts.lockKey,
+                retryIntervalMs: opts.retryIntervalMs
+            });
         } finally {
             await releaseJobLock(opts.lockKey, lockSource);
         }
@@ -297,7 +304,11 @@ async function acquireJobLock(lockKey, ttlSec) {
                 return 'redis';
             }
         } catch (error) {
-            logger.warn(`[Orchestrator] 获取Redis锁 "${lockKey}" 失败: ${error.message}`);
+            logger.warn(`${LOG_PREFIXES.ORCHESTRATOR} 获取Redis锁失败`, {
+                lockKey,
+                error: error?.message,
+                ttlSec
+            });
         }
     }
 
@@ -316,7 +327,10 @@ async function releaseJobLock(lockKey, source) {
             await safeRedisDel(redisClient, lockKey, `release lock ${lockKey}`);
             return;
         } catch (error) {
-            logger.warn(`[Orchestrator] 释放Redis锁 "${lockKey}" 失败: ${error.message}`);
+            logger.warn(`${LOG_PREFIXES.ORCHESTRATOR} 释放Redis锁失败`, {
+                lockKey,
+                error: error?.message
+            });
         }
     }
     if (source === 'local') {
@@ -363,7 +377,7 @@ async function gate(kind, opts = {}) {
         maxIdleWaitMs: opts.maxWaitMs,
     });
     if (!ready) {
-        logger.debug(`[Orchestrator] gate("${kind || 'unknown'}") 等待空闲过久，直接继续`);
+        logger.debug(`${LOG_PREFIXES.ORCHESTRATOR} gate("${kind || 'unknown'}") 等待空闲过久，直接继续`);
     }
 }
 
@@ -391,11 +405,11 @@ async function performDbMaintenance() {
             if (i > 0) {
                 await sleep(DB_MAINT_DB_DELAY_STEP_MS * i);
             }
-            await dbRun(db, 'PRAGMA wal_checkpoint(TRUNCATE)').catch(err => logger.debug(`数据库 "${db}" checkpoint 失败: ${err.message}`));
-            await dbRun(db, 'ANALYZE').catch(err => logger.debug(`数据库 "${db}" analyze 失败: ${err.message}`));
-            logger.debug(`[Orchestrator] 数据库维护已完成：${db}`);
+            await dbRun(db, 'PRAGMA wal_checkpoint(TRUNCATE)').catch(err => logger.warn(`数据库 "${db}" checkpoint 失败: ${err.message}`));
+            await dbRun(db, 'ANALYZE').catch(err => logger.warn(`数据库 "${db}" analyze 失败: ${err.message}`));
+            logger.info(`${LOG_PREFIXES.ORCHESTRATOR} 数据库维护已完成：${db}`);
         } catch (error) {
-            logger.debug(`[Orchestrator] 数据库维护失败 ${db}: ${error && error.message}`);
+            logger.debug(`${LOG_PREFIXES.ORCHESTRATOR} 数据库维护失败 ${db}: ${error && error.message}`);
         }
     }
 }
@@ -435,7 +449,7 @@ function start() {
     const ENABLE_MANUAL_GC = (process.env.ENABLE_MANUAL_GC || 'true').toLowerCase() === 'true';
 
     if (typeof global.gc === 'function' && ENABLE_MANUAL_GC) {
-        logger.debug('[调度器] 已启用手动垃圾回收调度');
+        logger.debug(`${LOG_PREFIXES.ORCHESTRATOR} 已启用手动垃圾回收调度`);
 
         let gcLogCount = 0; // GC 日志计数器，用于采样
 
@@ -445,8 +459,8 @@ function start() {
                 const heavy = await isHeavy();
                 if (!heavy) {
                     gcLogCount++;
-                    // 采样：每10次GC记录一次详细指标，减少 memoryUsage() 开销
-                    const shouldLogDetails = (gcLogCount % 10 === 0);
+                    // 采样：首次必输出 + 每10次GC记录一次详细指标，减少 memoryUsage() 开销
+                    const shouldLogDetails = (gcLogCount === 1 || gcLogCount % 10 === 0);
 
                     let memBefore, gcStartTime, gcDuration, heapReleased;
                     if (shouldLogDetails) {
@@ -460,20 +474,20 @@ function start() {
                         gcDuration = Date.now() - gcStartTime;
                         const memAfter = process.memoryUsage();
                         heapReleased = ((memBefore.heapUsed - memAfter.heapUsed) / 1024 / 1024).toFixed(2);
-                        logger.debug(`[调度器] GC #${gcLogCount} | 耗时: ${gcDuration}ms | 释放堆内存: ${heapReleased}MB | 当前堆: ${(memAfter.heapUsed / 1024 / 1024).toFixed(2)}MB`);
+                        logger.debug(`${LOG_PREFIXES.ORCHESTRATOR} GC #${gcLogCount} | 耗时: ${gcDuration}ms | 释放堆内存: ${heapReleased}MB | 当前堆: ${(memAfter.heapUsed / 1024 / 1024).toFixed(2)}MB`);
                     }
                 }
             } catch (e) {
-                logger.debug('[调度器] 内存回收失败（忽略）:', e.message);
+                logger.debug(`${LOG_PREFIXES.ORCHESTRATOR} 内存回收失败（忽略）:`, e.message);
             }
         }, 120000); // 每2分钟检查一次
 
         if (typeof gcInterval.unref === 'function') gcInterval.unref();
     } else if (typeof global.gc !== 'function' && ENABLE_MANUAL_GC) {
-        logger.warn('[调度器] ENABLE_MANUAL_GC=true 但 global.gc 不可用，请使用 --expose-gc 启动');
+        logger.warn(`${LOG_PREFIXES.ORCHESTRATOR} ENABLE_MANUAL_GC=true 但 global.gc 不可用，请使用 --expose-gc 启动`);
     }
 
-    logger.silly('[Orchestrator] 启动完成');
+    logger.debug(`${LOG_PREFIXES.ORCHESTRATOR} 启动完成`);
 }
 
 module.exports = {

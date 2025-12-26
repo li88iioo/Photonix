@@ -210,7 +210,7 @@ async function startServices() {
         {
             name: 'redis-availability-log',
             run: async () => {
-                logger.info(`Redis 可用性: ${require('../config/redis').getAvailability()}`);
+                logger.info(`${LOG_PREFIXES.REDIS} 可用性: ${require('../config/redis').getAvailability()}`);
             }
         },
         {

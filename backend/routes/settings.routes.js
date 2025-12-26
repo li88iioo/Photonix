@@ -37,25 +37,25 @@ const updateSettingsSchema = Joi.object({
 }).unknown(false);
 
 const manualSyncSchema = Joi.object({
-  adminSecret: Joi.string().min(4).max(256).required()
+  adminSecret: Joi.string().min(4).max(256).optional()
 }).unknown(false);
 
 const toggleDeletionSchema = Joi.object({
   enabled: Joi.boolean().required(),
-  adminSecret: Joi.string().min(4).max(256).required()
+  adminSecret: Joi.string().min(4).max(256).optional()
 }).unknown(false);
 
 const updateScheduleSchema = Joi.object({
   schedule: Joi.string().trim().min(1).max(120).required(),
-  adminSecret: Joi.string().min(4).max(256).required()
+  adminSecret: Joi.string().min(4).max(256).optional()
 }).unknown(false);
 
 const verifySecretSchema = Joi.object({
-  adminSecret: Joi.string().min(4).max(256).required()
+  adminSecret: Joi.string().min(4).max(256).optional()
 }).unknown(false);
 
 const resetPasswordSchema = Joi.object({
-  adminSecret: Joi.string().min(4).max(256).required(),
+  adminSecret: Joi.string().min(4).max(256).optional(),
   newPassword: Joi.string().min(4).max(256).required()
 }).unknown(false);
 

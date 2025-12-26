@@ -7,6 +7,7 @@
 
 const rateLimit = require('express-rate-limit');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { redis, isRedisAvailable } = require('../config/redis');
 
 /**
@@ -49,7 +50,7 @@ function buildLimiter(store) {
                 if (!isThumbnailRequest) return false;
                 return Boolean(req.header('Authorization'));
             } catch (skipErr) {
-                logger.debug('[RateLimiter] 判断缩略图限流跳过条件失败（忽略）:', skipErr && skipErr.message);
+                logger.debug(`${LOG_PREFIXES.RATE_LIMITER} 判断缩略图限流跳过条件失败（忽略）`, { error: skipErr && skipErr.message });
                 return false;
             }
         }
@@ -82,7 +83,7 @@ async function waitForRedisReady(timeoutMs) {
 async function resolveStore() {
     const ENABLE_REDIS = (process.env.ENABLE_REDIS || 'false').toLowerCase() === 'true';
     if (!ENABLE_REDIS) {
-        logger.debug('[限流器] 使用进程内令牌桶存储');
+        logger.debug(`${LOG_PREFIXES.RATE_LIMITER} 使用进程内令牌桶存储`);
         return new rateLimit.MemoryStore();
     }
 
@@ -90,16 +91,16 @@ async function resolveStore() {
     if (ready) {
         try {
             const RedisStore = require('rate-limit-redis');
-            logger.info('[限流器] 已启用 Redis 限流存储');
+            logger.info(`${LOG_PREFIXES.RATE_LIMITER} 已启用 Redis 限流存储`);
             return new RedisStore({ sendCommand: (...args) => redis.call(...args) });
         } catch (error) {
-            logger.debug('[RateLimiter] 初始化 Redis 限流存储失败，已降级为本地内存限流', { error: error && error.message });
+            logger.debug(`${LOG_PREFIXES.RATE_LIMITER} 初始化 Redis 限流存储失败，已降级为本地内存限流`, { error: error && error.message });
         }
     } else {
-        logger.warn(`[RateLimiter] Redis 在 ${REDIS_WAIT_MS}ms 内未就绪，已降级为本地内存限流。`);
+        logger.warn(`${LOG_PREFIXES.RATE_LIMITER} Redis 在 ${REDIS_WAIT_MS}ms 内未就绪，已降级为本地内存限流。`);
     }
 
-    logger.debug('[RateLimiter] 使用进程内令牌桶存储，建议在生产环境启用 Redis');
+    logger.debug(`${LOG_PREFIXES.RATE_LIMITER} 使用进程内令牌桶存储，建议在生产环境启用 Redis`);
     return new rateLimit.MemoryStore();
 }
 
@@ -109,7 +110,7 @@ async function resolveStore() {
  * @type {Promise<import('express').RequestHandler>}
  */
 const limiterPromise = resolveStore().then(store => buildLimiter(store)).catch(error => {
-    logger.error('[RateLimiter] 创建限流器失败，使用进程内限定作为兜底。', { error: error && error.message });
+    logger.error(`${LOG_PREFIXES.RATE_LIMITER} 创建限流器失败，使用进程内限定作为兜底。`, { error: error && error.message });
     return buildLimiter(new rateLimit.MemoryStore());
 });
 
@@ -120,7 +121,7 @@ const limiterPromise = resolveStore().then(store => buildLimiter(store)).catch(e
  */
 const rateLimiterMiddleware = (req, res, next) => {
     limiterPromise.then(limiter => limiter(req, res, next)).catch(err => {
-        logger.error('[RateLimiter] 执行限流器失败，使用兜底内存限流。', { error: err && err.message });
+        logger.error(`${LOG_PREFIXES.RATE_LIMITER} 执行限流器失败，使用兜底内存限流。`, { error: err && err.message });
         const fallbackLimiter = buildLimiter(new rateLimit.MemoryStore());
         fallbackLimiter(req, res, next);
     });

@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { getAllSettings } = require('../services/settings.service');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { ENABLE_AUTH_DEBUG_LOGS } = require('../config');
 const { getUserRole } = require('./permissions');
 const state = require('../services/state.manager');
@@ -24,12 +25,12 @@ const AUTH_CACHE_TTL = Math.max(MIN_CACHE_TTL, Math.min(RAW_CACHE_TTL, MAX_CACHE
 const RAW_CACHE_MAX_SIZE = Number(process.env.AUTH_CACHE_MAX_SIZE) || 5000;
 const AUTH_CACHE_MAX_SIZE = Math.max(100, Math.min(RAW_CACHE_MAX_SIZE, 100000));
 if (AUTH_CACHE_MAX_SIZE !== RAW_CACHE_MAX_SIZE) {
-    logger.warn(`[Auth] AUTH_CACHE_MAX_SIZE (${RAW_CACHE_MAX_SIZE}) 超出范围，已限制为 ${AUTH_CACHE_MAX_SIZE} (范围: 100-100000)`);
+    logger.warn(`${LOG_PREFIXES.AUTH} AUTH_CACHE_MAX_SIZE (${RAW_CACHE_MAX_SIZE}) 超出范围，已限制为 ${AUTH_CACHE_MAX_SIZE} (范围: 100-100000)`);
 }
 
 // 如果配置值超出范围，记录警告
 if (AUTH_CACHE_TTL !== RAW_CACHE_TTL) {
-    logger.warn(`[Auth] AUTH_CACHE_TTL (${RAW_CACHE_TTL}ms) 超出安全范围，已限制为 ${AUTH_CACHE_TTL}ms (范围: ${MIN_CACHE_TTL}-${MAX_CACHE_TTL}ms)`);
+    logger.warn(`${LOG_PREFIXES.AUTH} AUTH_CACHE_TTL (${RAW_CACHE_TTL}ms) 超出安全范围，已限制为 ${AUTH_CACHE_TTL}ms (范围: ${MIN_CACHE_TTL}-${MAX_CACHE_TTL}ms)`);
 }
 
 /**
@@ -79,7 +80,9 @@ module.exports = async function (req, res, next) {
 
         // 4. 优先处理绝对放行的接口
         if (isPublicReadonly || isLoginRequest || isPasswordResetRequest) {
-            logger.debug(`[Auth] 绝对放行接口: ${req.method} ${req.path}`);
+            if (shouldLogVerbose()) {
+                logger.debug(`${LOG_PREFIXES.AUTH} 绝对放行接口: ${req.method} ${req.path}`);
+            }
             return next();
         }
 
@@ -89,26 +92,20 @@ module.exports = async function (req, res, next) {
             return next();
         }
 
-        // 6. 获取 Token (优先级: Authorization Header > Cookie > Query Param)
+        // 6. 获取 Token (优先级: Authorization Header > Cookie)
         let token = req.header('Authorization')?.replace('Bearer ', '');
 
-        // 优先从 httpOnly cookie 读取（安全的SSE认证）
+        // 从 httpOnly cookie 读取（安全的SSE认证）
         if (!token && req.cookies?.auth_token) {
             token = req.cookies.auth_token;
-        }
-
-        // 最后从 query parameters 读取（向后兼容，但不推荐）
-        if (!token) {
-            const queryToken = req.query?.access_token || req.query?.token;
-            if (typeof queryToken === 'string' && queryToken.trim()) {
-                token = queryToken.trim();
-            }
         }
 
         // 7. 处理公开访问模式
         if (isPublicAccessAllowed && isPublicResource && !token) {
             // 允许公开访问，且请求的是公共资源，且未携带 Token -> 以匿名身份放行
-            logger.debug(`[Auth] 公开模式放行匿名请求: ${req.method} ${req.originalUrl}`);
+            if (shouldLogVerbose()) {
+                logger.debug(`${LOG_PREFIXES.AUTH} 公开模式放行匿名请求: ${req.method} ${req.originalUrl}`);
+            }
             return next();
         }
 
@@ -119,14 +116,14 @@ module.exports = async function (req, res, next) {
 
         if (!token) {
             // 无 Token，且不满足上述放行条件 -> 拒绝
-            logger.warn(`[${req.requestId || '-'}] [Auth] 访问被拒绝 (无Token): ${req.method} ${req.originalUrl}`);
+            logger.warn(`${LOG_PREFIXES.AUTH} 访问被拒绝 (无Token)`, { requestId: req.requestId, method: req.method, url: req.originalUrl });
             const msg = isPublicAccessAllowed ? '未授权，请提供 Token' : '未授权，管理员已关闭公开访问';
             return res.status(401).json({ code: 'UNAUTHORIZED', message: msg, requestId: req.requestId });
         }
 
         // 9. 验证 Token
         if (!JWT_SECRET) {
-            logger.error(`[${req.requestId || '-'}] [Auth] 服务器缺少 JWT_SECRET 配置，无法验证 Token`);
+            logger.error(`${LOG_PREFIXES.AUTH} 服务器缺少 JWT_SECRET 配置，无法验证 Token`, { requestId: req.requestId });
             return res.status(500).json({ code: 'SERVER_CONFIG_MISSING', message: '服务器缺少 JWT 配置', requestId: req.requestId });
         }
 
@@ -186,14 +183,6 @@ module.exports = async function (req, res, next) {
                     removed++;
                 }
             }
-
-            if (removed > 0) {
-                logger.debug(
-                    `[Auth] 缓存清理: 删除${removed}条 ` +
-                    `(过期:${expiredKeys.length}, LRU:${removed - expiredKeys.length}), ` +
-                    `当前:${authCache.size}/${AUTH_CACHE_MAX_SIZE}`
-                );
-            }
         }
 
         authCache.set(cacheKey, {
@@ -208,20 +197,21 @@ module.exports = async function (req, res, next) {
 
     } catch (err) {
         if (err.name === 'JsonWebTokenError') {
-            logger.warn(`[${req.requestId || '-'}] [Auth] 访问被拒绝 (Token无效): ${req.method} ${req.originalUrl}`);
+            logger.warn(`${LOG_PREFIXES.AUTH} 访问被拒绝 (Token无效)`, { requestId: req.requestId, method: req.method, url: req.originalUrl });
             return res.status(401).json({ code: 'INVALID_TOKEN', message: 'Token 无效', requestId: req.requestId });
         }
         if (err.name === 'TokenExpiredError') {
-            logger.warn(`[${req.requestId || '-'}] [Auth] 访问被拒绝 (Token过期): ${req.method} ${req.originalUrl}`);
+            logger.warn(`${LOG_PREFIXES.AUTH} 访问被拒绝 (Token过期)`, { requestId: req.requestId, method: req.method, url: req.originalUrl });
             return res.status(401).json({ code: 'TOKEN_EXPIRED', message: 'Token 已过期', requestId: req.requestId });
         }
-        logger.error(`[${req.requestId || '-'}] [Auth] 认证中间件发生未知错误:`, err);
+        logger.error(`${LOG_PREFIXES.AUTH} 认证中间件发生未知错误`, { requestId: req.requestId, error: err?.message, stack: err?.stack });
         return res.status(500).json({ code: 'AUTH_ERROR', message: '服务器认证时出错', requestId: req.requestId });
     }
 };
 
 // 定期清理过期缓存，避免在请求路径上清理影响性能
 const AUTH_CACHE_CLEANUP_INTERVAL_MS = Math.min(AUTH_CACHE_TTL, 60000); // 至少按 TTL，至多每 60 秒
+let pendingAuthCacheCleaned = 0;
 const cleanupInterval = setInterval(() => {
     const now = Date.now();
     let cleaned = 0;
@@ -231,9 +221,26 @@ const cleanupInterval = setInterval(() => {
             cleaned++;
         }
     }
-    // 小量清理静默处理，避免日志刷屏（每分钟清理 1-2 个是正常现象）
-    if (cleaned >= 5) {
-        logger.debug(`[Auth] 清理了 ${cleaned} 个过期认证缓存`);
+    if (cleaned <= 0) return;
+
+    // 汇总节流：避免轮询状态页时每分钟刷屏
+    pendingAuthCacheCleaned += cleaned;
+    if (typeof logger.throttledLog === 'function') {
+        const emitted = logger.throttledLog(
+            'info',
+            'auth:cache-cleanup',
+            `${LOG_PREFIXES.AUTH} 清理过期认证缓存`,
+            { cleaned: pendingAuthCacheCleaned },
+            10 * 60 * 1000
+        );
+        if (emitted) pendingAuthCacheCleaned = 0;
+        return;
+    }
+
+    // 兜底：无节流工具时仅在清理较多时输出
+    if (pendingAuthCacheCleaned >= 20) {
+        logger.info(`${LOG_PREFIXES.AUTH} 清理了 ${pendingAuthCacheCleaned} 个过期认证缓存`);
+        pendingAuthCacheCleaned = 0;
     }
 }, AUTH_CACHE_CLEANUP_INTERVAL_MS);
 

@@ -7,8 +7,9 @@ import { settingsLogger } from '../logger.js';
 import { syncState, validateSyncState } from '../../core/state.js';
 import { getAuthToken } from '../../app/auth.js';
 import { showNotification } from '../../shared/utils.js';
-import { NETWORK } from '../../core/constants.js';
+import { NETWORK, UI_COMPONENTS } from '../../core/constants.js';
 import { showPodLoading, showProgressUpdate, getStatusClass } from './shared.js';
+import { applyAdminSecretHeader } from '../../shared/admin-secret.js';
 
 const ongoingRequests = new Map();
 
@@ -45,9 +46,7 @@ export async function triggerSync(type, options = {}, loadStatusTables, adminSec
         if (token) {
             headers.Authorization = `Bearer ${token}`;
         }
-        if (adminSecret) {
-            headers['X-Admin-Secret'] = adminSecret;
-        }
+        applyAdminSecretHeader(headers, adminSecret);
 
         settingsLogger.debug('发送补全请求', { type, loop: options.loop, silent: options.silent });
 
@@ -56,8 +55,7 @@ export async function triggerSync(type, options = {}, loadStatusTables, adminSec
             headers,
             body: JSON.stringify({
                 loop: options.loop || false,
-                silent: syncState.isSilent || false,
-                adminSecret
+                silent: syncState.isSilent || false
             }),
         });
 
@@ -69,16 +67,22 @@ export async function triggerSync(type, options = {}, loadStatusTables, adminSec
                 statusText: response.statusText,
                 error: errorData,
             });
-            throw new Error(errorData.message || `补全失败: ${response.status}`);
+            // 优先提取 AppError 格式的 error.message，然后是顶层 message，最后是状态码
+            const friendlyMessage = errorData?.error?.message || errorData?.message || `补全失败: ${response.status}`;
+            throw new Error(friendlyMessage);
         }
+
 
         const data = await response.json();
 
         const message = data.message || '';
         const skipped = data.data?.skipped || data.data?.result?.skipped || /已在运行|跳过/.test(message);
+        const started = data.data?.started || data.data?.detached || data.data?.result?.started || data.data?.result?.detached;
 
         if (skipped) {
             showNotification(message || '任务已在运行，跳过本次触发', 'info');
+        } else if (started) {
+            showNotification(message || '任务已启动', 'info');
         } else if (!syncState.isSilent) {
             showNotification(
                 `补全${type === 'index' ? '索引' : type === 'thumbnail' ? '缩略图' : 'HLS'} 成功`,
@@ -125,14 +129,12 @@ export async function triggerCleanup(type, loadStatusTables, adminSecret = null)
         if (token) {
             headers.Authorization = `Bearer ${token}`;
         }
-        if (adminSecret) {
-            headers['X-Admin-Secret'] = adminSecret;
-        }
+        applyAdminSecretHeader(headers, adminSecret);
 
         const response = await fetch(`/api/settings/cleanup/${type}`, {
             method: 'POST',
             headers,
-            body: JSON.stringify({ adminSecret })
+            body: JSON.stringify({})
         });
 
         if (!response.ok) {
@@ -248,12 +250,18 @@ export function startRealtimeMonitoring(type) {
     syncState.startMonitoring(type);
     validateSyncState();
 
+    let inFlight = false;
     const intervalId = setInterval(async () => {
+        if (inFlight) return;
+        if (typeof document !== 'undefined' && document.hidden) return;
+
         try {
             const token = getAuthToken();
+            if (!token) return; // 未登录时不轮询
             const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-            const response = await fetch('/api/settings/status-tables', { headers });
+            inFlight = true;
+            const response = await fetch(`/api/settings/status-tables?type=${encodeURIComponent(type)}`, { headers });
 
             if (response.ok) {
                 const responseData = await response.json();
@@ -306,10 +314,20 @@ export function startRealtimeMonitoring(type) {
                         ...statusData,
                         percent,
                     });
+
+                    if (statusData.status === 'complete' || (type === 'index' && statusData.status === 'idle')) {
+                        syncState.stopMonitoring();
+                        validateSyncState();
+                        if (!syncState.isSilent) {
+                            showProgressUpdate(type, false);
+                        }
+                    }
                 }
             }
         } catch (error) {
             // 忽略错误
+        } finally {
+            inFlight = false;
         }
     }, type === 'index' ? 2000 : 10000);
 
@@ -339,6 +357,7 @@ export function startRealtimeMonitoring(type) {
  */
 function updateStatusRealtime(type, data) {
     const prefix = type;
+    const detailValueClass = UI_COMPONENTS.STATUS_CARD.classes.detailValue;
 
     const percentElement = document.getElementById(`${prefix}-percent`);
     if (percentElement && data.percent !== undefined) {
@@ -359,9 +378,9 @@ function updateStatusRealtime(type, data) {
                 element.textContent = data[field];
 
                 if (field === 'processed') {
-                    element.className = 'status-detail-value status-success';
+                    element.className = `${detailValueClass} status-success`;
                 } else if (field === 'unprocessed') {
-                    element.className = 'status-detail-value status-warning';
+                    element.className = `${detailValueClass} status-warning`;
                 }
             }
         }
@@ -372,7 +391,7 @@ function updateStatusRealtime(type, data) {
             const element = document.getElementById(`${prefix}-${stat.status}`);
             if (element) {
                 const statusClass = getStatusClass(stat.status);
-                element.className = `status-detail-value ${statusClass}`;
+                element.className = `${detailValueClass} ${statusClass}`;
                 element.textContent = stat.count;
             }
         });

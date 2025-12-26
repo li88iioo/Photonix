@@ -4,6 +4,7 @@
  */
 const { redis } = require('../config/redis');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { safeRedisGet, safeRedisDel, safeRedisSet } = require('../utils/helpers');
 const { CACHE_TAG_LIMIT_BASE } = require('../config');
 
@@ -18,7 +19,7 @@ function trimTags(tags = [], scope) {
     if (normalized.length <= EFFECTIVE_TAG_LIMIT) {
         return normalized;
     }
-    logger.debug(`[Cache] ${scope} 超过标签上限 ${EFFECTIVE_TAG_LIMIT}，已截断（原始 ${normalized.length}）`);
+    logger.debug(`${LOG_PREFIXES.CACHE} ${scope} 超过标签上限 ${EFFECTIVE_TAG_LIMIT}，已截断（原始 ${normalized.length}）`);
     return normalized.slice(0, EFFECTIVE_TAG_LIMIT);
 }
 
@@ -85,10 +86,6 @@ async function invalidateTags(tags) {
         }
 
         await pipeline.exec();
-
-        if ((keysToDelete.length || 0) > 0) {
-            // logger.debug(`[Cache] 已根据 ${tagKeys.length} 个标签，失效 ${keysToDelete.length} 个缓存键。`);
-        }
 
     } catch (error) {
         logger.error('根据标签失效缓存时出错:', error);
@@ -187,7 +184,7 @@ async function invalidateQueryCache(queryKeys) {
 
     const cacheKeys = keysToInvalidate.map(key => `${QUERY_CACHE_PREFIX}${key}`);
     await safeRedisDel(client, cacheKeys, '失效查询缓存');
-    logger.debug(`[Cache] 已失效 ${cacheKeys.length} 个查询缓存`);
+    logger.debug(`${LOG_PREFIXES.CACHE} 已失效 ${cacheKeys.length} 个查询缓存`);
 }
 
 /**

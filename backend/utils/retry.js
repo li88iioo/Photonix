@@ -12,6 +12,7 @@
 const { redis } = require('../config/redis');
 const { safeRedisIncr, safeRedisDel } = require('./helpers');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 
 /**
  * 分布式重试管理器
@@ -112,7 +113,7 @@ class RetryManager {
     static async canRetryWithPersistence(error, context = '', maxRetries = 3) {
         // Redis不可用时降级为允许重试（由调用方控制）
         if (!redis || redis.isNoRedis) {
-            logger.debug('[RetryManager] Redis 不可用，跳过持久化重试检查');
+            logger.debug(`${LOG_PREFIXES.RETRY_MANAGER} Redis 不可用，跳过持久化重试检查`);
             return true;
         }
 
@@ -143,7 +144,7 @@ class RetryManager {
                 return false; // 不再重试
             }
         } catch (e) {
-            logger.error(`[RetryManager] 重试管理失败: ${e.message}`);
+            logger.error(`${LOG_PREFIXES.RETRY_MANAGER} 重试管理失败: ${e.message}`);
             // 发生异常时保守策略：不允许重试（避免无限循环）
             return false;
         }
@@ -164,17 +165,16 @@ class RetryManager {
         }
 
         if (!redis || redis.isNoRedis) {
-            logger.debug('[RetryManager] Redis 不可用，已清理本地降级计数');
+            logger.debug(`${LOG_PREFIXES.RETRY_MANAGER} Redis 不可用，已清理本地降级计数`);
             return true; // 降级计数已清理，视为成功
         }
 
         try {
             const errorKey = `error_retry:${context}`;
             await safeRedisDel(redis, errorKey, '重置重试计数');
-            // logger.debug(`[RetryManager] 已重置重试计数: ${context}`);
             return true;
         } catch (error) {
-            logger.error(`[RetryManager] 重置重试计数失败: ${error.message}`);
+            logger.error(`${LOG_PREFIXES.RETRY_MANAGER} 重置重试计数失败: ${error.message}`);
             return false;
         }
     }
@@ -199,7 +199,7 @@ class RetryManager {
             const count = await redis.get(errorKey);
             return count ? parseInt(count, 10) : 0;
         } catch (error) {
-            logger.error(`[RetryManager] 获取重试计数失败: ${error.message}`);
+            logger.error(`${LOG_PREFIXES.RETRY_MANAGER} 获取重试计数失败: ${error.message}`);
             // 查询失败时尝试返回降级计数
             if (RetryManager._fallbackCounts) {
                 return RetryManager._fallbackCounts.get(context) || 0;
@@ -228,7 +228,7 @@ class RetryManager {
             }
         }
 
-        logger.debug(`[RetryManager] 清理了 ${cleared} 个降级计数条目`);
+        logger.debug(`${LOG_PREFIXES.RETRY_MANAGER} 清理了 ${cleared} 个降级计数条目`);
         return cleared;
     }
 
@@ -257,7 +257,7 @@ class RetryManager {
     static async incrementRetryCount(context = '', maxRetries = 3, baseDelay = 1000, maxDelay = 30000) {
         // Redis不可用时降级为本地内存计数（防止无限重试）
         if (!redis || redis.isNoRedis) {
-            logger.warn('[RetryManager] Redis 不可用，使用内存降级计数（进程重启后丢失）');
+            logger.warn(`${LOG_PREFIXES.RETRY_MANAGER} Redis 不可用，使用内存降级计数（进程重启后丢失）`);
 
             // 使用静态 Map 存储降级计数（仅当前进程有效）
             if (!RetryManager._fallbackCounts) {
@@ -299,7 +299,7 @@ class RetryManager {
                 // 指数退避：baseDelay * 2^(retryCount-1)，上限为 maxDelay
                 const delay = Math.min(baseDelay * Math.pow(2, retryCount - 1), maxDelay);
 
-                logger.debug(`[RetryManager] ${context} 重试计数增加至 ${retryCount}/${maxRetries}，建议延迟 ${delay}ms`);
+                logger.debug(`${LOG_PREFIXES.RETRY_MANAGER} ${context} 重试计数增加至 ${retryCount}/${maxRetries}，建议延迟 ${delay}ms`);
 
                 return {
                     shouldRetry: true,
@@ -307,7 +307,7 @@ class RetryManager {
                     delay
                 };
             } else {
-                logger.warn(`[RetryManager] ${context} 已达到最大重试次数 ${maxRetries}，清理计数器`);
+                logger.warn(`${LOG_PREFIXES.RETRY_MANAGER} ${context} 已达到最大重试次数 ${maxRetries}，清理计数器`);
 
                 // 清理错误标记，避免Redis中留下垃圾数据
                 await safeRedisDel(redis, errorKey, '清理错误标记');
@@ -319,7 +319,7 @@ class RetryManager {
                 };
             }
         } catch (e) {
-            logger.error(`[RetryManager] 增加重试计数失败: ${e.message}`);
+            logger.error(`${LOG_PREFIXES.RETRY_MANAGER} 增加重试计数失败: ${e.message}`);
             // 发生异常时保守策略：允许重试但返回基础延迟
             return {
                 shouldRetry: true,

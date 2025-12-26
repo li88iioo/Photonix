@@ -6,7 +6,7 @@
 
 import { apiGet, APIErrorTypes, RequestPolicies } from './api-client.js';
 import { removeAuthToken, getAuthToken } from '../app/auth.js';
-import { apiLogger, getAuthHeaders, requestJSONWithDedup } from './shared.js';
+import { apiLogger, buildAdminHeaders, getAuthHeaders, requestJSONWithDedup } from './shared.js';
 import { resolveMessage } from '../shared/utils.js';
 
 /**
@@ -72,20 +72,24 @@ async function buildErrorMessage(response, fallbackMessage) {
  * 保存设置
  * - 根据是否登录添加/去除 Authorization
  * @param {object} settingsData 设置数据对象
+ * @param {string|null} adminSecret 管理员密钥(可选)
  * @returns {Promise<object>} 保存结果对象
  * @throws {Error} 保存失败时抛出错误
  */
-export async function saveSettings(settingsData) {
-    const headers = getAuthHeaders();
+export async function saveSettings(settingsData, adminSecret = null) {
+    const headers = buildAdminHeaders(adminSecret);
     if (!getAuthToken()) {
         delete headers.Authorization;
     }
+
+    const payload = { ...(settingsData || {}) };
+    delete payload.adminSecret;
 
     const response = await fetch('/api/settings', {
         method: 'POST',
         headers,
         cache: 'no-store',
-        body: JSON.stringify(settingsData)
+        body: JSON.stringify(payload)
     });
 
     if (!response.ok) {
@@ -152,15 +156,12 @@ export async function waitForSettingsUpdate(updateId, { intervalMs = 1000, timeo
  * @throws {Error} 同步失败时抛出错误
  */
 export async function manualAlbumSync(adminSecret) {
-    const headers = {
-        ...getAuthHeaders(),
-        'Content-Type': 'application/json'
-    };
+    const headers = buildAdminHeaders(adminSecret);
 
     const response = await fetch('/api/settings/manage/manual-sync', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ adminSecret })
+        body: JSON.stringify({})
     });
 
     if (!response.ok) {
@@ -177,15 +178,12 @@ export async function manualAlbumSync(adminSecret) {
  * @throws {Error} 验证失败时抛出错误
  */
 export async function verifyAdminSecret(adminSecret) {
-    const headers = {
-        ...getAuthHeaders(),
-        'Content-Type': 'application/json'
-    };
+    const headers = buildAdminHeaders(adminSecret);
 
     const response = await fetch('/api/settings/manage/verify-secret', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ adminSecret })
+        body: JSON.stringify({})
     });
 
     if (!response.ok) {
@@ -203,12 +201,11 @@ export async function verifyAdminSecret(adminSecret) {
  * @returns {Promise<object>} 重置结果
  */
 export async function resetPasswordViaAdminSecret(adminSecret, newPassword) {
+    const headers = buildAdminHeaders(adminSecret);
     const response = await fetch('/api/settings/reset-password', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ adminSecret, newPassword })
+        headers,
+        body: JSON.stringify({ newPassword })
     });
 
     if (!response.ok) {
@@ -226,15 +223,12 @@ export async function resetPasswordViaAdminSecret(adminSecret, newPassword) {
  * @throws {Error} 切换失败时抛出错误
  */
 export async function toggleAlbumDeletion(enabled, adminSecret) {
-    const headers = {
-        ...getAuthHeaders(),
-        'Content-Type': 'application/json'
-    };
+    const headers = buildAdminHeaders(adminSecret);
 
     const response = await fetch('/api/settings/manage/delete-toggle', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ enabled, adminSecret })
+        body: JSON.stringify({ enabled })
     });
 
     if (!response.ok) {
@@ -252,15 +246,12 @@ export async function toggleAlbumDeletion(enabled, adminSecret) {
  * @throws {Error} 更新失败时抛出错误
  */
 export async function updateManualSyncSchedule(schedule, adminSecret) {
-    const headers = {
-        ...getAuthHeaders(),
-        'Content-Type': 'application/json'
-    };
+    const headers = buildAdminHeaders(adminSecret);
 
     const response = await fetch('/api/settings/manage/update-schedule', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ schedule, adminSecret })
+        body: JSON.stringify({ schedule })
     });
 
     if (!response.ok) {

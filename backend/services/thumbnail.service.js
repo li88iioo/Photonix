@@ -6,7 +6,7 @@ const path = require('path');
 const { promises: fs } = require('fs');
 const PQueue = require('p-queue').default;
 const logger = require('../config/logger');
-const { LOG_PREFIXES } = logger;
+const { LOG_PREFIXES, throttledLog } = logger;
 const { TraceManager } = require('../utils/trace');
 const { redis } = require('../config/redis');
 const { safeRedisIncr, safeRedisSet, safeRedisDel, safeRedisExpire, safeRedisGet } = require('../utils/helpers');
@@ -48,7 +48,7 @@ const isDevelopment = process.env.NODE_ENV !== 'production';
 
 function logThumbIgnore(scope, error) {
     if (!error) return;
-    logger.silly(`[ThumbnailService] ${scope} 忽略异常: ${error.message}`);
+    logger.debug(`${LOG_PREFIXES.THUMB} ${scope} 忽略异常: ${error.message}`);
 }
 
 // 简化的任务管理
@@ -66,8 +66,8 @@ const TELEMETRY_LOG_INTERVAL_MS = Math.max(5000, Number(process.env.THUMB_TELEME
 const QUEUE_FULL_WARN_INTERVAL_MS = Math.max(1000, Number(process.env.THUMB_QUEUE_WARN_INTERVAL_MS || 5000));
 const QUEUE_FULL_DEBUG_INTERVAL_MS = Math.max(5000, Number(process.env.THUMB_QUEUE_DEBUG_INTERVAL_MS || 30000));
 const ENQUEUE_LOG_INTERVAL_MS = Math.max(1000, Number(process.env.THUMB_QUEUE_ENQUEUE_LOG_INTERVAL_MS || 2000));
-// 仅当排队数较上次增加到 500 条时才追加一条日志，避免高并发时刷屏
-const ENQUEUE_LOG_STEP = Math.max(10, Number(process.env.THUMB_QUEUE_ENQUEUE_LOG_STEP || 500));
+// 仅当排队数较上次增加到 100 条时才追加一条日志，避免高并发时刷屏
+const ENQUEUE_LOG_STEP = Math.max(10, Number(process.env.THUMB_QUEUE_ENQUEUE_LOG_STEP || 100));
 
 const pendingTasks = new Map(); // relativePath -> context
 const pendingCounts = { ondemand: 0, batch: 0 };
@@ -201,7 +201,7 @@ const cleanupTimer = setInterval(() => {
     }
 
     if (cleanedFailures > 0 || cleanedTasks > 0) {
-        logger.debug(`[THUMBNAIL CLEANUP] 清理了 ${cleanedFailures} 个失败记录和 ${cleanedTasks} 个过期任务`);
+        logger.debug(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 清理了 ${cleanedFailures} 个失败记录和 ${cleanedTasks} 个过期任务`);
     }
 }, CLEANUP_INTERVAL_MS);
 // 允许进程退出（定时器不阻止进程退出）
@@ -262,14 +262,14 @@ class ThumbStatusManager {
             });
             // 小批次静默处理，避免日志刷屏（仓库层已有相同阈值）
             if (rows.length >= 10) {
-                logger.debug(`[THUMB] 批量写入缩略图状态成功: ${rows.length} 条记录`);
+                logger.debug(`${LOG_PREFIXES.THUMB} 批量写入缩略图状态成功`, { count: rows.length });
             }
             return { success: true, rowsAffected: rows.length };
         } catch (e) {
             // 兜底：即便闸门封装异常也直接写一次，确保最终可达
             await this.repo.upsertBatch(rows, { manageTransaction: true, chunkSize: 400 }, redis);
             if (rows.length >= 10) {
-                logger.debug(`[THUMB] 兜底批量写入成功: ${rows.length} 条记录`);
+                logger.debug(`${LOG_PREFIXES.THUMB} 兜底批量写入成功`, { count: rows.length });
             }
             return { success: true, rowsAffected: rows.length };
         }
@@ -298,12 +298,13 @@ class ThumbStatusManager {
                 failureCount++;
                 const displayPath = String(pathRel || '').length > 50 ?
                     String(pathRel).substring(0, 50) + '...' : pathRel;
-                logger.error(`缩略图状态写入失败: ${displayPath}`, {
-                    error: retryError.message,
-                    code: retryError.code,
+                logger.error(`${LOG_PREFIXES.THUMB} 缩略图状态写入失败`, {
                     path: pathRel,
+                    displayPath,
                     mtime,
-                    status
+                    status,
+                    error: retryError?.message,
+                    code: retryError?.code
                 });
             }
         }
@@ -325,7 +326,7 @@ class ThumbStatusManager {
             const retryResult = await this.retryIndividual(rows, redis);
 
             if (retryResult.successCount > 0 || retryResult.failureCount > 0) {
-                logger.debug(`[THUMB] 逐条重试完成: 成功 ${retryResult.successCount}, 失败 ${retryResult.failureCount}`);
+                logger.debug(`${LOG_PREFIXES.THUMB} 逐条重试完成`, { success: retryResult.successCount, failed: retryResult.failureCount });
             }
 
             return {
@@ -357,7 +358,7 @@ function scheduleThumbStatusFlush() {
                         thumbStatusPending.set(pathRel, payload);
                     }
                 }
-                logger.error(`[THUMB] 批量刷新缩略图状态失败: ${error.message}`);
+                logger.error(`${LOG_PREFIXES.THUMB} 批量刷新缩略图状态失败`, { error: error.message });
                 throw error;
             }
         }
@@ -408,7 +409,7 @@ function dispatchThumbnailTask(task, context = 'ondemand') {
                 // 批量任务已用满可用槽位，拒绝派发（为按需任务保留）
                 const now = Date.now();
                 if (now - lastQueueFullDebugAt >= QUEUE_FULL_DEBUG_INTERVAL_MS) {
-                    logger.debug(`[批量生成] 检测到按需任务(${ondemandPending}个)，限制批量并发(${currentBatchUsage}/${availableForBatch})，预留${THUMB_ONDEMAND_RESERVE}个槽位`);
+                    logger.debug(`${LOG_PREFIXES.BATCH_GENERATE} 检测到按需任务(${ondemandPending}个)，限制批量并发(${currentBatchUsage}/${availableForBatch})，预留${THUMB_ONDEMAND_RESERVE}个槽位`);
                     lastQueueFullDebugAt = now;
                 }
                 return false;
@@ -437,7 +438,12 @@ function dispatchThumbnailTask(task, context = 'ondemand') {
     const intervalElapsed = now - stateForLabel.lastAt >= ENQUEUE_LOG_INTERVAL_MS;
     const shouldLog = !stateForLabel.loggedOnce || (isFirstFew || ((steppedIncrease || intervalElapsed) && pendingCounts[label] > stateForLabel.lastCount));
     if (shouldLog) {
-        logger.debug(`[${label === 'ondemand' ? '按需' : '批量'}任务] 排队中，等待资源 (queue=${pendingCounts[label]}, active=${state.thumbnail.getActiveCount()}, limit=${thumbQueue.concurrency})`);
+        // 使用节流日志，避免高并发时刷屏
+        throttledLog('debug', `thumb-enqueue-${label}`,
+            `${LOG_PREFIXES.THUMB} ${label === 'ondemand' ? '按需' : '批量'}任务排队中`,
+            { queue: pendingCounts[label], active: state.thumbnail.getActiveCount(), limit: thumbQueue.concurrency },
+            ENQUEUE_LOG_INTERVAL_MS
+        );
         stateForLabel.lastCount = pendingCounts[label];
         stateForLabel.lastAt = now;
         stateForLabel.loggedOnce = true;
@@ -522,7 +528,7 @@ async function processWorkerSuccess(task, skipped) {
             await redis.publish('thumbnail-generated', JSON.stringify({ path: relativePath }));
             publishedToRedis = !redis.isNoRedis;
         } catch (pubErr) {
-            logger.debug(`[THUMB] 发布缩略图事件失败（回退本地事件）：${pubErr && pubErr.message}`);
+            logger.debug(`${LOG_PREFIXES.THUMB} 发布缩略图事件失败（回退本地事件）`, { error: pubErr && pubErr.message });
         }
         if (!publishedToRedis) {
             eventBus.emit('thumbnail-generated', { path: relativePath });
@@ -541,7 +547,7 @@ async function processWorkerSuccess(task, skipped) {
 
             await invalidateTags(tags);
         } catch (cacheError) {
-            logger.debug(`[CACHE] 失效缩略图缓存失败（已忽略）: ${cacheError.message}`);
+            logger.debug(`${LOG_PREFIXES.CACHE} 失效缩略图缓存失败（已忽略）: ${cacheError.message}`);
         }
     }
 
@@ -552,9 +558,11 @@ async function processWorkerSuccess(task, skipped) {
         const thumbAbsPath = path.join(THUMBS_DIR, thumbRelPath);
         const thumbMtime = await fs.stat(thumbAbsPath).then((s) => s.mtimeMs).catch(() => Date.now());
         await queueThumbStatusUpdate(task.relativePath, thumbMtime, 'exists');
-        // if (!skipped) { logger.debug(`[THUMB] 更新缩略图状态: ${task.relativePath}, mtime: ${thumbMtime}`); }
     } catch (dbErr) {
-        logger.debug(`写入缩略图状态队列失败（成功分支，已忽略）：${dbErr && dbErr.message}`);
+        logger.warn(`${LOG_PREFIXES.THUMB} 写入缩略图状态队列失败（成功分支）`, {
+            relativePath: task.relativePath,
+            error: dbErr?.message
+        });
     }
 }
 
@@ -572,24 +580,37 @@ async function processWorkerFailure(task, errorPayload) {
             if (corruptCount === 1) {
                 await safeRedisExpire(redis, corruptionKey, 3600 * 24 * 30, '缩略图损坏标记');
             }
-            logger.warn(`[THUMB] [CORRUPT_PARSE_COUNT] 发现文件损坏: ${relativePath} | count=${corruptCount}/10 | reason=${message}`);
+            // 仅在首次或每5次记录一次，减少刷屏
+            if (corruptCount === 1 || corruptCount % 5 === 0) {
+                logger.warn(`${LOG_PREFIXES.THUMB} 发现文件损坏`, {
+                    relativePath: path.basename(relativePath),
+                    corruptCount,
+                    threshold: 10,
+                    reason: message
+                });
+            }
             if (corruptCount >= 10) {
                 try {
                     await fs.unlink(task.filePath).catch(() => { });
-                    logger.error(`[THUMB] [CORRUPTED_IMAGE_DELETED] 已因出现 ${corruptCount} 次"${CORRUPT_PARSE_SNIPPET}"而删除源文件: ${task.filePath}`);
+                    logger.error(`${LOG_PREFIXES.THUMB} 已删除损坏的源文件`, {
+                        filePath: task.filePath,
+                        relativePath,
+                        corruptCount,
+                        reason: CORRUPT_PARSE_SNIPPET
+                    });
                     await RetryManager.resetRetryCount(`thumb:${relativePath}`);
                     failureTimestamps.delete(relativePath);
                     await safeRedisSet(redis, failureKey, '1', 'EX', 3600 * 24 * 7, '缩略图永久失败标记');
                     await safeRedisDel(redis, corruptionKey, '清理缩略图损坏标记');
                     deletedByCorruptionRule = true;
                 } catch (delErr) {
-                    logger.warn(`[THUMB] 触发损坏文件删除失败：${delErr && delErr.message}`);
+                    logger.warn(`${LOG_PREFIXES.THUMB} 触发损坏文件删除失败`, { error: delErr && delErr.message });
                     deletedByCorruptionRule = true;
                 }
             }
         }
     } catch (err) {
-        logger.debug(`[THUMB] 损坏文件检测逻辑失败: ${err.message}`);
+        logger.debug(`${LOG_PREFIXES.THUMB} 损坏文件检测逻辑失败`, { error: err.message });
     }
 
     // 使用 RetryManager 管理重试计数（Redis 持久化 + 指数退避）
@@ -602,7 +623,14 @@ async function processWorkerFailure(task, errorPayload) {
 
     failureTimestamps.set(relativePath, Date.now());
     updateTaskTimestamp(relativePath);
-    logger.error(`[THUMB] 处理任务失败: ${relativePath} (第 ${retryInfo.retryCount} 次)。错误: ${message}`);
+    // 中间重试仅记录 debug，减少刷屏
+    logger.debug(`${LOG_PREFIXES.THUMB} 处理任务失败`, {
+        relativePath,
+        retryCount: retryInfo.retryCount,
+        maxRetries: MAX_THUMBNAIL_RETRIES,
+        error: message,
+        taskType: task.type
+    });
     await safeRedisIncr(redis, 'metrics:thumb:fail', '缩略图失败指标');
 
     thumbMetrics.failures += 1;
@@ -616,7 +644,15 @@ async function processWorkerFailure(task, errorPayload) {
         failureTimestamps.delete(relativePath);
         statusForDb = 'permanent_failed';
     } else if (retryInfo.shouldRetry) {
-        logger.warn(`任务 ${relativePath} 将在 ${retryInfo.delay / 1000}秒 后重试 (第 ${retryInfo.retryCount}/${MAX_THUMBNAIL_RETRIES} 次)...`);
+        // 合并重试信息到一条日志，使用 info 级别（仅在首次重试时记录）
+        if (retryInfo.retryCount === 1) {
+            logger.info(`${LOG_PREFIXES.THUMB} 任务将重试`, {
+                relativePath: path.basename(relativePath),
+                retryCount: retryInfo.retryCount,
+                maxRetries: MAX_THUMBNAIL_RETRIES,
+                reason: message
+            });
+        }
         thumbMetrics.retries += 1;
         setTimeout(() => {
             dispatchThumbnailTask({
@@ -626,7 +662,11 @@ async function processWorkerFailure(task, errorPayload) {
             });
         }, retryInfo.delay);
     } else {
-        logger.error(`任务 ${relativePath} 已达到最大重试次数 (${MAX_THUMBNAIL_RETRIES}次)，标记为永久失败。`);
+        logger.error(`${LOG_PREFIXES.THUMB} 任务已达最大重试次数，标记为永久失败`, {
+            relativePath,
+            maxRetries: MAX_THUMBNAIL_RETRIES,
+            reason: message
+        });
         await safeRedisSet(redis, failureKey, '1', 'EX', 3600 * 24 * 7, '缩略图永久失败标记');
         await safeRedisIncr(redis, 'metrics:thumb:permanent_fail', '缩略图永久失败指标');
         thumbMetrics.permanentFailures += 1;
@@ -638,7 +678,11 @@ async function processWorkerFailure(task, errorPayload) {
         const srcMtime = await fs.stat(task.filePath).then((s) => s.mtimeMs).catch(() => Date.now());
         await queueThumbStatusUpdate(relativePath, srcMtime, statusForDb);
     } catch (dbErr) {
-        logger.debug(`写入缩略图状态队列失败（失败分支，已忽略）：${dbErr && dbErr.message}`);
+        logger.warn(`${LOG_PREFIXES.THUMB} 写入缩略图状态队列失败（失败分支）`, {
+            relativePath,
+            status: statusForDb,
+            error: dbErr?.message
+        });
     }
 
     // 永久失败时同步清理封面缓存/引用，避免相册封面卡在坏缩略图上
@@ -1010,7 +1054,7 @@ async function batchGenerateMissingThumbnails(limit = 1000) {
         const now = Date.now();
         if (now - __lastBatchTelemetryLog >= TELEMETRY_LOG_INTERVAL_MS) {
             __lastBatchTelemetryLog = now;
-            logger.info(`[ThumbMetrics] batch_dispatch`, {
+            logger.info(`${LOG_PREFIXES.THUMB_METRICS} batch_dispatch`, {
                 processed: missingThumbs.length,
                 queued,
                 skipped,
@@ -1036,7 +1080,7 @@ async function batchGenerateMissingThumbnails(limit = 1000) {
                     // 销毁 worker 池时，Piscina 会终止所有 worker 线程，
                     // worker 进程的内存（包括 Sharp 缓存）会随之释放
                     require('./worker.manager').destroyThumbnailWorkerPool();
-                    logger.debug('[THUMBNAIL] 批量任务完成，已销毁 worker 池（内存随线程释放）');
+                    logger.debug(`${LOG_PREFIXES.THUMB} 批量任务完成，已销毁 worker 池（内存随线程释放）`);
                 } catch (error) {
                     logThumbIgnore('批量任务销毁缩略图线程池', error);
                 }

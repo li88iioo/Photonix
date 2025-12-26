@@ -5,11 +5,13 @@
 
 const bcrypt = require('bcryptjs');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const settingsService = require('../services/settings.service');
 const albumManagementService = require('../services/albumManagement.service');
 const manualSyncScheduler = require('../services/manualSyncScheduler.service');
 const { hasPermission, getUserRole, PERMISSIONS } = require('../middleware/permissions');
 const { AppError, AuthorizationError, ValidationError, ConfigurationError } = require('../utils/errors');
+const { readAdminSecret, scrubAdminSecret } = require('../utils/adminSecret');
 
 /**
  * 管理员密钥验证错误处理
@@ -20,11 +22,19 @@ const { AppError, AuthorizationError, ValidationError, ConfigurationError } = re
 function mapAdminSecretError(result, defaultMessage = '管理员密钥验证失败') {
   const message = result?.msg || defaultMessage;
   const code = result?.code || 500;
+  const shouldAuditOnly = code === 401 && message === '管理员密钥错误';
+  const auditDetails = shouldAuditOnly ? { audited: true, auditReason: message } : null;
 
-  if (code === 400) return new ValidationError(message);
-  if (code === 401 || code === 403) return new AuthorizationError(message);
+  if (code === 400) return new ValidationError(message, auditDetails);
+  if (code === 401 || code === 403) return new AuthorizationError(message, auditDetails);
   if (code === 500) return new ConfigurationError(message);
   return new AppError(message, code);
+}
+
+function isAuditedAdminSecretError(error) {
+  return error instanceof AuthorizationError
+    && error.details?.audited
+    && error.details?.auditReason === '管理员密钥错误';
 }
 
 /**
@@ -105,7 +115,10 @@ exports.getSettingsForClient = async (_req, res) => {
  */
 exports.updateSettings = async (req, res) => {
   try {
-    const { newPassword, adminSecret, settingsToUpdate } = validateAndFilterSettings(req.body);
+    const adminSecret = readAdminSecret(req);
+    scrubAdminSecret(req);
+    const reqBody = adminSecret ? { ...(req.body || {}), adminSecret } : (req.body || {});
+    const { newPassword, settingsToUpdate } = validateAndFilterSettings(reqBody);
     const allSettings = await settingsService.getAllSettings();
     const passwordOps = await handlePasswordOperations(settingsToUpdate, newPassword, allSettings);
     const auditContextBuilder = (extra) => buildAuditContext(req, extra);
@@ -146,6 +159,9 @@ exports.updateSettings = async (req, res) => {
 
     return res.status(response.statusCode).json(response.body);
   } catch (error) {
+    if (isAuditedAdminSecretError(error)) {
+      throw error;
+    }
     // 预期的业务错误（如密钥错误）使用warn级别，避免日志噪音
     const isExpectedError = error instanceof AuthorizationError || error instanceof ValidationError;
     const logLevel = isExpectedError ? 'warn' : 'error';
@@ -192,20 +208,34 @@ exports.updateSettingsStatus = (status, message = null, updateId = null) => {
  * @param {Express.Response} res
  * @returns {Promise<void>}
  */
-exports.getStatusTables = async (_req, res) => {
+exports.getStatusTables = async (req, res) => {
   try {
-    const statusTables = {
-      index: await getIndexStatus(),
-      thumbnail: await thumbnailSyncService.getThumbnailStatus(),
-      hls: await getHlsStatus()
-    };
+    const requestedType = String(req.query?.type || '').trim().toLowerCase();
+    const statusTables = {};
+
+    if (!requestedType || requestedType === 'all') {
+      statusTables.index = await getIndexStatus();
+      statusTables.thumbnail = await thumbnailSyncService.getThumbnailStatus();
+      statusTables.hls = await getHlsStatus();
+    } else if (requestedType === 'index') {
+      statusTables.index = await getIndexStatus();
+    } else if (requestedType === 'thumbnail') {
+      statusTables.thumbnail = await thumbnailSyncService.getThumbnailStatus();
+    } else if (requestedType === 'hls') {
+      statusTables.hls = await getHlsStatus();
+    } else {
+      statusTables.index = await getIndexStatus();
+      statusTables.thumbnail = await thumbnailSyncService.getThumbnailStatus();
+      statusTables.hls = await getHlsStatus();
+    }
+
     res.json({
       success: true,
       data: statusTables,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    logger.error('获取状态表信息失败:', error);
+    logger.error(`${LOG_PREFIXES.SETTINGS_UPDATE} 获取状态表信息失败:`, error);
     throw new AppError(error?.message || '获取状态表信息失败', 500, 'STATUS_TABLE_FETCH_FAILED', {
       originalError: error?.message
     });
@@ -228,7 +258,8 @@ exports.triggerSync = async (req, res) => {
       throw new ValidationError('无效的补全类型', { validTypes });
     }
 
-    const adminSecret = req.headers['x-admin-secret'] || req.body?.adminSecret;
+    const adminSecret = readAdminSecret(req);
+    scrubAdminSecret(req);
 
     if (type === 'index') {
       const hasPermissionToRun = hasPermission(getUserRole(req), PERMISSIONS.GENERATE_THUMBNAILS);
@@ -245,7 +276,7 @@ exports.triggerSync = async (req, res) => {
       if (!verifyResult.ok) {
         throw mapAdminSecretError(verifyResult, '重建索引验证失败');
       }
-      logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved', message: '重建索引管理员密钥验证成功' }))));
+      logger.info(`${LOG_PREFIXES.AUTH} 重建索引验证成功`, translateAuditLog(buildCtx({ status: 'approved', message: '重建索引管理员密钥验证成功' })));
     } else {
       const buildCtx = (extra) => buildAuditContext(req, {
         action: 'trigger_sync',
@@ -257,10 +288,16 @@ exports.triggerSync = async (req, res) => {
       if (!verifyResult.ok) {
         throw mapAdminSecretError(verifyResult, `触发${getTypeDisplayName(type)}补全验证失败`);
       }
-      logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved', message: `触发${getTypeDisplayName(type)}补全管理员密钥验证成功` }))));
+      logger.info(`${LOG_PREFIXES.AUTH} ${getTypeDisplayName(type)}补全验证成功`, translateAuditLog(buildCtx({ status: 'approved', message: `触发${getTypeDisplayName(type)}补全管理员密钥验证成功` })));
     }
 
-    const syncResult = await triggerSyncOperation(type);
+    const options = {
+      loop: type === 'thumbnail' ? true : req.body?.loop,
+      silent: req.body?.silent,
+      detached: type === 'thumbnail' || type === 'hls'
+    };
+
+    const syncResult = await triggerSyncOperation(type, options);
     res.json({
       success: true,
       message: `已启动${getTypeDisplayName(type)}补全任务`,
@@ -268,11 +305,18 @@ exports.triggerSync = async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
+    if (isAuditedAdminSecretError(error)) {
+      throw error;
+    }
     const isAuthError = error instanceof AuthorizationError;
-    const loggerFn = typeof logger[isAuthError ? 'warn' : 'error'] === 'function'
-      ? logger[isAuthError ? 'warn' : 'error']
-      : logger.error;
-    loggerFn(`触发${req.params.type}补全失败: ${error?.message || 'unknown error'}`);
+    const message = `触发${req.params.type}补全失败: ${error?.message || 'unknown error'}`;
+    if (isAuthError) {
+      logger.warn(`${LOG_PREFIXES.SETTINGS_UPDATE} 触发${req.params.type}补全失败:`, { error: error.message });
+    } else {
+      logger.error(`${LOG_PREFIXES.SETTINGS_UPDATE} 触发${req.params.type}补全失败:`, error);
+    }
+
+
 
     if (error instanceof AppError) {
       throw error;
@@ -308,7 +352,7 @@ exports.resyncThumbnails = async (_req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    logger.error('手动触发缩略图状态重同步请求失败:', error);
+    logger.error(`${LOG_PREFIXES.SETTINGS_UPDATE} 手动触发缩略图状态重同步请求失败:`, error);
     if (error instanceof AppError) throw error;
     throw new AppError(error?.message || '缩略图状态重同步失败', 500, 'THUMBNAIL_RESYNC_FAILED', {
       originalError: error?.message
@@ -329,22 +373,19 @@ exports.triggerCleanup = async (req, res) => {
     const { type } = req.params;
     const validTypes = ['thumbnail', 'hls', 'all'];
     if (!validTypes.includes(type)) {
-      throw new ValidationError('无效的同步类型', { validTypes });
+      throw new ValidationError('无效的清理类型', { validTypes });
     }
-    const adminSecret = req.headers['x-admin-secret'] || req.body?.adminSecret;
-    const buildCtx = (extra) => buildAuditContext(req, {
-      action: 'trigger_cleanup',
-      type,
-      sensitive: true,
-      ...extra
+
+    logger.info(`${LOG_PREFIXES.SETTINGS_UPDATE} 触发${getTypeDisplayName(type)}清理任务`, {
+      ip: req.ip,
+      userId: req.user?.id || 'anonymous'
     });
-    const verifyResult = await verifySensitiveOperations(true, adminSecret, buildCtx);
-    if (!verifyResult.ok) {
-      throw mapAdminSecretError(verifyResult, `触发${getTypeDisplayName(type)}清理验证失败`);
-    }
-    logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved', message: `触发${getTypeDisplayName(type)}清理管理员密钥验证成功` }))));
 
     const cleanupResult = await triggerCleanupOperation(type);
+
+    // 输出清理结果日志
+    logger.info(`${LOG_PREFIXES.SETTINGS_UPDATE} ${cleanupResult.message}`);
+
     res.json({
       success: true,
       message: cleanupResult.message,
@@ -352,9 +393,14 @@ exports.triggerCleanup = async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    logger.error(`触发${req.params.type}同步失败:`, error);
+    const isExpectedError = error instanceof AuthorizationError || error instanceof ValidationError;
+    if (isExpectedError) {
+      logger.warn(`${LOG_PREFIXES.SETTINGS_UPDATE} 触发${req.params.type}清理失败:`, { error: error.message });
+    } else {
+      logger.error(`${LOG_PREFIXES.SETTINGS_UPDATE} 触发${req.params.type}清理失败:`, error);
+    }
     if (error instanceof AppError) throw error;
-    throw new AppError(error?.message || '同步操作失败', 500, 'CLEANUP_OPERATION_FAILED', {
+    throw new AppError(error?.message || '清理操作失败', 500, 'CLEANUP_OPERATION_FAILED', {
       originalError: error?.message,
       type: req.params.type
     });
@@ -371,7 +417,8 @@ exports.triggerCleanup = async (req, res) => {
  */
 exports.manualAlbumSync = async (req, res) => {
   try {
-    const adminSecret = req.body?.adminSecret;
+    const adminSecret = readAdminSecret(req);
+    scrubAdminSecret(req);
     const buildCtx = (extra) => buildAuditContext(req, { action: 'manual_album_sync', sensitive: true, ...extra });
     const verified = await verifySensitiveOperations(true, adminSecret, buildCtx);
     if (!verified.ok) throw mapAdminSecretError(verified);
@@ -403,7 +450,7 @@ exports.manualAlbumSync = async (req, res) => {
       });
     }
     const message = summary.totalChanges > 0 ? '手动同步完成' : '没有检测到需要同步的内容';
-    logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved', summary }))));
+    logger.info(`${LOG_PREFIXES.AUTH} 手动相册同步已验证`, translateAuditLog(buildCtx({ status: 'approved', summary })));
 
     res.json({
       success: true,
@@ -413,7 +460,15 @@ exports.manualAlbumSync = async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    logger.error('手动同步相册失败:', error);
+    if (isAuditedAdminSecretError(error)) {
+      throw error;
+    }
+    const isExpectedError = error instanceof AuthorizationError || error instanceof ValidationError;
+    if (isExpectedError) {
+      logger.warn(`${LOG_PREFIXES.SETTINGS_UPDATE} 手动同步相册失败:`, { error: error.message });
+    } else {
+      logger.error(`${LOG_PREFIXES.SETTINGS_UPDATE} 手动同步相册失败:`, error);
+    }
     throw error;
   }
 };
@@ -427,18 +482,22 @@ exports.manualAlbumSync = async (req, res) => {
  */
 exports.verifyAdminSecretOnly = async (req, res) => {
   try {
-    const adminSecret = req.body?.adminSecret;
+    const adminSecret = readAdminSecret(req);
+    scrubAdminSecret(req);
     const buildCtx = (extra) => buildAuditContext(req, { action: 'verify_admin_secret', sensitive: true, ...extra });
     const verified = await verifySensitiveOperations(true, adminSecret, buildCtx);
     if (!verified.ok) throw mapAdminSecretError(verified);
 
-    logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved' }))));
+    logger.info(`${LOG_PREFIXES.AUTH} 管理员密钥验证成功`, translateAuditLog(buildCtx({ status: 'approved' })));
     res.json({ success: true });
   } catch (error) {
+    if (isAuditedAdminSecretError(error)) {
+      throw error;
+    }
     if (error instanceof AuthorizationError || error instanceof ValidationError || error instanceof ConfigurationError) {
-      logger.warn('管理员密钥单独验证失败:', error.message);
+      logger.warn(`${LOG_PREFIXES.SETTINGS_UPDATE} 管理员密钥单独验证失败:`, { error: error.message });
     } else {
-      logger.error('管理员密钥单独验证失败:', error);
+      logger.error(`${LOG_PREFIXES.SETTINGS_UPDATE} 管理员密钥单独验证失败:`, error);
     }
     throw error;
   }
@@ -453,7 +512,8 @@ exports.verifyAdminSecretOnly = async (req, res) => {
  */
 exports.resetPasswordViaAdminSecret = async (req, res) => {
   try {
-    const adminSecret = req.body?.adminSecret;
+    const adminSecret = readAdminSecret(req);
+    scrubAdminSecret(req);
     const newPassword = req.body?.newPassword;
     const buildCtx = (extra) => buildAuditContext(req, {
       action: 'reset_password_via_admin',
@@ -472,13 +532,21 @@ exports.resetPasswordViaAdminSecret = async (req, res) => {
       PASSWORD_HASH: passwordHash
     });
 
-    logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved', message: '访问密码已通过管理员密钥重置' }))));
+    logger.info(`${LOG_PREFIXES.AUTH} 访问密码已重置`, translateAuditLog(buildCtx({ status: 'approved', message: '访问密码已通过管理员密钥重置' })));
     res.json({
       success: true,
       message: '访问密码已重置，请使用新密码登录'
     });
   } catch (error) {
-    logger.error('管理员密钥重置访问密码失败:', error);
+    if (isAuditedAdminSecretError(error)) {
+      throw error;
+    }
+    const isExpectedError = error instanceof AuthorizationError || error instanceof ValidationError;
+    if (isExpectedError) {
+      logger.warn(`${LOG_PREFIXES.SETTINGS_UPDATE} 管理员密钥重置访问密码失败:`, { error: error.message });
+    } else {
+      logger.error(`${LOG_PREFIXES.SETTINGS_UPDATE} 管理员密钥重置访问密码失败:`, error);
+    }
     throw error;
   }
 };
@@ -494,7 +562,8 @@ exports.resetPasswordViaAdminSecret = async (req, res) => {
 exports.toggleAlbumDeletion = async (req, res) => {
   try {
     const desired = Boolean(req.body?.enabled);
-    const adminSecret = req.body?.adminSecret;
+    const adminSecret = readAdminSecret(req);
+    scrubAdminSecret(req);
     const buildCtx = (extra) => buildAuditContext(req, {
       action: 'toggle_album_deletion',
       sensitive: true,
@@ -506,7 +575,7 @@ exports.toggleAlbumDeletion = async (req, res) => {
     if (!verified.ok) throw mapAdminSecretError(verified);
 
     await settingsService.updateSettings({ ALBUM_DELETE_ENABLED: desired ? 'true' : 'false' });
-    logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved' }))));
+    logger.info(`${LOG_PREFIXES.AUTH} 相册删除开关已切换`, translateAuditLog(buildCtx({ status: 'approved' })));
 
     res.json({
       success: true,
@@ -515,7 +584,15 @@ exports.toggleAlbumDeletion = async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    logger.error('切换相册删除开关失败:', error);
+    if (isAuditedAdminSecretError(error)) {
+      throw error;
+    }
+    const isExpectedError = error instanceof AuthorizationError || error instanceof ValidationError;
+    if (isExpectedError) {
+      logger.warn(`${LOG_PREFIXES.SETTINGS_UPDATE} 切换相册删除开关失败:`, { error: error.message });
+    } else {
+      logger.error(`${LOG_PREFIXES.SETTINGS_UPDATE} 切换相册删除开关失败:`, error);
+    }
     throw error;
   }
 };
@@ -531,7 +608,8 @@ exports.toggleAlbumDeletion = async (req, res) => {
 exports.updateManualSyncSchedule = async (req, res) => {
   try {
     const scheduleInput = req.body?.schedule;
-    const adminSecret = req.body?.adminSecret;
+    const adminSecret = readAdminSecret(req);
+    scrubAdminSecret(req);
     const buildCtx = (extra) => buildAuditContext(req, {
       action: 'update_manual_sync_schedule',
       sensitive: true,
@@ -548,7 +626,7 @@ exports.updateManualSyncSchedule = async (req, res) => {
     } catch (error) {
       throw mapScheduleUpdateError(error);
     }
-    logger.info(JSON.stringify(translateAuditLog(buildCtx({ status: 'approved', normalizedSchedule: normalized.raw }))));
+    logger.info(`${LOG_PREFIXES.AUTH} 维护计划已更新`, translateAuditLog(buildCtx({ status: 'approved', normalizedSchedule: normalized.raw })));
 
     const status = manualSyncScheduler.getStatus();
     res.json({
@@ -561,7 +639,15 @@ exports.updateManualSyncSchedule = async (req, res) => {
       message: status.type === 'off' ? '已关闭自动维护计划' : '已更新自动维护计划'
     });
   } catch (error) {
-    logger.error('更新手动同步计划失败:', error);
+    if (isAuditedAdminSecretError(error)) {
+      throw error;
+    }
+    const isExpectedError = error instanceof AuthorizationError || error instanceof ValidationError;
+    if (isExpectedError) {
+      logger.warn(`${LOG_PREFIXES.SETTINGS_UPDATE} 更新手动同步计划失败:`, { error: error.message });
+    } else {
+      logger.error(`${LOG_PREFIXES.SETTINGS_UPDATE} 更新手动同步计划失败:`, error);
+    }
     throw error;
   }
 };

@@ -1,6 +1,7 @@
 const path = require('path');
 const { promises: fs } = require('fs');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { PHOTOS_DIR } = require('../config');
 const { dbAll } = require('../db/multi-db');
 const { processManualChanges } = require('./indexer.service');
@@ -11,7 +12,7 @@ const MEDIA_REGEX = /\.(jpe?g|png|webp|gif|mp4|webm|mov)$/i;
 const VIDEO_REGEX = /\.(mp4|webm|mov)$/i;
 // 应忽略的目录或文件名模式
 const IGNORE_PATTERNS = [
-  /(^|[\\/])@eaDir/, 
+  /(^|[\\/])@eaDir/,
   /(^|[\\/])\.tmp/,
   /temp_opt_.*/,
   /.*\.tmp$/

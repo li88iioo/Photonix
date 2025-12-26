@@ -7,6 +7,7 @@
  */
 
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const path = require('path');
 const { promises: fs } = require('fs');
 const { PHOTOS_DIR } = require('../config');
@@ -143,7 +144,7 @@ exports.generateCaption = async (req, res) => {
             });
         }
     } catch (error) {
-        logger.debug(`[AI] 图片路径不可用: ${absPath} -> ${error && error.message}`);
+        logger.debug(`${LOG_PREFIXES.AI_SERVICE} 图片路径不可用: ${absPath} -> ${error && error.message}`);
         return res.status(404).json({
             code: 'IMAGE_NOT_FOUND',
             message: '图片不存在',
@@ -187,7 +188,7 @@ exports.generateCaption = async (req, res) => {
                 await safeRedisSet(redis, dedupeKey, 'success', 'EX', PER_IMAGE_COOLDOWN_SEC, 'AI成功冷却');
             }
         } catch (redisError) {
-            logger.debug(`[AI] 成功处理后更新冷却锁失败（忽略）: ${redisError && redisError.message}`);
+            logger.debug(`${LOG_PREFIXES.AI_SERVICE} 成功处理后更新冷却锁失败（忽略）: ${redisError && redisError.message}`);
         }
 
         // 生成成功响应
@@ -217,7 +218,7 @@ exports.generateCaption = async (req, res) => {
                 await safeRedisDel(redis, dedupeKey, 'AI失败清锁');
             }
         } catch (redisError) {
-            logger.debug(`[AI] 清理冷却锁失败（忽略）: ${redisError && redisError.message}`);
+            logger.debug(`${LOG_PREFIXES.AI_SERVICE} 清理冷却锁失败（忽略）: ${redisError && redisError.message}`);
         }
 
         // 错误响应（根据具体错误赋予合适 HTTP 状态码）

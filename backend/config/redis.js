@@ -5,6 +5,7 @@
 const Redis = require('ioredis');
 const { REDIS_URL, SETTINGS_QUEUE_NAME } = require('./index');
 const logger = require('./logger');
+const { LOG_PREFIXES } = logger;
 
 /**
  * 显式 Redis 启用开关。
@@ -130,21 +131,21 @@ if (realRedis) {
   realRedis.on('ready', () => {
     __redisReady = true;
     if (!__connectionLogged) {
-      logger.info('Redis 连接就绪');
+      logger.info(`${LOG_PREFIXES.REDIS} 连接就绪`);
       __connectionLogged = true;
     }
   });
   realRedis.on('connect', () => {
     if (!__connectionLogged) {
-      logger.info('Redis 连接已建立');
+      logger.info(`${LOG_PREFIXES.REDIS} 连接已建立`);
       __connectionLogged = true;
     }
   });
-  realRedis.on('error', err => logger.error('Redis错误:', err && err.code === 'ECONNREFUSED' ? '无法连接Redis' : err));
+  realRedis.on('error', err => logger.error(`${LOG_PREFIXES.REDIS} 错误`, { error: err && err.code === 'ECONNREFUSED' ? '无法连接Redis' : (err && err.message) }));
 
   // 主动建立连接，避免 lazyConnect 场景下永不连接
   realRedis.connect().catch(err => {
-    logger.error('Redis初始连接失败:', err.message);
+    logger.error(`${LOG_PREFIXES.REDIS} 初始连接失败`, { error: err && err.message });
   });
 }
 

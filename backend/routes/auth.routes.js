@@ -7,6 +7,7 @@ const router = express.Router();
 const authController = require('../controllers/auth.controller');
 const rateLimit = require('express-rate-limit');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 let refreshStore;
 try {
   const { redis } = require('../config/redis');
@@ -16,7 +17,7 @@ try {
     refreshStore = new RedisStore({ sendCommand: (...args) => redis.call(...args) });
   }
 } catch (error) {
-  logger.debug('[Auth] Redis限流存储初始化失败:', error.message);
+  logger.debug(`${LOG_PREFIXES.AUTH} Redis限流存储初始化失败`, { error: error && error.message });
 }
 const { validate, Joi, asyncHandler } = require('../middleware/validation');
 
@@ -45,7 +46,7 @@ const refreshLimiter = rateLimit({
         if (diff > 0 && diff < 24 * 3600) retryAfterSeconds = diff;
       }
     } catch (error) {
-      logger.debug('[Auth] 计算retryAfter失败:', error.message);
+      logger.debug(`${LOG_PREFIXES.AUTH} 计算retryAfter失败`, { error: error && error.message });
     }
     if (typeof retryAfterSeconds === 'number') res.setHeader('Retry-After', String(retryAfterSeconds));
     return res.status(options.statusCode).json({ code: 'TOO_MANY_REQUESTS', message: '尝试过于频繁，请稍后重试', retryAfterSeconds });

@@ -1,5 +1,6 @@
 const sharp = require('sharp');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { TraceManager } = require('../utils/trace');
 
 // 限制 sharp/libvips 缓存以控制内存占用
@@ -66,17 +67,19 @@ async function validateImageDimensions(imagePath) {
 
 async function processImageWithSafeMode(imagePath, thumbPath, originalError) {
     const zhReason = translateErrorMessage(originalError && originalError.message);
-    logger.warn(`[THUMBNAIL-WORKER] 图片 ${path.basename(imagePath)} 首次处理失败: ${zhReason}，尝试安全模式...`);
+    // 降级为 debug，减少日志刷屏
+    logger.debug(`${LOG_PREFIXES.THUMBNAIL_WORKER} 图片 ${path.basename(imagePath)} 首次处理失败: ${zhReason}，尝试安全模式...`);
     try {
         await sharp(imagePath, { failOn: 'none', limitInputPixels: LIMIT_PIXELS })
             .resize({ width: THUMB_TARGET_WIDTH })
             .webp({ quality: SAFE_MODE_QUALITY })
             .toFile(thumbPath);
-        logger.info(`[THUMBNAIL-WORKER] 图片 ${path.basename(imagePath)} 在安全模式下处理成功`);
+        logger.info(`${LOG_PREFIXES.THUMBNAIL_WORKER} 图片 ${path.basename(imagePath)} 在安全模式下处理成功`);
         return { success: true };
     } catch (safeError) {
         const zhSafeReason = translateErrorMessage(safeError && safeError.message);
-        logger.error(`[THUMBNAIL-WORKER] 图片 ${path.basename(imagePath)} 在安全模式下处理失败: ${zhSafeReason}`);
+        // 安全模式失败降级为 warn，最终失败由 thumbnail.service.js 记录
+        logger.debug(`${LOG_PREFIXES.THUMBNAIL_WORKER} 图片 ${path.basename(imagePath)} 在安全模式下处理失败: ${zhSafeReason}`);
         return { success: false, error: 'PROCESSING_FAILED_IN_SAFE_MODE', message: zhSafeReason };
     }
 }
@@ -171,7 +174,7 @@ module.exports = async function runThumbnailTask(payload = {}) {
                 return { success: true, skipped: true, task };
             } catch (accessErr) {
                 if (accessErr && accessErr.code !== 'ENOENT') {
-                    logger.debug(`[THUMBNAIL-WORKER] 检查缩略图是否存在失败: ${accessErr.message}`);
+                    logger.debug(`${LOG_PREFIXES.THUMBNAIL_WORKER} 检查缩略图是否存在失败: ${accessErr.message}`);
                 }
             }
 
@@ -189,7 +192,7 @@ module.exports = async function runThumbnailTask(payload = {}) {
             return { success: true, skipped: false, task };
         } catch (error) {
             const message = error && error.message ? error.message : 'Thumbnail worker error';
-            logger.error(`[THUMBNAIL-WORKER] 处理 ${task.relativePath} 失败: ${message}`);
+            logger.error(`${LOG_PREFIXES.THUMBNAIL_WORKER} 处理 ${task.relativePath} 失败: ${message}`);
             return { success: false, error: { message }, task };
         }
     };

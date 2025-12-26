@@ -5,6 +5,7 @@
 const path = require('path');
 const { promises: fs } = require('fs');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { TraceManager } = require('../utils/trace');
 const { PHOTOS_DIR } = require('../config');
 const { getDirectoryContents } = require('../services/file.service');

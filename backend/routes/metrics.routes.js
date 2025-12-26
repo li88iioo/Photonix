@@ -3,6 +3,7 @@ const router = express.Router();
 const state = require('../services/state.manager');
 const rateLimit = require('express-rate-limit');
 const logger = require('../config/logger');
+const { LOG_PREFIXES } = logger;
 const { getCount, getGroupStats } = require('../repositories');
 let metricsStore;
 try {
@@ -13,7 +14,7 @@ try {
     metricsStore = new RedisStore({ sendCommand: (...args) => redis.call(...args) });
   }
 } catch (error) {
-  logger.silly(`[Metrics] 初始化Redis限流存储失败，降级为内存: ${error && error.message}`);
+  logger.debug(`${LOG_PREFIXES.METRICS} 初始化Redis限流存储失败，降级为内存`, { error: error && error.message });
 }
 const { getCacheStats } = require('../middleware/cache');
 // 注意：AI队列已移除，AI功能已重构为微服务架构
@@ -107,7 +108,7 @@ router.get('/summary', metricsLimiter, async (req, res) => {
         isNoRedis: !!(redis && redis.isNoRedis)
       };
     } catch (error) {
-      logger.debug('[Metrics] Redis状态获取失败:', error.message);
+      logger.debug(`${LOG_PREFIXES.METRICS} Redis状态获取失败`, { error: error && error.message });
     }
 
     // 索引状态（仓储层）
@@ -116,7 +117,7 @@ router.get('/summary', metricsLimiter, async (req, res) => {
       const idxRepo = require('../repositories/indexStatus.repo');
       index = await idxRepo.getIndexStatusRow();
     } catch (error) {
-      logger.debug('[Metrics] 索引状态获取失败:', error.message);
+      logger.debug(`${LOG_PREFIXES.METRICS} 索引状态获取失败`, { error: error && error.message });
     }
 
     // 基础表统计（轻量 COUNT/聚合，可通过 ?fast=1 跳过）
@@ -143,7 +144,7 @@ router.get('/summary', metricsLimiter, async (req, res) => {
         heapUsedMB: Math.round((mu.heapUsed || 0) / 1048576)
       };
     } catch (error) {
-      logger.debug('[Metrics] 进程信息获取失败:', error.message);
+      logger.debug(`${LOG_PREFIXES.METRICS} 进程信息获取失败`, { error: error && error.message });
     }
     let thumb = { active: 0, queueLen: 0, batchActive: false };
     try {
@@ -153,7 +154,7 @@ router.get('/summary', metricsLimiter, async (req, res) => {
         batchActive: state.thumbnail.isBatchActive()
       };
     } catch (error) {
-      logger.debug('[Metrics] 缩略图状态获取失败:', error.message);
+      logger.debug(`${LOG_PREFIXES.METRICS} 缩略图状态获取失败`, { error: error && error.message });
     }
 
     let thumbTaskMetrics = null;
@@ -163,7 +164,7 @@ router.get('/summary', metricsLimiter, async (req, res) => {
             thumbTaskMetrics = thumbService.getThumbnailTaskMetrics();
         }
     } catch (error) {
-        logger.debug('[Metrics] 缩略图任务指标获取失败:', error.message);
+        logger.debug(`${LOG_PREFIXES.METRICS} 缩略图任务指标获取失败`, { error: error && error.message });
     }
 
     let schedulerMetrics = null;
@@ -177,7 +178,7 @@ router.get('/summary', metricsLimiter, async (req, res) => {
             videoTaskMetrics = workerManager.getVideoTaskMetrics();
         }
     } catch (error) {
-        logger.debug('[Metrics] Worker指标获取失败:', error.message);
+        logger.debug(`${LOG_PREFIXES.METRICS} Worker指标获取失败`, { error: error && error.message });
     }
 
     if (thumbTaskMetrics) {
@@ -213,4 +214,3 @@ router.get('/summary', metricsLimiter, async (req, res) => {
 });
 
 module.exports = router;
-
