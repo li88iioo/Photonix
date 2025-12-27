@@ -26,6 +26,7 @@ class FeedProcessor {
    */
   async fetchFeed(task) {
     const timeoutMs = Math.max(5000, this.config.requestTimeout * 1000);
+    const { signal, clearConnectTimeout } = this.createConnectTimeoutController();
     const headers = this.resolveHeadersForUrl(task, task.feedUrl, this.config.requestHeaders);
 
     const requestConfig = {
@@ -33,7 +34,8 @@ class FeedProcessor {
       method: 'GET',
       timeout: timeoutMs,
       headers,
-      responseType: 'text'
+      responseType: 'text',
+      signal
     };
 
     try {
@@ -48,6 +50,8 @@ class FeedProcessor {
         });
       }
       throw error;
+    } finally {
+      clearConnectTimeout();
     }
   }
 
@@ -154,12 +158,15 @@ class FeedProcessor {
    * @returns {Promise<string[]>} 图片URL数组
    */
   async fetchFallbackImages(task, articleUrl) {
+    const { signal, clearConnectTimeout } = this.createConnectTimeoutController();
     try {
+      await this.applyPaginationDelay();
       const headers = this.resolveHeadersForUrl(task, articleUrl, this.config.requestHeaders);
       const response = await axios.get(articleUrl, {
         timeout: Math.max(5000, this.config.requestTimeout * 1000),
         headers,
-        responseType: 'text'
+        responseType: 'text',
+        signal
       });
 
       const $ = cheerio.load(response.data);
@@ -177,6 +184,15 @@ class FeedProcessor {
 
       return this.unique(urls);
     } catch (error) {
+      if (typeof error?.name === 'string' && error.name === 'AbortError') {
+        if (this.logManager) {
+          this.logManager.log('warning', '回退抓取文章页面超时（连接阶段）', {
+            taskId: task?.id,
+            url: articleUrl
+          });
+        }
+        return [];
+      }
       if (this.logManager) {
         this.logManager.log('warning', '回退抓取文章页面失败', {
           taskId: task?.id,
@@ -185,6 +201,8 @@ class FeedProcessor {
         });
       }
       return [];
+    } finally {
+      clearConnectTimeout();
     }
   }
 
@@ -313,6 +331,47 @@ class FeedProcessor {
       return value.split(',').map(item => item.trim()).filter(Boolean);
     }
     return [];
+  }
+
+  /**
+   * 连接超时控制器（仅用于建立连接阶段）
+   * @returns {{signal: AbortSignal|undefined, clearConnectTimeout: Function}}
+   */
+  createConnectTimeoutController() {
+    const rawSeconds = Number(this.config.connectTimeout);
+    if (!Number.isFinite(rawSeconds) || rawSeconds <= 0) {
+      return { signal: undefined, clearConnectTimeout: () => {} };
+    }
+
+    const timeoutMs = Math.max(1000, rawSeconds * 1000);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    return {
+      signal: controller.signal,
+      clearConnectTimeout: () => clearTimeout(timer)
+    };
+  }
+
+  /**
+   * 应用分页延迟（秒级随机抖动）
+   */
+  async applyPaginationDelay() {
+    const delay = this.config.paginationDelay;
+    if (!Array.isArray(delay) || delay.length !== 2) return;
+
+    const min = Number(delay[0]);
+    const max = Number(delay[1]);
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return;
+
+    const safeMin = Math.max(0, min);
+    const safeMax = Math.max(safeMin, max);
+    if (safeMax <= 0) return;
+
+    const waitSeconds = safeMin + Math.random() * (safeMax - safeMin);
+    if (waitSeconds <= 0) return;
+
+    await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
   }
 }
 

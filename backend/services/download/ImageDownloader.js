@@ -98,6 +98,7 @@ class ImageDownloader {
     while (attempt < maxRetries) {
       attempt += 1;
       let tempPath = null;
+      const { signal, clearConnectTimeout } = this.createConnectTimeoutController();
 
       try {
         const headers = this.resolveHeadersForUrl(task, url, this.config.imageHeaders);
@@ -105,8 +106,10 @@ class ImageDownloader {
           responseType: 'stream',
           timeout: timeoutMs,
           headers,
-          maxRedirects: 3
+          maxRedirects: 3,
+          signal
         });
+        clearConnectTimeout();
 
         const extension = this.resolveImageExtension(url);
         const filename = `${Date.now()}-${this.slugify(path.basename(url).split('.')[0] || 'image')}${extension}`;
@@ -153,6 +156,7 @@ class ImageDownloader {
           url
         };
       } catch (error) {
+        clearConnectTimeout();
         // 清理可能残留的临时文件
         if (tempPath) {
           await fsp.unlink(tempPath).catch(() => { });
@@ -310,6 +314,26 @@ class ImageDownloader {
     }
 
     return headers;
+  }
+
+  /**
+   * 连接超时控制器（仅用于建立连接阶段）
+   * @returns {{signal: AbortSignal|undefined, clearConnectTimeout: Function}}
+   */
+  createConnectTimeoutController() {
+    const rawSeconds = Number(this.config.connectTimeout);
+    if (!Number.isFinite(rawSeconds) || rawSeconds <= 0) {
+      return { signal: undefined, clearConnectTimeout: () => {} };
+    }
+
+    const timeoutMs = Math.max(1000, rawSeconds * 1000);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    return {
+      signal: controller.signal,
+      clearConnectTimeout: () => clearTimeout(timer)
+    };
   }
 
   /**
