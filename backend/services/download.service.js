@@ -29,6 +29,11 @@ const DATA_ROOT = path.resolve(
   (process.env.DATA_DIR ? path.join(process.env.DATA_DIR, 'download-service') : null) ||
   path.join(__dirname, '../../data/download-service')
 );
+
+
+// Cookie 脱敏掩码常量（与前端保持一致）
+// 使用包含 null 字符的值，确保不会与真实 cookie 冲突（HTTP header 不允许 null 字符）
+const COOKIE_MASK = '\u0000__MASKED__\u0000';
 const STATE_ROOT = path.join(DATA_ROOT, 'state');
 const TASKS_FILE = path.join(STATE_ROOT, 'tasks.json');
 const HISTORY_FILE = path.join(STATE_ROOT, 'history.json');
@@ -503,7 +508,22 @@ class DownloadManager {
     if (payload.excludeKeywords !== undefined) task.excludeKeywords = this.normalizeStringArray(payload.excludeKeywords);
     if (payload.tags !== undefined) task.tags = this.unique(this.normalizeStringArray(payload.tags));
     if (payload.notes !== undefined) task.notes = String(payload.notes || '').trim();
-    if (payload.cookie !== undefined) task.cookie = String(payload.cookie || '').trim();
+
+    // Cookie 更新：防止掩码值回写覆盖真实 cookie
+    if (payload.cookie !== undefined) {
+      const newCookie = String(payload.cookie || '').trim();
+      // 如果客户端回传掩码值且任务已有真实 cookie，则忽略此次更新（保留原值）
+      // 同时兼容历史掩码值 '••••••••'（8个圆点）
+      const LEGACY_COOKIE_MASK = '••••••••';
+      const isMaskedValue = newCookie === COOKIE_MASK || newCookie === LEGACY_COOKIE_MASK;
+      if (isMaskedValue && task.cookie) {
+        // 跳过更新，保留原 cookie
+      } else {
+        // 正常更新：允许清空（空字符串）或设置新值
+        task.cookie = newCookie;
+      }
+    }
+
     if (payload.cookieDomain !== undefined && task.cookie) {
       task.cookieDomain = this.normalizeCookieDomain(payload.cookieDomain);
     }
@@ -1080,7 +1100,10 @@ class DownloadManager {
       excludeKeywords: Array.isArray(task.excludeKeywords) ? task.excludeKeywords : [],
       tags: Array.isArray(task.tags) ? task.tags : [],
       notes: task.notes || '',
-      cookie: task.cookie || '',
+      // 敏感信息脱敏：返回掩码值而非实际cookie，前端可据此判断是否已配置
+      // 使用 COOKIE_MASK 常量（含 NUL 字符），确保与前端一致且不会与真实 cookie 冲突
+      cookie: task.cookie ? COOKIE_MASK : '',
+      hasCookie: !!(task.cookie),
       cookieDomain: task.cookieDomain || '',
       stats: task.stats,
       nextRunAt: task.schedule?.next,

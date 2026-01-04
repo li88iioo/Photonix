@@ -6,6 +6,7 @@
 
 const logger = require('../config/logger');
 const { LOG_PREFIXES } = logger;
+const { sanitizePath } = require('../utils/path.utils');
 
 /**
  * @const {RegExp[]} DANGEROUS_PATTERNS
@@ -183,6 +184,7 @@ function validateSearchQuery(query) {
 
 /**
  * 文件路径参数校验并返回结构体（含调试日志）
+ * 复用 path.utils.js 的 sanitizePath 进行路径清理
  * @param {string} filePath - 文件路径
  * @returns {Object} 校验结构体 {isValid, sanitized, errors}
  */
@@ -197,6 +199,7 @@ function validateFilePath(filePath) {
         logger.debug(`${LOG_PREFIXES.PATH_VALIDATION} 开始验证路径: "${filePath}"`);
     }
 
+    // 先检查内容安全性（危险模式、危险文件名、控制字符）
     if (!isSafeFilePath(filePath)) {
         result.isValid = false;
         result.errors.push('文件路径包含危险字符或模式');
@@ -210,12 +213,19 @@ function validateFilePath(filePath) {
         return result;
     }
 
-    // 路径格式标准化：多余的斜杠合并、去首斜杠
-    let sanitized = filePath.replace(/\/+/g, '/').replace(/\\+/g, '/');
-    sanitized = sanitized.replace(/^\//, '');
+    // 使用 path.utils.js 的 sanitizePath 进行路径清理和标准化
+    // sanitizePath 会处理：路径遍历、隐藏文件、控制字符、斜杠规范化
+    const sanitized = sanitizePath(filePath);
+
+    // sanitizePath 返回空字符串表示路径被拒绝（除非原始输入就是空/根目录）
+    if (sanitized === '' && filePath !== '' && filePath !== '/') {
+        result.isValid = false;
+        result.errors.push('文件路径包含危险模式或无效字符');
+        return result;
+    }
 
     // 校验路径深度
-    const pathParts = sanitized.split('/');
+    const pathParts = sanitized.split('/').filter(Boolean);
     if (pathParts.length > 20) {
         result.isValid = false;
         result.errors.push('文件路径过深');

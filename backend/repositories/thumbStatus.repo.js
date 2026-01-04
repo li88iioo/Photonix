@@ -299,6 +299,52 @@ class ThumbStatusRepository {
             return [];
         }
     }
+
+    /**
+     * 分批迭代所有缩略图状态记录（内存友好，支持迭代中删除）
+     * 使用 keyset 分页（基于 path 排序）避免 OFFSET 在删除时跳过记录
+     * @param {Array<string>|null} fields - 要查询的字段数组（必须包含 path）
+     * @param {number} batchSize - 每批数量，默认1000
+     * @param {Function} callback - 每批回调函数 async (batch) => void
+     * @returns {Promise<number>} 处理的总记录数
+     */
+    async iterateAll(fields = null, batchSize = 1000, callback) {
+        // 确保 path 字段在查询中（keyset 分页需要）
+        let selectFields = '*';
+        if (Array.isArray(fields) && fields.length > 0) {
+            const fieldSet = new Set(fields.map(f => f.toLowerCase()));
+            if (!fieldSet.has('path')) {
+                fields = ['path', ...fields];
+            }
+            selectFields = fields.join(', ');
+        }
+
+        let lastPath = '';
+        let totalProcessed = 0;
+
+        while (true) {
+            // 使用 keyset 分页：WHERE path > lastPath ORDER BY path
+            // 这样即使删除了记录，也不会跳过后续记录
+            const sql = lastPath
+                ? `SELECT ${selectFields} FROM thumb_status WHERE path > ? ORDER BY path LIMIT ?`
+                : `SELECT ${selectFields} FROM thumb_status ORDER BY path LIMIT ?`;
+            const params = lastPath ? [lastPath, batchSize] : [batchSize];
+            const rows = await dbAll('main', sql, params);
+
+            if (!rows || rows.length === 0) break;
+
+            await callback(rows);
+            totalProcessed += rows.length;
+
+            // 记录本批最后一条的 path，作为下一批的起点
+            lastPath = rows[rows.length - 1].path;
+
+            // 如果返回的记录少于 batchSize，说明已经是最后一批
+            if (rows.length < batchSize) break;
+        }
+
+        return totalProcessed;
+    }
 }
 
 module.exports = ThumbStatusRepository;

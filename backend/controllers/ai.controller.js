@@ -52,6 +52,7 @@ class AiConfigValidator {
                 return { isValid: false, error: `AI配置缺少或无效: ${field}` };
             }
         }
+
         return { isValid: true };
     }
 
@@ -176,9 +177,8 @@ exports.generateCaption = async (req, res) => {
                 const crypto = require('crypto');
                 const hash = (input) => crypto.createHash('sha256').update(String(input)).digest('hex').slice(0, 16);
 
-                const headerUserId = req.headers['x-user-id'] || req.headers['x-userid'] || req.headers['x-user'];
-                const userIdRaw = (req.user && req.user.id) || headerUserId || req.ip || 'anonymous';
-                const userId = String(userIdRaw);
+                const userIdRaw = (req.user && req.user.id) || req.ip || 'anonymous';
+                const userId = String(userIdRaw).slice(0, 64);
 
                 const imageSig = hash(sanitizedPath);
                 const dedupeKey = `ai_cooldown:${userId}:${imageSig}`;
@@ -207,9 +207,8 @@ exports.generateCaption = async (req, res) => {
                 const crypto = require('crypto');
                 const hash = (input) => crypto.createHash('sha256').update(String(input)).digest('hex').slice(0, 16);
 
-                const headerUserId = req.headers['x-user-id'] || req.headers['x-userid'] || req.headers['x-user'];
-                const userIdRaw = (req.user && req.user.id) || headerUserId || req.ip || 'anonymous';
-                const userId = String(userIdRaw);
+                const userIdRaw = (req.user && req.user.id) || req.ip || 'anonymous';
+                const userId = String(userIdRaw).slice(0, 64);
 
                 const imageSig = hash(sanitizedPath);
                 const dedupeKey = `ai_cooldown:${userId}:${imageSig}`;

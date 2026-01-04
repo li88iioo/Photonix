@@ -34,10 +34,9 @@ module.exports = async function aiRateGuard(req, res, next) {
     }
 
     // === 1. 用户身份识别 ===
-    // 优先顺序：req.user.id（经过鉴权） > header(x-user-id/x-userid/x-user) > IP > 'anonymous'
-    const headerUserId = req.headers['x-user-id'] || req.headers['x-userid'] || req.headers['x-user'];
-    const userIdRaw = (req.user && req.user.id) || headerUserId || req.ip || 'anonymous';
-    const userId = String(userIdRaw);
+    const userIdRaw = (req.user && req.user.id) || req.ip || 'anonymous';
+    // 限制 userId 长度防止 Redis key 爆炸
+    const userId = String(userIdRaw).slice(0, 64);
 
     // === 2. 配额参数环境变量（如无则使用默认） ===
     // 每用户每日最大次数（默认200），单图片请求冷却秒数（默认30）

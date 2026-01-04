@@ -1092,7 +1092,6 @@ async function performThumbnailCleanupLocal() {
     const thumbStatusRepo = new ThumbStatusRepository();
     const itemsRepo = new ItemsRepository();
 
-    const allThumbs = await thumbStatusRepo.getAll(['path', 'status']);
     const result = {
       thumbFilesRemoved: 0,
       permanentSourcesRemoved: 0,
@@ -1100,92 +1099,84 @@ async function performThumbnailCleanupLocal() {
       errors: 0
     };
 
-    let processed = 0;
-    const YIELD_EVERY = 200;
-    const yieldIfNeeded = async () => {
-      processed += 1;
-      if (processed % YIELD_EVERY === 0) {
-        await Promise.resolve();
-      }
-    };
+    // 使用分批迭代避免全表加载到内存
+    const BATCH_SIZE = 1000;
+    await thumbStatusRepo.iterateAll(['path', 'status'], BATCH_SIZE, async (batch) => {
+      for (const thumb of batch) {
+        if (!thumb?.path) continue;
 
-    for (const thumb of allThumbs) {
-      if (!thumb?.path) continue;
-
-      const sanitizedPath = sanitizePath(thumb.path);
-      if (!sanitizedPath || !isPathSafe(sanitizedPath)) {
-        logger.warn(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 跳过可疑路径: ${thumb.path}`);
-        await yieldIfNeeded();
-        continue;
-      }
-
-      const sourceAbsPath = path.join(PHOTOS_DIR, sanitizedPath);
-      const isVideo = /\.(mp4|webm|mov)$/i.test(sanitizedPath);
-      const thumbExt = isVideo ? '.jpg' : '.webp';
-      const thumbRelPath = sanitizedPath.replace(/\.[^.]+$/, thumbExt);
-      const thumbAbsPath = path.join(THUMBS_DIR, thumbRelPath);
-
-      let sourceExists = false;
-      try {
-        await fs.access(sourceAbsPath);
-        sourceExists = true;
-      } catch (sourceErr) {
-        if (sourceErr.code !== 'ENOENT') {
-          logger.warn(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 检测源文件失败: ${sourceAbsPath}`, sourceErr);
-        }
-      }
-
-      const shouldRemoveSource = thumb.status === 'permanent_failed';
-      const isOrphanThumb = !sourceExists;
-
-      if (!shouldRemoveSource && !isOrphanThumb) {
-        await yieldIfNeeded();
-        continue;
-      }
-
-      try {
-        const removed = await itemsRepo.deleteWithRelations(sanitizedPath);
-        if (removed) {
-          result.dbRecordsRemoved += 1;
-        } else {
-          await runAsync('main', 'DELETE FROM thumb_status WHERE path=?', [sanitizedPath]);
+        const sanitizedPath = sanitizePath(thumb.path);
+        if (!sanitizedPath || !isPathSafe(sanitizedPath)) {
+          logger.warn(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 跳过可疑路径: ${thumb.path}`);
+          continue;
         }
 
-        if (redis) {
-          const redisKey = `thumb_failed_permanently:${sanitizedPath}`;
-          await safeRedisDel(redis, redisKey, '清理永久失败缩略图标记');
-        }
+        const sourceAbsPath = path.join(PHOTOS_DIR, sanitizedPath);
+        const isVideo = /\.(mp4|webm|mov)$/i.test(sanitizedPath);
+        const thumbExt = isVideo ? '.jpg' : '.webp';
+        const thumbRelPath = sanitizedPath.replace(/\.[^.]+$/, thumbExt);
+        const thumbAbsPath = path.join(THUMBS_DIR, thumbRelPath);
 
-        // 删除永久失败的源文件（确认损坏/无法处理的文件）
-        if (shouldRemoveSource && sourceExists) {
-          try {
-            await fs.unlink(sourceAbsPath);
-            logger.debug(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 删除永久失败源文件: ${sourceAbsPath}`);
-            result.permanentSourcesRemoved += 1;
-          } catch (unlinkErr) {
-            if (unlinkErr.code !== 'ENOENT') {
-              logger.warn(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 删除源文件失败: ${sourceAbsPath}`, unlinkErr.message);
-            }
+        let sourceExists = false;
+        try {
+          await fs.access(sourceAbsPath);
+          sourceExists = true;
+        } catch (sourceErr) {
+          if (sourceErr.code !== 'ENOENT') {
+            logger.warn(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 检测源文件失败: ${sourceAbsPath}`, sourceErr);
           }
+        }
+
+        const shouldRemoveSource = thumb.status === 'permanent_failed';
+        const isOrphanThumb = !sourceExists;
+
+        if (!shouldRemoveSource && !isOrphanThumb) {
+          continue;
         }
 
         try {
-          await fs.unlink(thumbAbsPath);
-          logger.debug(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 删除缩略图文件: ${thumbAbsPath}`);
-          result.thumbFilesRemoved += 1;
-        } catch (thumbErr) {
-          if (thumbErr.code !== 'ENOENT') {
-            logger.warn(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 删除缩略图文件失败: ${thumbAbsPath}`, thumbErr);
+          const removed = await itemsRepo.deleteWithRelations(sanitizedPath);
+          if (removed) {
+            result.dbRecordsRemoved += 1;
+          } else {
+            await runAsync('main', 'DELETE FROM thumb_status WHERE path=?', [sanitizedPath]);
           }
-        }
 
-        await yieldIfNeeded();
-      } catch (cleanupErr) {
-        logger.warn(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 处理路径失败: ${sanitizedPath}`, cleanupErr);
-        result.errors += 1;
-        await yieldIfNeeded();
+          if (redis) {
+            const redisKey = `thumb_failed_permanently:${sanitizedPath}`;
+            await safeRedisDel(redis, redisKey, '清理永久失败缩略图标记');
+          }
+
+          // 删除永久失败的源文件（确认损坏/无法处理的文件）
+          if (shouldRemoveSource && sourceExists) {
+            try {
+              await fs.unlink(sourceAbsPath);
+              logger.debug(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 删除永久失败源文件: ${sourceAbsPath}`);
+              result.permanentSourcesRemoved += 1;
+            } catch (unlinkErr) {
+              if (unlinkErr.code !== 'ENOENT') {
+                logger.warn(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 删除源文件失败: ${sourceAbsPath}`, unlinkErr.message);
+              }
+            }
+          }
+
+          try {
+            await fs.unlink(thumbAbsPath);
+            logger.debug(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 删除缩略图文件: ${thumbAbsPath}`);
+            result.thumbFilesRemoved += 1;
+          } catch (thumbErr) {
+            if (thumbErr.code !== 'ENOENT') {
+              logger.warn(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 删除缩略图文件失败: ${thumbAbsPath}`, thumbErr);
+            }
+          }
+        } catch (cleanupErr) {
+          logger.warn(`${LOG_PREFIXES.THUMBNAIL_CLEANUP} 处理路径失败: ${sanitizedPath}`, cleanupErr);
+          result.errors += 1;
+        }
       }
-    }
+      // 每批处理完后让出事件循环
+      await Promise.resolve();
+    });
 
     logger.info(`缩略图清理完成：移除缩略图 ${result.thumbFilesRemoved} 个，永久失败源文件 ${result.permanentSourcesRemoved} 个，数据库清理 ${result.dbRecordsRemoved} 条`);
     return result;

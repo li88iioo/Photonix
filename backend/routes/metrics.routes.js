@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { secureCompare } = require('../utils/secureCompare');
 const state = require('../services/state.manager');
 const rateLimit = require('express-rate-limit');
 const logger = require('../config/logger');
@@ -28,25 +29,20 @@ const metricsLimiter = rateLimit({
   store: metricsStore
 });
 
-// 可选的 Admin Token 保护（设置 METRICS_TOKEN 时启用；本地白名单）
+// 可选的 Admin Token 保护（设置 METRICS_TOKEN 时启用）
+// 安全策略：启用 trust proxy 时本地白名单可能被伪造，因此设置 token 后一律验证
 function metricsGuard(req, res, next) {
   try {
     const required = String(process.env.METRICS_TOKEN || '').trim();
     if (!required) return next();
 
-    // 本地白名单判断
-    const ip = (req.ip || '').toString();
-    const host = (req.hostname || '').toString().toLowerCase();
-    const isLocal =
-      ip === '127.0.0.1' ||
-      ip === '::1' ||
-      ip.endsWith('::ffff:127.0.0.1') ||
-      host === 'localhost';
-
-    if (isLocal) return next();
-
+    // 注意：当启用 trust proxy 时，req.ip 可能被 X-Forwarded-For 伪造
+    // 因此设置了 METRICS_TOKEN 后，无论来源IP都必须验证 token
     const provided = (req.get('x-admin-metrics-token') || req.query.token || '').toString();
-    if (provided && provided === required) return next();
+    // 使用 secureCompare 防止时序攻击（基于 Buffer 字节长度比较）
+    if (provided && secureCompare(provided, required)) {
+      return next();
+    }
 
     return res.status(403).json({ success: false, error: 'FORBIDDEN', message: 'Metrics access denied' });
   } catch (e) {

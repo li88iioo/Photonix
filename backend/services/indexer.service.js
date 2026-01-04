@@ -55,8 +55,6 @@ const settingsService = require('./settings.service');
 const orchestrator = require('./orchestrator');
 const { sanitizePath, isPathSafe } = require('../utils/path.utils');
 const { normalizeWorkerMessage } = require('../utils/workerMessage');
-// eslint-disable-next-line no-unused-vars
-const { RetryManager } = require('../utils/retry'); // 重试管理器（预留，参考文件头部使用示例）
 
 const PHOTOS_ROOT = path.resolve(PHOTOS_DIR);
 
@@ -265,17 +263,19 @@ function resolveVideoTaskPaths(inputPath) {
 
 /**
  * 以分批、低优先级的方式，将视频处理任务加入队列
+ *
+ * 注意：HLS 处理已改为手动模式，此函数当前为空实现（no-op）。
+ * 保留函数签名以维持调用方兼容性，未来如需恢复自动处理可在此实现。
+ *
  * @param {Array<Object>} videos - 从数据库查询出的视频对象数组
+ * @returns {Promise<void>}
  */
 async function queueVideoTasksInBatches(videos) {
-    if (!videos || videos.length === 0) {
-        return;
+    // HLS 处理已改为手动模式，跳过所有批量视频处理
+    // 保留此函数以维持 rebuild_complete 事件处理的调用兼容性
+    if (videos && videos.length > 0) {
+        logger.debug(`${LOG_PREFIXES.MAIN_THREAD} 发现 ${videos.length} 个视频，但 HLS 自动处理已禁用（手动模式）`);
     }
-
-    logger.debug(`${LOG_PREFIXES.MAIN_THREAD} 发现 ${videos.length} 个视频待处理，开始以分批方式加入队列...`);
-
-    // HLS处理已改为手动模式，跳过所有批量视频处理
-
 }
 
 /**
@@ -451,10 +451,10 @@ function setupWorkerListeners() {
                     const errorMessage = (payload.error && payload.error.message) || payload.message || '未知错误';
                     logger.error(`${LOG_PREFIXES.MAIN_THREAD} 设置更新失败: ${errorMessage}`);
                     try {
-                        const { updateSettingsStatus } = require('../controllers/settings.controller');
-                        updateSettingsStatus('failed', errorMessage, payload && payload.updateId);
+                        const { applyStatusUpdate } = require('./settings/status.service');
+                        applyStatusUpdate(payload && payload.updateId, 'failed', errorMessage);
                     } catch (e) {
-                        logger.debug('无法更新设置状态（控制器可能未加载）');
+                        logger.debug('无法更新设置状态（服务可能未加载）');
                     }
                     return;
                 }
@@ -464,10 +464,10 @@ function setupWorkerListeners() {
                     logger.info(`${LOG_PREFIXES.MAIN_THREAD} 设置更新成功: ${updatedKeys.join(', ')}`);
                     settingsService.clearCache();
                     try {
-                        const { updateSettingsStatus } = require('../controllers/settings.controller');
-                        updateSettingsStatus('success', '设置更新成功', payload && payload.updateId);
+                        const { applyStatusUpdate } = require('./settings/status.service');
+                        applyStatusUpdate(payload && payload.updateId, 'success', '设置更新成功');
                     } catch (e) {
-                        logger.debug('无法更新设置状态（控制器可能未加载）');
+                        logger.debug('无法更新设置状态（服务可能未加载）');
                     }
                     return;
                 }

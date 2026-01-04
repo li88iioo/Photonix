@@ -428,7 +428,11 @@ export function openTaskFormModal({ mode = 'create', initial = {}, includeEnable
     const cookieInput = document.createElement('input');
     cookieInput.type = 'text';
     cookieInput.placeholder = 'sessionid=xxx; path=/';
-    cookieInput.value = initial.cookie || '';
+    // Cookie 掩码显示：将 COOKIE_MASK（含 NUL 字符）转换为友好的显示值
+    const COOKIE_MASK = '\u0000__MASKED__\u0000';
+    const COOKIE_DISPLAY_MASK = '••••••••';
+    const rawCookie = initial.cookie || '';
+    cookieInput.value = rawCookie === COOKIE_MASK ? COOKIE_DISPLAY_MASK : rawCookie;
     cookieInput.className = 'form-control';
 
     const grid = document.createElement('div');

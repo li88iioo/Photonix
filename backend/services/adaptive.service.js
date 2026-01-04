@@ -184,6 +184,10 @@ function hasResourceBudget() {
     return { loadOk, memOk, cpus: cpuBudget.cpus };
 }
 
+// 前台任务检测失败计数器（连续失败超过阈值后降级为 false，避免后台任务永远无法执行）
+let foregroundDetectFailCount = 0;
+const FOREGROUND_DETECT_FAIL_THRESHOLD = 3;
+
 /**
  * 检测是否有前台任务正在执行（缩略图、HLS等）
  * @returns {boolean} true 表示有前台任务，false 表示空闲
@@ -200,6 +204,9 @@ function hasForegroundTasks() {
         // 检查视频处理任务（HLS 转码等）
         const videoActive = state.video.getActiveCount() || 0;
 
+        // 检测成功，重置失败计数
+        foregroundDetectFailCount = 0;
+
         // 阈值：超过 5 个待处理缩略图任务或有活动视频任务即视为有前台负载
         if (thumbPending > 5 || videoActive > 0) {
             return true;
@@ -207,7 +214,13 @@ function hasForegroundTasks() {
 
         return false;
     } catch (error) {
-        // 降级：无法检测时假设有前台任务（保守策略）
+        foregroundDetectFailCount++;
+        // 连续失败超过阈值后降级为 false，避免后台任务永远无法执行
+        if (foregroundDetectFailCount >= FOREGROUND_DETECT_FAIL_THRESHOLD) {
+            logger.debug(`${LOG_PREFIXES.ADAPTIVE} 前台任务检测连续失败 ${foregroundDetectFailCount} 次，降级为空闲状态`);
+            return false;
+        }
+        // 保守策略：检测失败时假设有前台任务
         return true;
     }
 }

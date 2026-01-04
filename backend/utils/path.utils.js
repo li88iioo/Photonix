@@ -3,6 +3,7 @@
  * 提供路径安全性检查和清理功能，防止路径遍历攻击和恶意路径访问
  */
 const path = require('path');
+const fs = require('fs');
 const { PHOTOS_DIR } = require('../config');
 const logger = require('../config/logger');
 const { LOG_PREFIXES } = logger;
@@ -11,14 +12,33 @@ const { LOG_PREFIXES } = logger;
  * 检查路径是否安全
  * 验证请求的路径是否在允许的安全目录范围内，防止路径遍历攻击
  * @param {string} requestedPath - 请求的路径
+ * @param {Object} [options] - 可选配置
+ * @param {boolean} [options.resolveSymlinks=false] - 是否解析符号链接（更安全但需要文件存在）
  * @returns {boolean} 如果路径安全返回true，否则返回false
  */
-function isPathSafe(requestedPath) {
-    // 获取安全基础目录的绝对路径
-    const safeBaseDir = path.resolve(PHOTOS_DIR);
+function isPathSafe(requestedPath, options = {}) {
+    const { resolveSymlinks = false } = options;
 
-    // 解析请求路径相对于安全目录的绝对路径
-    const resolvedPath = path.resolve(safeBaseDir, requestedPath);
+    // 获取安全基础目录的绝对路径
+    let safeBaseDir = path.resolve(PHOTOS_DIR);
+    let resolvedPath = path.resolve(safeBaseDir, requestedPath);
+
+    // 如果启用符号链接解析，使用 realpath 获取真实路径
+    // 这可以防止通过符号链接访问 PHOTOS_DIR 外部的文件
+    if (resolveSymlinks) {
+        try {
+            // 先解析基础目录的真实路径
+            safeBaseDir = fs.realpathSync(safeBaseDir);
+            // 再解析请求路径的真实路径（需要文件存在）
+            resolvedPath = fs.realpathSync(resolvedPath);
+        } catch (err) {
+            // 文件不存在时 realpath 会失败，降级为普通路径检查
+            // 对于不存在的文件，使用 path.resolve 结果
+            if (err.code !== 'ENOENT') {
+                logger.warn(`路径安全检查：realpath 失败: ${err.message}`);
+            }
+        }
+    }
 
     // 统一使用正斜杠进行比较，避免 Windows 路径分隔符导致的绕过
     const normalizedSafe = safeBaseDir.replace(/\\/g, '/');

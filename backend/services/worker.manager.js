@@ -253,6 +253,8 @@ function performWorkerHealthCheck() {
     };
 }
 
+// 任务调度器指标（预留，供 /api/metrics 端点使用）
+// TODO: 在任务执行流程中更新这些指标
 const schedulerMetrics = {
     queued: 0,
     processing: 0,
@@ -265,6 +267,8 @@ const schedulerMetrics = {
     lastUpdatedAt: Date.now()
 };
 
+// 视频任务指标（预留，供 /api/metrics 端点使用）
+// TODO: 在视频处理流程中更新这些指标
 const videoMetrics = {
     pending: 0,
     completed: 0,

@@ -1,14 +1,28 @@
+const logger = require('../config/logger');
+
 /**
  * 读取请求中的管理员密钥。
  * 检查请求头（x-admin-secret 或 x-photonix-admin-secret）、请求体和查询参数中的 adminSecret 字段。
+ * 注意：通过查询参数传递密钥存在安全风险（可能被记录到日志/浏览器历史），建议优先使用请求头。
  * @param {Object} req - Express 请求对象
  * @returns {string|undefined} 管理员密钥或未找到时为 undefined
  */
 function readAdminSecret(req) {
-  return req?.headers?.['x-admin-secret']
-    || req?.headers?.['x-photonix-admin-secret']
-    || req?.body?.adminSecret
-    || req?.query?.adminSecret;
+  // 优先使用请求头（更安全）
+  const fromHeader = req?.headers?.['x-admin-secret']
+    || req?.headers?.['x-photonix-admin-secret'];
+  if (fromHeader) return fromHeader;
+
+  // 请求体次之
+  if (req?.body?.adminSecret) return req.body.adminSecret;
+
+  // 查询参数最后（记录警告，因为存在泄露风险）
+  if (req?.query?.adminSecret) {
+    logger.debug('[AdminSecret] 检测到通过查询参数传递密钥，建议改用请求头 x-admin-secret');
+    return req.query.adminSecret;
+  }
+
+  return undefined;
 }
 
 /**

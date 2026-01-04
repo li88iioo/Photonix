@@ -792,8 +792,22 @@ async function handleTaskEdit(task) {
   if (listToKey(formValues.excludeKeywords) !== currentExclude) payload.excludeKeywords = formValues.excludeKeywords;
   const currentTags = listToKey(task.tags);
   if (listToKey(formValues.tags) !== currentTags) payload.tags = formValues.tags;
+  // Cookie 特殊处理：后端返回掩码值，若用户未修改则不发送，保留原值
+  // 使用包含 null 字符的掩码（与后端保持一致），确保不会与真实 cookie 冲突
+  const COOKIE_MASK = '\u0000__MASKED__\u0000';
+  const COOKIE_DISPLAY_MASK = '••••••••'; // 前端显示用的友好掩码
   const currentCookie = task.cookie || '';
-  if ((formValues.cookie || '') !== currentCookie) payload.cookie = formValues.cookie;
+  const newCookie = formValues.cookie || '';
+  // 仅当用户实际修改了cookie时才发送
+  // 边界情况：如果当前值是掩码且用户未修改（仍为显示掩码），则不发送
+  // 如果当前值不是掩码（如新建任务时为空），则允许任何值包括掩码字符串
+  const isCurrentMasked = currentCookie === COOKIE_MASK;
+  const isNewDisplayMask = newCookie === COOKIE_DISPLAY_MASK || newCookie === COOKIE_MASK;
+  const shouldSkipCookie = isCurrentMasked && isNewDisplayMask;
+  if (newCookie !== currentCookie && !shouldSkipCookie) {
+    // 如果用户提交的是显示掩码，转换为真实掩码发送给后端
+    payload.cookie = newCookie === COOKIE_DISPLAY_MASK ? COOKIE_MASK : newCookie;
+  }
   const currentCookieDomain = task.cookieDomain || '';
   if ((formValues.cookieDomain || '') !== currentCookieDomain) payload.cookieDomain = formValues.cookieDomain;
   if (typeof formValues.enabled === 'boolean') {

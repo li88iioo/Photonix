@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { getAllSettings } = require('../services/settings.service');
+const { secureCompare } = require('../utils/secureCompare');
 const logger = require('../config/logger');
 const { LOG_PREFIXES } = logger;
 const { redis } = require('../config/redis');
@@ -314,7 +315,10 @@ exports.login = async (req, res) => {
 
     // 1. 优先检查是否匹配管理员密钥 (ADMIN_SECRET)
     // 这允许管理员使用 ADMIN_SECRET 直接登录，解决 RSS 下载等场景的认证问题
-    const isAdminSecretMatch = process.env.ADMIN_SECRET && password === process.env.ADMIN_SECRET;
+    // 使用 secureCompare 防止时序攻击（基于 Buffer 字节长度比较，支持 UTF-8）
+    const adminSecret = process.env.ADMIN_SECRET || '';
+    const passwordStr = typeof password === 'string' ? password : '';
+    const isAdminSecretMatch = adminSecret.length > 0 && secureCompare(passwordStr, adminSecret);
 
     if (isAdminSecretMatch) {
         logger.info(`${LOG_PREFIXES.AUTH} 使用管理员密钥 (ADMIN_SECRET) 登录成功`);
@@ -477,10 +481,13 @@ exports.login = async (req, res) => {
     }
 
     // 设置 httpOnly cookie 以支持 SSE 安全认证
+    // 注意：secure 仅在 HTTPS 环境下启用，HTTP 环境（如内网部署）需要关闭
+    const isSecureEnv = process.env.NODE_ENV === 'production' && process.env.FORCE_HTTPS !== 'false';
     res.cookie('auth_token', token, {
         httpOnly: true,      // 防止 XSS 攻击
-        secure: process.env.NODE_ENV === 'production', // HTTPS only in production
-        sameSite: 'strict',  // CSRF 防护
+        secure: isSecureEnv, // 仅 HTTPS 环境启用，支持 FORCE_HTTPS=false 覆盖
+        sameSite: isSecureEnv ? 'strict' : 'lax',  // HTTP 环境使用 lax 以兼容同站请求
+        path: '/',           // 确保 cookie 对所有路径可用（包括 /static, /thumbs）
         maxAge: 7 * 24 * 60 * 60 * 1000 // 7天（与JWT过期时间一致）
     });
 
@@ -547,10 +554,12 @@ exports.refresh = async (req, res) => {
     }, JWT_SECRET, { expiresIn: '7d' });
 
     // 同步刷新 httpOnly cookie，确保 SSE 认证持续有效
+    const isSecureEnv = process.env.NODE_ENV === 'production' && process.env.FORCE_HTTPS !== 'false';
     res.cookie('auth_token', newToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
+        secure: isSecureEnv,
+        sameSite: isSecureEnv ? 'strict' : 'lax',
+        path: '/',           // 确保 cookie 对所有路径可用
         maxAge: 7 * 24 * 60 * 60 * 1000  // 7天
     });
 

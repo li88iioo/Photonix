@@ -238,12 +238,12 @@ export function renderRecentDownloads(entries) {
     .map((segment) => encodeURIComponent(segment))
     .join('/');
 
-  // 构建本地URL
+  // 构建本地URL（指向 /downloads 路由，与后端下载目录对应）
   const buildLocalUrl = (relativePath) => {
     if (!relativePath) return '';
     const normalized = String(relativePath).replace(/\\+/g, '/');
     const trimmed = normalized.replace(/^\.?\/+/, '');
-    return `/static/${encodePath(trimmed)}`;
+    return `/downloads/${encodePath(trimmed)}`;
   };
 
   // 最多显示3条

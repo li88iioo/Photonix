@@ -13,6 +13,7 @@ const AlbumCoversRepository = require('../repositories/albumCovers.repo');
 const { PHOTOS_DIR, THUMBS_DIR } = require('../config');
 const { dbAll, dbGet } = require('../db/multi-db');
 const { safeRedisSet } = require('../utils/helpers');
+const { isPathSafe } = require('../utils/path.utils');
 
 const COVER_CACHE_TTL = Number(process.env.FILE_CACHE_DURATION || 604800); // 与 file.service 中缓存策略保持一致
 
@@ -73,6 +74,17 @@ exports.deleteAlbum = async (req, res) => {
     );
     const { changes, removed } = albumManagementService.buildDeletionChanges(sanitizedPath, relatedItems);
 
+    // 4.1 符号链接安全检查（深度防御：防止通过符号链接删除 PHOTOS_DIR 外部文件）
+    // 启用 resolveSymlinks 以检查真实路径是否在安全范围内
+    if (!isPathSafe(sanitizedPath, { resolveSymlinks: true })) {
+      logger.warn(`[Album] 符号链接安全检查失败，拒绝删除: ${sanitizedPath}`);
+      return res.status(403).json({
+        success: false,
+        error: '路径安全检查失败，禁止删除',
+        code: 'PATH_SECURITY_VIOLATION'
+      });
+    }
+
     // 5. 物理删除相册目录
     try {
       await fs.rm(albumAbsPath, { recursive: true, force: true });
@@ -89,8 +101,8 @@ exports.deleteAlbum = async (req, res) => {
     }
 
     // 6. 删除缩略图目录（主缩略图与 HLS 缩略图，失败忽略）
-    await fs.rm(path.join(THUMBS_DIR, sanitizedPath), { recursive: true, force: true }).catch(() => {});
-    await fs.rm(path.join(THUMBS_DIR, 'hls', sanitizedPath), { recursive: true, force: true }).catch(() => {});
+    await fs.rm(path.join(THUMBS_DIR, sanitizedPath), { recursive: true, force: true }).catch(() => { });
+    await fs.rm(path.join(THUMBS_DIR, 'hls', sanitizedPath), { recursive: true, force: true }).catch(() => { });
 
     // 6.1 立即清理该目录及子目录的封面记录，避免 album_covers 残留指向已删文件
     try {
@@ -107,7 +119,7 @@ exports.deleteAlbum = async (req, res) => {
         // 同时包含当前删除目录自身（可能也是 affectedAlbumPaths 之一）
         invalidateTargets.add(albumAbsPath);
         for (const abs of invalidateTargets) {
-          await invalidateCoverCache(abs).catch(() => {});
+          await invalidateCoverCache(abs).catch(() => { });
         }
 
         // 预热受影响相册封面，减少后续浏览首屏空白
@@ -166,11 +178,11 @@ exports.deleteAlbum = async (req, res) => {
                 width: chosen.width,
                 height: chosen.height,
                 mtime: chosen.mtime
-              }), 'EX', COVER_CACHE_TTL, '封面预热写入').catch(() => {});
+              }), 'EX', COVER_CACHE_TTL, '封面预热写入').catch(() => { });
             } else {
               // 无可用封面，清理 album_covers 与缓存，保持下一次计算自愈
               await albumCoversRepo.deleteByAlbumPath(rel);
-              safeRedisSet(redis, `cover_info:/${rel}`, '', 'EX', 1, '封面清空占位').catch(() => {});
+              safeRedisSet(redis, `cover_info:/${rel}`, '', 'EX', 1, '封面清空占位').catch(() => { });
             }
           } catch (persistErr) {
             logger.debug('[Album] 预计算封面失败（忽略）:', persistErr && persistErr.message);

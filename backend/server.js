@@ -22,6 +22,7 @@ const { handleUncaughtException, handleUnhandledRejection } = require('./middlew
 const { PORT, PHOTOS_DIR, DATA_DIR } = require('./config');
 const { closeAllConnections } = require('./db/multi-db');
 const { getCount } = require('./repositories/stats.repo');
+const { stopDbMaintenance } = require('./services/orchestrator');
 const {
     initializeDirectories,
     handleDatabaseMigration,
@@ -80,7 +81,8 @@ async function startServer() {
         // 7. 启动索引监控与监听
         await setupIndexingAndMonitoring();
 
-        setTimeout(async () => {
+        // 启动后诊断定时器（10秒后检查索引状态）
+        const diagnosticTimer = setTimeout(async () => {
             try {
                 const itemCount = await getCount('items', 'main');
                 const ftsCount = await getCount('items_fts', 'main');
@@ -89,6 +91,8 @@ async function startServer() {
                 logger.debug('索引状态检查失败（降噪）：', error && error.message);
             }
         }, 10000);
+        // 允许进程提前退出（不被诊断定时器阻塞）
+        if (typeof diagnosticTimer.unref === 'function') diagnosticTimer.unref();
 
     } catch (error) {
         logger.error('启动过程中发生致命错误:', error.message);
@@ -103,6 +107,8 @@ process.on('unhandledRejection', handleUnhandledRejection);
 process.on('SIGINT', async () => {
     logger.info('收到关闭信号，正在优雅关闭...');
     try {
+        // 先停止定时任务，避免关闭过程中触发新任务
+        stopDbMaintenance();
         await closeAllConnections();
         logger.info('所有数据库连接已关闭');
         process.exit(0);
@@ -115,6 +121,8 @@ process.on('SIGINT', async () => {
 process.on('SIGTERM', async () => {
     logger.info('收到终止信号，正在优雅关闭...');
     try {
+        // 先停止定时任务，避免关闭过程中触发新任务
+        stopDbMaintenance();
         await closeAllConnections();
         logger.info('所有数据库连接已关闭');
         process.exit(0);

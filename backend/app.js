@@ -17,7 +17,8 @@ const express = require('express');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 const path = require('path');
-const { PHOTOS_DIR, THUMBS_DIR } = require('./config');
+const fs = require('fs');
+const { PHOTOS_DIR, THUMBS_DIR, DATA_DIR } = require('./config');
 const { rateLimiterMiddleware } = require('./middleware/rateLimiter');
 const requestId = require('./middleware/requestId');
 const { traceMiddleware } = require('./utils/trace');
@@ -26,6 +27,7 @@ const logger = require('./config/logger');
 const { LOG_PREFIXES } = logger;
 const { getHealthSummary } = require('./services/health.service');
 const authMiddleware = require('./middleware/auth');
+const staticAuthMiddleware = require('./middleware/staticAuth');
 const authRouter = require('./routes/auth.routes');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 
@@ -218,17 +220,23 @@ app.use('/api', rateLimiterMiddleware, authMiddleware, mainRouter);
  * 目录：PHOTOS_DIR
  * 类型：图片、视频
  * 缓存：30 天
+ * 安全：私有模式下需要鉴权
  */
 app.use(
     '/static',
+    staticAuthMiddleware,
     express.static(PHOTOS_DIR, {
         maxAge: '30d',
         etag: true,
         lastModified: true,
         acceptRanges: true,
-        setHeaders: (res, filePath) => {
+        setHeaders: (res, filePath, stat) => {
             if (/\.(jpe?g|png|webp|gif|mp4|webm|mov)$/i.test(filePath)) {
-                res.setHeader('Cache-Control', 'public, max-age=2592000, immutable, no-transform');
+                // 私有模式下使用 private 缓存，防止共享缓存泄露
+                const cacheDirective = res.req?.isPrivateMode
+                    ? 'private, max-age=2592000, immutable, no-transform'
+                    : 'public, max-age=2592000, immutable, no-transform';
+                res.setHeader('Cache-Control', cacheDirective);
                 res.setHeader('Accept-Ranges', 'bytes');
             }
         },
@@ -241,9 +249,11 @@ app.use(
  * 目录：THUMBS_DIR
  * 恒定可缓存 30 天，不存在则立即 404。
  * 特定扩展额外指定 Content-Type。
+ * 安全：私有模式下需要鉴权
  */
 app.use(
     '/thumbs',
+    staticAuthMiddleware,
     express.static(THUMBS_DIR, {
         maxAge: '30d',
         immutable: true,
@@ -255,7 +265,78 @@ app.use(
             if (/\.(ts)$/i.test(filePath)) {
                 res.setHeader('Content-Type', 'video/mp2t');
             }
+            // 私有模式下使用 private 缓存，防止共享缓存泄露
+            if (res.req?.isPrivateMode) {
+                res.setHeader('Cache-Control', 'private, max-age=2592000, immutable');
+            }
             res.setHeader('Accept-Ranges', 'bytes');
+        },
+    })
+);
+
+/**
+ * 下载服务静态资源
+ * 路径：/downloads
+ * 目录解析优先级（与 ConfigManager 一致）：
+ *   1. config.yaml 中的 base_folder / baseFolder（用户在前端设置）
+ *   2. 环境变量 PHOTONIX_DOWNLOAD_PATH
+ *   3. 默认 DATA_DIR/../downloads
+ * 安全：私有模式下需要鉴权
+ */
+const resolveDownloadsDir = () => {
+    // 下载服务数据目录（与 download.service.js 一致）
+    const downloadDataRoot = path.resolve(
+        process.env.PHOTONIX_DOWNLOAD_DATA_DIR ||
+        (process.env.DATA_DIR ? path.join(process.env.DATA_DIR, 'download-service') : null) ||
+        path.join(__dirname, '../data/download-service')
+    );
+    const configFile = path.join(downloadDataRoot, 'config.yaml');
+
+    // 尝试读取 config.yaml 中用户设置的下载路径
+    try {
+        if (fs.existsSync(configFile)) {
+            const content = fs.readFileSync(configFile, 'utf-8');
+            // 简单解析 YAML 中的 base_folder 或 baseFolder
+            const match = content.match(/^(?:base_folder|baseFolder)\s*:\s*['"]?([^'"\n]+)['"]?/m);
+            if (match && match[1]) {
+                const configPath = match[1].trim();
+                if (path.isAbsolute(configPath)) {
+                    return configPath;
+                }
+                return path.resolve(process.cwd(), configPath);
+            }
+        }
+    } catch (e) {
+        // 配置读取失败，使用默认值
+    }
+
+    // 环境变量
+    if (process.env.PHOTONIX_DOWNLOAD_PATH) {
+        return path.resolve(process.env.PHOTONIX_DOWNLOAD_PATH);
+    }
+
+    // 默认目录
+    return path.resolve(downloadDataRoot, '../downloads');
+};
+const downloadsDir = resolveDownloadsDir();
+app.use(
+    '/downloads',
+    staticAuthMiddleware,
+    express.static(downloadsDir, {
+        maxAge: '30d',
+        etag: true,
+        lastModified: true,
+        acceptRanges: true,
+        fallthrough: false,
+        setHeaders: (res, filePath) => {
+            if (/\.(jpe?g|png|webp|gif|mp4|webm|mov)$/i.test(filePath)) {
+                // 私有模式下使用 private 缓存，防止共享缓存泄露
+                const cacheDirective = res.req?.isPrivateMode
+                    ? 'private, max-age=2592000, immutable, no-transform'
+                    : 'public, max-age=2592000, immutable, no-transform';
+                res.setHeader('Cache-Control', cacheDirective);
+                res.setHeader('Accept-Ranges', 'bytes');
+            }
         },
     })
 );

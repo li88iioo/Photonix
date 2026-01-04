@@ -13,6 +13,7 @@
 const bcrypt = require('bcryptjs');
 const logger = require('../../config/logger');
 const { LOG_PREFIXES } = logger;
+const { secureCompare } = require('../../utils/secureCompare');
 const { TraceManager } = require('../../utils/trace');
 const settingsService = require('../settings.service');
 const { getSettingsWorker } = require('../worker.manager');
@@ -159,8 +160,8 @@ function detectAuthChanges(settingsToUpdate = {}) {
  * @returns {Object} 审计上下文对象
  */
 function buildAuditContext(req, extra = {}) {
-  const headerUserId = req.headers['x-user-id'] || req.headers['x-userid'] || req.headers['x-user'];
-  const userId = (req.user && req.user.id) ? String(req.user.id) : (headerUserId ? String(headerUserId) : 'anonymous');
+  // 安全策略：仅信任已鉴权的用户身份，不信任可伪造的 x-user-id 等 header
+  const userId = (req.user && req.user.id) ? String(req.user.id) : 'anonymous';
   const { reason, ...restExtra } = extra || {};
   return {
     ...(reason ? { reason } : {}),
@@ -243,13 +244,14 @@ async function verifyAdminSecret(adminSecret) {
     return createAuthError(500, '管理员密钥未在服务器端配置，无法执行此操作');
   }
 
-  // 检查是否提供了管理员密钥
-  if (!adminSecret || adminSecret.trim() === '') {
+  // 检查是否提供了管理员密钥（类型安全校验）
+  if (typeof adminSecret !== 'string' || adminSecret.trim() === '') {
     return createAuthError(400, '必须提供管理员密钥');
   }
 
-  // 验证密钥是否匹配
-  if (adminSecret !== process.env.ADMIN_SECRET) {
+  // 验证密钥是否匹配（使用 secureCompare 防止时序攻击，基于 Buffer 字节长度比较）
+  const serverSecret = process.env.ADMIN_SECRET;
+  if (!secureCompare(adminSecret, serverSecret)) {
     return createAuthError(401, '管理员密钥错误');
   }
 

@@ -26,6 +26,9 @@ const LOCAL_LOCK_CLEANUP_MS = Number(process.env.LOCAL_LOCK_CLEANUP_MS || 60000)
 const DB_MAINT_DB_DELAY_STEP_MS = Number(process.env.DB_MAINT_DB_DELAY_STEP_MS || 500);
 const DB_MAINT_INITIAL_DELAY_MS = Number(process.env.DB_MAINT_INITIAL_DELAY_MS || 30000);
 
+// 数据库维护定时器引用（用于优雅关闭时清理）
+let maintenanceTimers = { initial: null, interval: null };
+
 /**
  * 本地锁管理器，实现进程内简易锁机制
  */
@@ -426,12 +429,26 @@ function scheduleDbMaintenance() {
         runWhenIdle(LOG_PREFIXES.DB_MAINTENANCE, performDbMaintenance, { startDelayMs: 0, retryIntervalMs: retryMs });
     };
 
-    const initialTimer = setTimeout(enqueueMaintenance, DB_MAINT_INITIAL_DELAY_MS);
-    const intervalTimer = setInterval(enqueueMaintenance, intervalMs);
+    maintenanceTimers.initial = setTimeout(enqueueMaintenance, DB_MAINT_INITIAL_DELAY_MS);
+    maintenanceTimers.interval = setInterval(enqueueMaintenance, intervalMs);
 
     // 允许进程退出（定时器不阻止进程退出）
-    if (typeof initialTimer.unref === 'function') initialTimer.unref();
-    if (typeof intervalTimer.unref === 'function') intervalTimer.unref();
+    if (typeof maintenanceTimers.initial.unref === 'function') maintenanceTimers.initial.unref();
+    if (typeof maintenanceTimers.interval.unref === 'function') maintenanceTimers.interval.unref();
+}
+
+/**
+ * 停止数据库维护调度（用于优雅关闭）
+ */
+function stopDbMaintenance() {
+    if (maintenanceTimers.initial) {
+        clearTimeout(maintenanceTimers.initial);
+        maintenanceTimers.initial = null;
+    }
+    if (maintenanceTimers.interval) {
+        clearInterval(maintenanceTimers.interval);
+        maintenanceTimers.interval = null;
+    }
 }
 
 /**
@@ -492,6 +509,7 @@ function start() {
 
 module.exports = {
     start,
+    stopDbMaintenance,
     isHeavy,
     runWhenIdle,
     gate,
