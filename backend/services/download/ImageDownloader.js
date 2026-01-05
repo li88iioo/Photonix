@@ -8,9 +8,15 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const { pipeline } = require('stream/promises');
 const { Worker } = require('worker_threads');
+const http = require('http');
+const https = require('https');
 const axios = require('axios');
 const imageSize = require('image-size');
 const { v4: uuidv4 } = require('uuid');
+
+// HTTP 连接复用 Agent，避免每次请求重建 TCP 连接
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 10, timeout: 60000 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 10, timeout: 60000 });
 
 class ImageDownloader {
   constructor(config, logger) {
@@ -27,12 +33,17 @@ class ImageDownloader {
    * @param {string[]} urls 图片URL列表
    * @param {string} directory 保存目录
    * @param {object} context 上下文信息
-   * @returns {Promise<Array>} 下载成功的图片信息
+   * @returns {Promise<object>} 下载结果与统计
    */
-  async downloadImagesWithLimits(task, urls, directory, context = {}) {
+  async downloadImagesWithLimits(task, urls, directory, context = {}, options = {}) {
+    const logEachSuccess = options.logEachSuccess === true;
+    const logEachFailure = options.logEachFailure === true;
     const limit = Math.max(1, this.config.maxConcurrentDownloads);
     const queue = [...this.unique(urls)];
     const downloaded = [];
+    const attempted = queue.length;
+    let failed = 0;
+    const startedAt = Date.now();
 
     const worker = async () => {
       while (queue.length > 0) {
@@ -45,7 +56,7 @@ class ImageDownloader {
             info.durationMs = Date.now() - started;
             downloaded.push(info);
 
-            if (this.logger) {
+            if (logEachSuccess && this.logger) {
               this.logger.log('success', `成功下载 ${info.filename} (${this.formatBytes(info.size)}, ${info.durationMs}ms)`, {
                 ...context,
                 imageUrl: url,
@@ -57,7 +68,8 @@ class ImageDownloader {
 
           await this.applySecurityDelay();
         } catch (error) {
-          if (this.logger) {
+          failed += 1;
+          if (logEachFailure && this.logger) {
             this.logger.log('warning', `下载图片失败：${error.message || '未知错误'}`, {
               ...context,
               imageUrl: url,
@@ -73,7 +85,15 @@ class ImageDownloader {
     const workers = Array.from({ length: Math.min(limit, queue.length) }, () => worker());
     await Promise.all(workers);
 
-    return downloaded;
+    const durationMs = Date.now() - startedAt;
+    const totalBytes = downloaded.reduce((sum, file) => sum + Number(file?.size || 0), 0);
+    return {
+      downloaded,
+      attempted,
+      failed,
+      totalBytes,
+      durationMs
+    };
   }
 
   /**
@@ -107,7 +127,9 @@ class ImageDownloader {
           timeout: timeoutMs,
           headers,
           maxRedirects: 3,
-          signal
+          signal,
+          httpAgent,
+          httpsAgent
         });
         clearConnectTimeout();
 

@@ -99,6 +99,7 @@ class ThumbStatusRepository {
      * @param {Object} options - 选项
      * @param {boolean} options.manageTransaction - 是否管理事务
      * @param {number} options.chunkSize - 分块大小
+     * @param {boolean} options.silent - 静默模式，不输出日志
      * @param {Object} redis - Redis实例
      * @returns {Promise<void>}
      */
@@ -109,12 +110,13 @@ class ThumbStatusRepository {
             manageTransaction: Boolean(options.manageTransaction),
             chunkSize: Math.max(1, Number(options.chunkSize || 400)),
         };
+        const silent = Boolean(options.silent);
 
         try {
             // Native DB handling (busy_timeout) replaces application-layer retry
             await runPreparedBatch('main', UPSERT_SQL, rows, opts);
-            // 小批次静默处理，避免日志刷屏
-            if (rows.length >= 10) {
+            // 静默模式下不输出日志，避免刷屏
+            if (!silent && rows.length >= 10) {
                 logger.debug(`${LOG_LABEL} 批量写入${TABLE_LABEL}完成: ${rows.length}条`);
             }
         } catch (error) {

@@ -5,8 +5,15 @@
 
 const Parser = require('rss-parser');
 const cheerio = require('cheerio');
+const http = require('http');
+const https = require('https');
 const axios = require('axios');
 const { XMLParser, XMLBuilder } = require('fast-xml-parser');
+const { ExternalServiceError } = require('../../utils/errors');
+
+// HTTP 连接复用 Agent，避免每次请求重建 TCP 连接
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 10, timeout: 60000 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 10, timeout: 60000 });
 
 class FeedProcessor {
   constructor(config, logManager) {
@@ -35,24 +42,87 @@ class FeedProcessor {
       timeout: timeoutMs,
       headers,
       responseType: 'text',
-      signal
+      signal,
+      httpAgent,
+      httpsAgent
     };
 
     try {
       const response = await axios(requestConfig);
       return this.parser.parseString(response.data);
     } catch (error) {
+      // 构建用户友好的错误消息
+      const feedName = task.title || task.feedUrl;
+      const statusCode = error.response?.status;
+      const errorReason = this.formatErrorReason(error);
+
+      // 日志中包含完整的 feed 信息
       if (this.logManager) {
-        this.logManager.log('error', '拉取 RSS 源失败', {
+        this.logManager.log('error', `拉取 RSS 源失败: ${feedName}`, {
           taskId: task.id,
           feedUrl: task.feedUrl,
+          feedTitle: task.title,
+          statusCode,
+          reason: errorReason,
           error: error.message
         });
       }
-      throw error;
+
+      // 抛出用户友好的错误，前端通知会显示这个消息
+      throw new ExternalServiceError(`RSS 源「${feedName}」`, {
+        feedUrl: task.feedUrl,
+        feedTitle: task.title,
+        statusCode,
+        reason: errorReason,
+        originalError: error.message
+      });
     } finally {
       clearConnectTimeout();
     }
+  }
+
+  /**
+   * 格式化错误原因为用户友好的描述
+   * @param {Error} error axios错误对象
+   * @returns {string} 用户友好的错误描述
+   */
+  formatErrorReason(error) {
+    // HTTP 状态码错误
+    if (error.response?.status) {
+      const status = error.response.status;
+      const statusMessages = {
+        400: '请求格式错误',
+        401: '需要认证',
+        403: '访问被拒绝',
+        404: '源地址不存在',
+        429: '请求过于频繁',
+        500: '服务器内部错误',
+        502: '网关错误',
+        503: '服务暂时不可用',
+        504: '网关超时'
+      };
+      return statusMessages[status] || `HTTP ${status}`;
+    }
+
+    // 网络错误
+    if (error.code) {
+      const codeMessages = {
+        'ECONNREFUSED': '连接被拒绝',
+        'ENOTFOUND': '域名无法解析',
+        'ETIMEDOUT': '连接超时',
+        'ECONNRESET': '连接被重置',
+        'ECONNABORTED': '连接中断',
+        'ERR_CANCELED': '请求超时被取消'
+      };
+      return codeMessages[error.code] || error.code;
+    }
+
+    // AbortError（连接超时）
+    if (error.name === 'AbortError') {
+      return '连接超时';
+    }
+
+    return '未知错误';
   }
 
   /**
@@ -166,7 +236,9 @@ class FeedProcessor {
         timeout: Math.max(5000, this.config.requestTimeout * 1000),
         headers,
         responseType: 'text',
-        signal
+        signal,
+        httpAgent,
+        httpsAgent
       });
 
       const $ = cheerio.load(response.data);

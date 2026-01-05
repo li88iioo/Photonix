@@ -71,13 +71,8 @@ class TaskScheduler {
         const job = new CronJob(
           resolved, // cronTime
           () => {   // onTick
-            executeCallback(task.id).catch((error) => {
-              if (this.logManager) {
-                this.logManager.log('error', '自动执行任务失败', {
-                  taskId: task.id,
-                  error: error.message
-                });
-              }
+            executeCallback(task.id).catch(() => {
+              // 错误已在 executeTask 内部记录，此处静默处理
             });
           },
           null,     // onComplete
@@ -87,13 +82,8 @@ class TaskScheduler {
         this.cronJobs.set(task.id, job);
         task.schedule.next = null;
         if (immediate) {
-          executeCallback(task.id).catch((error) => {
-            if (this.logManager) {
-              this.logManager.log('error', '任务即时执行失败', {
-                taskId: task.id,
-                error: error.message
-              });
-            }
+          executeCallback(task.id).catch(() => {
+            // 错误已在 executeTask 内部记录，此处静默处理
           });
         }
       } catch (error) {
@@ -114,13 +104,8 @@ class TaskScheduler {
     task.schedule.next = nextRun.toISOString();
 
     const timer = setTimeout(() => {
-      executeCallback(task.id).catch((error) => {
-        if (this.logManager) {
-          this.logManager.log('error', '定时执行任务失败', {
-            taskId: task.id,
-            error: error.message
-          });
-        }
+      executeCallback(task.id).catch(() => {
+        // 错误已在 executeTask 内部记录，此处静默处理
       });
     }, immediate ? 250 : resolved);
 

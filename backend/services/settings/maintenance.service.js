@@ -137,20 +137,18 @@ class ThumbnailSyncService {
   }
 
   /**
-   * 清空并重建缩略图状态表
-   * 
-   * 删除现有的缩略图状态记录，然后重新扫描所有媒体文件
-   * 检查对应的缩略图文件是否存在，并更新状态表
-   * 
+   * 重建缩略图状态表（增量更新模式）
+   *
+   * 扫描所有媒体文件，检查缩略图是否存在，并通过 UPSERT 更新状态表
+   * 不再先清空表，避免前端看到中间状态（未知/数据库记录:0）
+   *
    * @param {Array} mediaFiles - 媒体文件列表
    * @returns {Object} 同步结果统计
    */
   async clearAndRebuildThumbStatus(mediaFiles) {
-    // 使用Repository清空现有的缩略图状态表
     const ThumbStatusRepository = require('../../repositories/thumbStatus.repo');
     const thumbStatusRepo = new ThumbStatusRepository();
 
-    await this.db.dbRun('main', 'DELETE FROM thumb_status');
     let syncedCount = 0;
     let existsCount = 0;
     let missingCount = 0;
@@ -158,22 +156,106 @@ class ThumbnailSyncService {
     const errorSamples = [];
     const total = Array.isArray(mediaFiles) ? mediaFiles.length : 0;
 
-    // 遍历所有媒体文件，检查缩略图状态
-    for (const file of mediaFiles) {
-      try {
-        const result = await this.processFileForSync(file);
-        syncedCount++;
-        if (result.status === 'exists') {
-          existsCount++;
-        } else {
-          missingCount++;
+    // 性能优化：批量处理文件状态检查和写入
+    const BATCH_SIZE = 500;
+    const CONCURRENCY_LIMIT = 50; // 并发 fs.access 限制
+
+    for (let i = 0; i < total; i += BATCH_SIZE) {
+      const batch = mediaFiles.slice(i, i + BATCH_SIZE);
+      const batchRows = [];
+
+      // 定义检查单个文件的函数（不立即执行）
+      const checkFile = async (file) => {
+        try {
+          const thumbExt = file.type === 'video' ? '.jpg' : '.webp';
+          const thumbPath = file.path.replace(/\.[^.]+$/, thumbExt);
+          const thumbFullPath = this.path.join(this.config.THUMBS_DIR, thumbPath);
+
+          let status = 'missing';
+          try {
+            await this.fs.access(thumbFullPath);
+            status = 'exists';
+          } catch (accessErr) {
+            // ENOENT 是正常情况：缩略图缺失时将标记为 missing
+            if (accessErr && accessErr.code && accessErr.code !== 'ENOENT') {
+              if (typeof logger.throttledLog === 'function') {
+                logger.throttledLog(
+                  'debug',
+                  `thumbnail-sync:access:${accessErr.code}`,
+                  `${LOG_PREFIXES.THUMBNAIL_SYNC} 检查缩略图失败（降级为 missing）`,
+                  { code: accessErr.code, thumbPath, error: accessErr.message },
+                  60000
+                );
+              }
+            }
+          }
+
+          return { file, status, error: null };
+        } catch (error) {
+          return { file, status: null, error };
         }
-      } catch (error) {
-        errorCount++;
-        if (errorSamples.length < 5) {
-          errorSamples.push({ path: file && file.path, error: error && error.message });
+      };
+
+      // 真正的并发限制：分块执行，每块最多 CONCURRENCY_LIMIT 个并发
+      const results = [];
+      for (let j = 0; j < batch.length; j += CONCURRENCY_LIMIT) {
+        const chunk = batch.slice(j, j + CONCURRENCY_LIMIT);
+        // 此时才启动这一批的 Promise
+        const chunkResults = await Promise.all(chunk.map(checkFile));
+        results.push(...chunkResults);
+      }
+
+      // 收集结果
+      for (const result of results) {
+        if (result.error) {
+          errorCount++;
+          if (errorSamples.length < 5) {
+            errorSamples.push({ path: result.file && result.file.path, error: result.error && result.error.message });
+          }
+        } else {
+          syncedCount++;
+          if (result.status === 'exists') {
+            existsCount++;
+          } else {
+            missingCount++;
+          }
+          // 格式: [path, mtime, status]
+          batchRows.push([result.file.path, 0, result.status]);
         }
       }
+
+      // 批量 UPSERT 写入数据库（增量更新，不清空表）
+      if (batchRows.length > 0) {
+        try {
+          await thumbStatusRepo.upsertBatch(batchRows, { manageTransaction: true, silent: true });
+        } catch (batchError) {
+          logger.warn(`${LOG_PREFIXES.THUMBNAIL_SYNC} 批量写入失败，回退到逐条写入`, { error: batchError.message });
+          // 回退到逐条写入
+          for (const row of batchRows) {
+            try {
+              await thumbStatusRepo.upsertSingle(row[0], row[1], row[2]);
+            } catch (singleError) {
+              errorCount++;
+              if (errorSamples.length < 5) {
+                errorSamples.push({ path: row[0], error: singleError.message });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 清理孤立记录：删除 thumb_status 中不再存在于 items 表的记录
+    try {
+      const orphanResult = await this.db.dbRun('main', `
+        DELETE FROM thumb_status
+        WHERE path NOT IN (SELECT path FROM items WHERE type IN ('photo', 'video'))
+      `);
+      if (orphanResult && orphanResult.changes > 0) {
+        logger.debug(`${LOG_PREFIXES.THUMBNAIL_SYNC} 清理孤立记录: ${orphanResult.changes} 条`);
+      }
+    } catch (cleanupError) {
+      logger.warn(`${LOG_PREFIXES.THUMBNAIL_SYNC} 清理孤立记录失败`, { error: cleanupError.message });
     }
 
     if (errorCount > 0) {
@@ -633,15 +715,18 @@ async function getHlsFileStats() {
 
     // pending = 未处理的视频（不包括路径验证失败的 skip）
     const pending = Math.max(0, totalVideos - processed - failed - skip);
-    if (missingMasters > 0 && typeof logger.throttledLog === 'function') {
+    // 只在首次发现缺失或缺失数量变化时输出日志，避免重复刷屏
+    const lastMissing = getHlsFileStats._lastMissing || 0;
+    if (missingMasters > 0 && missingMasters !== lastMissing && typeof logger.throttledLog === 'function') {
       logger.throttledLog(
         'debug',
         'hls:missing-master',
         `${LOG_PREFIXES.SYSTEM_MAINTENANCE} HLS master 缺失，标记为未处理`,
-        { missing: missingMasters, sample: missingSamples, cacheMs },
-        60000
+        { missing: missingMasters, sample: missingSamples },
+        300000  // 5分钟节流
       );
     }
+    getHlsFileStats._lastMissing = missingMasters;
 
     const result = {
       total: totalVideos,

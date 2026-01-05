@@ -549,25 +549,6 @@ function ensureStyleHelpers() {
     .history-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-md); border-color: rgba(79, 70, 229, 0.28); }
     .history-card h4 { font-size: 15px; font-weight: 600; color: var(--text-color); }
     .history-card .history-meta { font-size: 12px; color: var(--text-secondary); display: flex; flex-direction: column; gap: 4px; }
-    .log-container { margin-top: 24px; border-radius: 14px; border: 1px solid var(--border-color); background: var(--surface-color); padding: 20px; max-height: none; overflow-y: visible; box-shadow: var(--shadow-sm); }
-    .log-entry { padding: 14px; border-radius: 12px; border: 1px solid var(--border-color); background: var(--surface-muted); margin-bottom: 12px; transition: border-color 0.2s ease, background 0.2s ease; }
-    .log-entry:last-child { margin-bottom: 0; }
-    .log-entry.level-info .log-level { color: #2563eb; }
-    .log-entry.level-success { border-color: rgba(34, 197, 94, 0.35); background: rgba(16, 185, 129, 0.12); }
-    .log-entry.level-success .log-level { color: #15803d; }
-    .log-entry.level-warning { border-color: rgba(250, 204, 21, 0.45); background: rgba(250, 204, 21, 0.16); }
-    .log-entry.level-warning .log-level { color: #b45309; }
-    .log-entry.level-error { border-color: rgba(248, 113, 113, 0.45); background: rgba(248, 113, 113, 0.16); }
-    .log-entry.level-error .log-level { color: #b91c1c; }
-    .log-entry .log-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 12px; color: var(--text-secondary); }
-    .log-entry .log-level { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
-    .log-entry .log-message { font-size: 13px; color: var(--text-color); display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
-    .log-entry .log-scope { font-weight: 600; color: var(--primary); margin-right: 4px; }
-    .log-entry .log-text { flex: 1; min-width: 0; word-break: break-word; }
-    .log-entry .log-details { margin-top: 6px; font-size: 12px; color: var(--text-secondary); display: flex; flex-wrap: wrap; gap: 8px; }
-    .log-entry .log-details span { display: inline-flex; align-items: center; }
-    .log-entry .log-details .log-divider { opacity: 0.5; }
-    .log-entry .log-empty { opacity: 0.6; }
     .loading-panel { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 80px 0; }
     .loading-panel .spinner { width: 24px; height: 24px; border: 3px solid rgba(148, 163, 184, 0.45); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; }
     .error-panel { padding: 16px; border-radius: 12px; background: rgba(254, 226, 226, 0.8); border: 1px solid rgba(248, 113, 113, 0.6); color: #b91c1c; text-align: center; }

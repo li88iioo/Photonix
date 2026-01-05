@@ -81,7 +81,12 @@ function logError(error, req) {
 
     const { LOG_PREFIXES } = logger;
 
-    if (error.statusCode >= 500) {
+    if (error?.errorCode === 'EXTERNAL_SERVICE_ERROR') {
+        logger.warn(LOG_PREFIXES.REQUEST_ERROR + ` ${error.message}`, {
+            ...logContext,
+            details: error.details
+        });
+    } else if (error.statusCode >= 500) {
         // 服务端错误 - 记录为 ERROR
         logger.error(LOG_PREFIXES.SYSTEM_ERROR + ` ${error.message}`, {
             ...logContext,

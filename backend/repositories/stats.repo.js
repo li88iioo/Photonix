@@ -57,18 +57,28 @@ async function getStatsByField(tableName, fieldName, values, dbType = 'main') {
     try {
         const stats = {};
 
-        // 构建并行查询
-        const promises = values.map(value =>
-            dbGet(dbType, `SELECT COUNT(*) as count FROM ${tableName} WHERE ${fieldName} = ?`, [value])
-                .then(row => ({ [value]: Number(row?.count || 0) }))
-                .catch(() => ({ [value]: 0 }))
-        );
+        // 防御性检查：空数组直接返回，避免生成无效 SQL（IN () 语法错误）
+        if (!Array.isArray(values) || values.length === 0) {
+            return stats;
+        }
 
-        const results = await Promise.all(promises);
+        // 初始化所有请求的值为0
+        values.forEach(value => {
+            stats[value] = 0;
+        });
+
+        // 使用 GROUP BY 单次查询替代 N 次独立查询
+        // 性能优化：SQLite 单线程特性使并行查询无实际收益，GROUP BY 更高效
+        const placeholders = values.map(() => '?').join(',');
+        const sql = `SELECT ${fieldName}, COUNT(*) as count FROM ${tableName} WHERE ${fieldName} IN (${placeholders}) GROUP BY ${fieldName}`;
+        const rows = await dbAll(dbType, sql, values);
 
         // 合并结果
-        results.forEach(result => {
-            Object.assign(stats, result);
+        rows.forEach(row => {
+            const key = row[fieldName];
+            if (key in stats) {
+                stats[key] = Number(row.count || 0);
+            }
         });
 
         return stats;

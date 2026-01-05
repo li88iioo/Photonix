@@ -171,13 +171,6 @@ class DownloadManager {
       const runId = uuidv4();
       const startedAt = Date.now();
 
-      this.logManager.log('info', '准备执行下载任务', {
-        scope: '下载器',
-        taskId,
-        runId,
-        manual: options.manual === true
-      });
-
       task.stats.lastRunAt = new Date().toISOString();
       task.updatedAt = task.stats.lastRunAt;
       // P1优化: 只更新单个任务
@@ -191,19 +184,18 @@ class DownloadManager {
         const feed = await this.feedProcessor.fetchFeed(task);
         const feedTitle = feed.title || task.title || task.feedUrl;
 
-        this.logManager.log('info', '开始处理订阅源', {
+        this.logManager.log('info', `开始处理 RSS 源「${feedTitle}」`, {
           taskId,
           runId,
           feedTitle,
-          taskName: feedTitle || task.title || task.name || `任务${taskId.slice(0, 8)}`
+          manual: options.manual === true
         });
 
         if (this.skipFeeds.has(feedTitle)) {
-          this.logManager.log('info', '跳过被列入忽略清单的订阅源', {
+          this.logManager.log('info', `跳过被列入忽略清单的 RSS 源「${feedTitle}」`, {
             taskId,
             runId,
-            feedTitle,
-            taskName: feedTitle || task.title || task.name || `任务${taskId.slice(0, 8)}`
+            feedTitle
           });
           return;
         }
@@ -252,7 +244,7 @@ class DownloadManager {
         this.taskManager.updateTaskStats(task.id, task.stats);
 
         const duration = Date.now() - startedAt;
-        this.logManager.log('info', `处理完毕。发现 ${downloadedArticles} 篇新文章，下载了 ${downloadedImages} 张新图片。`, {
+        this.logManager.log('info', `RSS 源「${feedTitle}」处理完毕：${downloadedArticles} 篇文章，${downloadedImages} 张图片`, {
           taskId,
           runId,
           feedTitle,
@@ -267,14 +259,11 @@ class DownloadManager {
         // P1优化: 更新错误状态到数据库
         this.taskManager.updateTaskStats(task.id, task.stats);
 
-        this.logManager.log('error', '下载任务执行失败', {
-          taskId,
-          runId,
-          error: error.message
-        });
-
+        // 错误已在 FeedProcessor 中记录详细信息，此处只更新状态并向上抛出
+        const feedName = task.title || task.feedUrl || `任务${taskId.slice(0, 8)}`;
         throw new ExternalServiceError('下载任务执行失败', {
           taskId,
+          feedTitle: feedName,
           error: error.message
         });
       } finally {
@@ -331,23 +320,9 @@ class DownloadManager {
     });
 
     if (shouldSkip && !forceDownload) {
-      this.logManager.log('info', '跳过已下载文章', {
-        taskId,
-        runId,
-        feedTitle,
-        article: articleTitle,
-        identifier
-      });
+      // 已下载文章静默跳过，避免日志刷屏
       return null;
     }
-
-    this.logManager.log('info', `处理新文章: '${articleTitle}'`, {
-      taskId,
-      runId,
-      feedTitle,
-      article: articleTitle,
-      identifier
-    });
 
     // 提取图片URL
     let images = await this.feedProcessor.extractImageUrls(item, task.feedUrl);
@@ -358,13 +333,7 @@ class DownloadManager {
     }
 
     if (images.length === 0) {
-      this.logManager.log('warning', '未找到可下载的图片', {
-        taskId,
-        runId,
-        feedTitle,
-        article: articleTitle,
-        identifier
-      });
+      // 无图片文章静默跳过，避免日志刷屏（这是正常情况）
       return null;
     }
 
@@ -375,23 +344,49 @@ class DownloadManager {
     await fsp.mkdir(articleDir, { recursive: true });
 
     // 下载图片
-    const downloaded = await this.imageDownloader.downloadImagesWithLimits(
+    const downloadResult = await this.imageDownloader.downloadImagesWithLimits(
       task,
       images,
       articleDir,
-      { taskId, runId, feedTitle, article: articleTitle }
+      { taskId, runId, feedTitle, article: articleTitle },
+      { logEachSuccess: false, logEachFailure: false }
     );
+    const downloaded = downloadResult.downloaded || [];
+    const attempted = Number(downloadResult.attempted || images.length || 0);
+    const failed = Number(downloadResult.failed || 0);
+    const totalBytes = Number(downloadResult.totalBytes || 0);
+    const durationMs = Number(downloadResult.durationMs || 0);
 
     if (downloaded.length === 0) {
-      this.logManager.log('warning', '所有图片下载失败或被过滤', {
+      this.logManager.log('warning', `文章「${articleTitle}」所有图片下载失败`, {
         taskId,
         runId,
         feedTitle,
         article: articleTitle,
-        identifier
+        identifier,
+        attempted,
+        failed,
+        durationMs
       });
       return null;
     }
+
+    this.logManager.log(
+      'success',
+      `总 ${attempted} 成功下载 ${downloaded.length} 失败 ${failed}（${this.formatBytes(totalBytes)}, ${this.formatDuration(durationMs)}）`,
+      {
+        taskId,
+        runId,
+        feedTitle,
+        article: articleTitle,
+        identifier,
+        attempted,
+        downloadedCount: downloaded.length,
+        failedCount: failed,
+        totalBytes,
+        durationMs
+      }
+    );
 
     // 记录下载
     this.historyTracker.recordDownload({
@@ -411,7 +406,7 @@ class DownloadManager {
       articleUrl: item.link || null,
       images: downloaded,
       completedAt: new Date().toISOString(),
-      size: downloaded.reduce((sum, file) => sum + file.size, 0)
+      size: totalBytes || downloaded.reduce((sum, file) => sum + file.size, 0)
     };
 
     return { images: downloaded, entry };
@@ -626,9 +621,11 @@ class DownloadManager {
         {
           const queuedAt = new Date().toISOString();
           if (this.logManager) {
-            this.logManager.log('info', '收到手动运行请求，已排队等待执行', {
+            const feedName = task.title || task.feedTitle || task.feedUrl || `任务${taskId.slice(0, 8)}`;
+            this.logManager.log('info', `收到手动运行请求，RSS 源「${feedName}」已排队等待执行`, {
               scope: '下载器',
               taskId,
+              feedTitle: feedName,
               queuedAt
             });
           }
@@ -902,9 +899,11 @@ class DownloadManager {
 
     const queuedAt = new Date().toISOString();
     if (this.logManager) {
-      this.logManager.log('info', '收到手动下载请求，已排队等待执行', {
+      const feedName = task.title || task.feedTitle || task.feedUrl || `任务${taskId.slice(0, 8)}`;
+      this.logManager.log('info', `收到手动下载请求，RSS 源「${feedName}」已排队等待执行`, {
         scope: '下载器',
         taskId,
+        feedTitle: feedName,
         requestedEntries: entries.length,
         queuedAt
       });
@@ -1200,6 +1199,14 @@ class DownloadManager {
     const size = value / Math.pow(1024, exponent);
     const precision = size >= 10 ? 0 : 1;
     return `${size.toFixed(precision)} ${units[exponent]}`;
+  }
+
+  formatDuration(durationMs) {
+    const value = Number(durationMs);
+    if (!Number.isFinite(value) || value <= 0) return '0ms';
+    if (value < 1000) return `${Math.round(value)}ms`;
+    if (value < 60 * 1000) return `${(value / 1000).toFixed(1)}s`;
+    return `${Math.round(value / 1000)}s`;
   }
 
   /**
