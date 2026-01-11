@@ -253,41 +253,22 @@ function performWorkerHealthCheck() {
     };
 }
 
-// 任务调度器指标（预留，供 /api/metrics 端点使用）
-// TODO: 在任务执行流程中更新这些指标
-const schedulerMetrics = {
-    queued: 0,
-    processing: 0,
-    pending: 0,
-    completed: 0,
-    failed: 0,
-    retries: 0,
-    lastError: null,
-    lastFailureAt: null,
-    lastUpdatedAt: Date.now()
-};
-
-// 视频任务指标（预留，供 /api/metrics 端点使用）
-// TODO: 在视频处理流程中更新这些指标
-const videoMetrics = {
-    pending: 0,
-    completed: 0,
-    failed: 0,
-    lastError: null,
-    lastFailureAt: null,
-    lastQueuedAt: null,
-    lastQueuedPath: null,
-    lastCompletedPath: null,
-    workerState: 'inactive',
-    lastUpdatedAt: Date.now()
-};
-
+/**
+ * 获取任务调度器指标
+ * 注：当前未实现详细的调度器指标收集，返回 null
+ * 如需实现，需在任务执行流程中添加钩子
+ */
 function getTaskSchedulerMetrics() {
-    return { ...schedulerMetrics };
+    return null;
 }
 
+/**
+ * 获取视频处理任务指标
+ * 注：当前未实现详细的视频任务指标收集，返回 null
+ * 如需实现，需在视频处理流程中添加钩子
+ */
 function getVideoTaskMetrics() {
-    return { ...videoMetrics };
+    return null;
 }
 
 module.exports = {

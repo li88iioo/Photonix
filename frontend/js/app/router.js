@@ -15,7 +15,7 @@ import { AbortBus } from '../core/abort-bus.js';
 import { routerLogger } from '../core/logger.js';
 import { refreshPageEventListeners } from '../features/gallery/listeners.js';
 import { clearSortCache } from '../features/gallery/ui.js';
-import { clearLazyloadQueue } from '../features/gallery/lazyload.js';
+import { clearLazyloadQueue, savePageLazyState, clearRestoreProtection } from '../features/gallery/lazyload.js';
 import { isDownloadRoute, showDownloadPage, hideDownloadPage } from '../features/download/index.js';
 import { elements } from '../shared/dom-elements.js';
 
@@ -82,12 +82,10 @@ export async function handleHashChange() {
  * 持久化当前路由相关状态（比如滚动位置）。
  */
 function persistRouteState() {
-    if (typeof state.currentBrowsePath === 'string' && window.savePageLazyState) {
-        window.savePageLazyState(state.currentBrowsePath);
+    if (typeof state.currentBrowsePath === 'string') {
+        savePageLazyState(state.currentBrowsePath);
     }
-    if (window.clearRestoreProtection) {
-        window.clearRestoreProtection();
-    }
+    clearRestoreProtection();
     if (typeof state.currentBrowsePath === 'string') {
         const key = state.currentBrowsePath;
 

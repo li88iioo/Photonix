@@ -11,17 +11,13 @@ import { showNotification } from './shared/utils.js';
 import { initializeSSE } from './app/sse.js';
 import { setupEventListeners } from './features/gallery/listeners.js';
 import { initializeRouter } from './app/router.js';
-import { blobUrlManager, savePageLazyState, restorePageLazyState, clearRestoreProtection } from './features/gallery/lazyload.js';
+import { blobUrlManager } from './features/gallery/lazyload.js';
 import { initializeUI } from './features/gallery/ui.js';
 import { UI } from './core/constants.js';
 import { createModuleLogger } from './core/logger.js';
 import { safeSetInnerHTML } from './shared/dom-utils.js';
 import { eventManager } from './core/event-manager.js';
-
-// 将懒加载状态管理函数挂载到 window，供 router.js 使用
-window.savePageLazyState = savePageLazyState;
-window.restorePageLazyState = restorePageLazyState;
-window.clearRestoreProtection = clearRestoreProtection;
+import { savePageLazyState } from './features/gallery/lazyload.js';
 
 const mainLogger = createModuleLogger('Main');
 

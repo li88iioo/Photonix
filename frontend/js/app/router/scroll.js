@@ -8,7 +8,7 @@ import { elements } from '../../shared/dom-elements.js';
 import { safeSetInnerHTML } from '../../shared/dom-utils.js';
 import { showMinimalLoader } from '../../features/gallery/loading-states.js';
 import { setManagedTimeout } from '../../core/timer-manager.js';
-import { setupLazyLoading } from '../../features/gallery/lazyload.js';
+import { setupLazyLoading, restorePageLazyState } from '../../features/gallery/lazyload.js';
 import { applyMasonryLayout, getMasonryColumns } from '../../features/gallery/masonry.js';
 import { routerLogger } from '../../core/logger.js';
 import { getPathOnlyFromHash } from './utils.js';
@@ -122,10 +122,7 @@ export function prepareForNewContent(navigation = null) {
 export function finalizeNewContent(pathKey) {
     if (!state.virtualScroller) {
         setupLazyLoading();
-        let stateRestored = false;
-        if (window.restorePageLazyState) {
-            stateRestored = window.restorePageLazyState(pathKey);
-        }
+        const stateRestored = restorePageLazyState(pathKey);
         if (!stateRestored && elements.contentGrid?.classList.contains('masonry-mode')) {
             // 延迟执行瀑布流布局，确保图片容器已正确渲染
             requestAnimationFrame(() => {
